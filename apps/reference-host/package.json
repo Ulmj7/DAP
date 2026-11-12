@@ -1,0 +1,16 @@
+{
+  "name": "@dap/reference-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@dap/contracts": "*",
+    "@dap/ai": "*",
+    "@dap/actions": "*",
+    "@dap/security": "*",
+    "@dap/testkit": "*",
+    "fastify": "^5.12.8",
+    "prom-client": "^15.1.3",
+    "pino": "^10.4.0"
+  }
+}

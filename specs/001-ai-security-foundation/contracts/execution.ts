@@ -1,0 +1,94 @@
+/**
+ * @dap/contracts: execution.ts
+ *
+ * ActionExecutor and the single-use ExecutionGrant that makes executors callable ONLY by
+ * the Policy Gateway (FR-011, FR-017). Executors live in `@dap/actions` and the AI layer has
+ * no dependency on that package (research D4, D5).
+ *
+ * Constitution: III, VII, VIII, IX, X
+ */
+import type {
+  ActionId,
+  DeepReadonly,
+  ExecutorId,
+  RequestId,
+  ResolvedResource,
+  ResourceRef,
+  Sha256Hex,
+} from "./core";
+import type { AuthorizationContext } from "./security-context";
+
+declare const __grant: unique symbol;
+
+/**
+ * Proof that the Gateway approved exactly this call. Minted only by the Gateway through the
+ * restricted `mint` subpath, bound to the values below, and SINGLE-USE. Tracked in a
+ * module-private registry, so a copied or fabricated literal fails verification.
+ */
+export interface ExecutionGrant {
+  readonly [__grant]: true;
+  readonly requestId: RequestId;
+  readonly actionId: ActionId;
+  readonly paramsDigest: Sha256Hex;
+}
+
+/** What an executor receives. Everything here is trusted or validated; nothing is model-supplied identity. */
+export interface ExecutionCall<TParams> {
+  readonly grant: ExecutionGrant;
+  /** Derived from authentication. Executors act with THIS user's authority, never a service identity (FR-024). */
+  readonly security: AuthorizationContext;
+  /** Validated, normalized, deeply frozen. Never the raw proposal. */
+  readonly params: DeepReadonly<TParams>;
+  readonly resource: ResolvedResource | null;
+  readonly requestId: RequestId;
+}
+
+export type UiInstruction =
+  | { readonly kind: "highlight"; readonly elementId: string }
+  | { readonly kind: "tooltip"; readonly elementId: string; readonly text: string }
+  | { readonly kind: "navigate"; readonly route: string };
+
+export type ExecutionResult<TValue = unknown> =
+  | {
+      readonly status: "success";
+      readonly value?: TValue;
+      /** For the audit trail's "resource affected". */
+      readonly affected?: ResourceRef;
+      /** Browser is display-only (research D15): UI effects are returned as typed instructions. */
+      readonly ui?: UiInstruction;
+    }
+  | {
+      readonly status: "failure";
+      /** Short code for audit. Never raw error text, never shown to the model. */
+      readonly code: string;
+    };
+
+export interface ActionExecutor<TParams = unknown, TValue = unknown> {
+  readonly id: ExecutorId;
+  /**
+   * Created with defineExecutor(), whose wrapper verifies the grant BEFORE running:
+   * grant minted by a Gateway, not yet consumed, bound to this call's
+   * (requestId, actionId, params digest, tenant, user). Otherwise it throws and runs nothing.
+   */
+  execute(call: ExecutionCall<TParams>): Promise<ExecutionResult<TValue>>;
+}
+
+/** Wraps an implementation with grant verification. The only supported way to create an executor. */
+export declare function defineExecutor<TParams, TValue>(spec: {
+  readonly id: ExecutorId;
+  readonly run: (call: ExecutionCall<TParams>) => Promise<ExecutionResult<TValue>>;
+}): ActionExecutor<TParams, TValue>;
+
+/**
+ * Executors bound to registry entries at the composition root. Passed to createPolicyGateway()
+ * and nowhere else; the AI layer never receives it (research D4).
+ */
+export interface ExecutorTable {
+  readonly executorFor: (id: ExecutorId) => ActionExecutor | undefined;
+}
+
+/** Validates registry-to-executor binding (rule R10). Throws RegistrationError on mismatch. */
+export declare function bindExecutors(
+  registry: import("./action-definition").ActionRegistry,
+  executors: readonly ActionExecutor[],
+): ExecutorTable;
