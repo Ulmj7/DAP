@@ -325,6 +325,50 @@ describe("defineExecutor passes the body the SAME verified call (snapshot, not t
 });
 
 describe("minted objects are immutable (tenant isolation)", () => {
+  it("reads each call field once and preserves the grant and normalized nested data", async () => {
+    const b = binding();
+    const security = mintAuthorizationContext(principal());
+    const grant = mintExecutionGrant(b);
+    const params = Object.freeze({ nested: Object.freeze({ name: "Ada" }) });
+    const resource = Object.freeze({
+      ref: Object.freeze({ type: "project", id: "project-1" }),
+      tenantId: b.tenantId,
+      displayName: "Project",
+    });
+    const values = {
+      grant, security, params, resource,
+      requestId: b.requestId, actionId: b.actionId, paramsDigest: b.paramsDigest,
+    };
+    const reads = new Map<string, number>();
+    const hostile = Object.defineProperties({}, Object.fromEntries(
+      Object.entries(values).map(([key, value]) => [key, {
+        get() {
+          const count = (reads.get(key) ?? 0) + 1;
+          reads.set(key, count);
+          return count === 1 ? value : undefined;
+        },
+      }]),
+    )) as ExecutionCall<typeof params>;
+    const executor = defineExecutor<typeof params>({
+      id: "exec-1",
+      run: async (call) => {
+        expect(Object.isFrozen(call)).toBe(true);
+        for (let repeat = 0; repeat < 2; repeat += 1) {
+          expect(call.grant).toBe(grant);
+          expect(call.security).toBe(security);
+          expect(call.params).toBe(params);
+          expect(call.params.nested.name).toBe("Ada");
+          expect(call.resource).toBe(resource);
+          expect(call.resource?.ref.id).toBe("project-1");
+        }
+        return { status: "success" };
+      },
+    });
+    await executor.execute(hostile);
+    for (const key of Object.keys(values)) expect(reads.get(key), key).toBe(1);
+    await expect(executor.execute(values)).rejects.toThrow();
+  });
+
   it("a minted context is frozen: assigning tenantId throws TypeError, value unchanged", () => {
     const ctx = mintAuthorizationContext(principal());
     expect(Object.isFrozen(ctx)).toBe(true);

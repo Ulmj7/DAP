@@ -58,6 +58,13 @@ module.exports = {
       to: { path: "^packages/contracts/src/mint/index\\.ts$" },
     },
     {
+      name: "no-runtime-module-loaders",
+      severity: "error",
+      comment: "Runtime packages use explicit ESM imports; node:module/createRequire can hide edges from the graph.",
+      from: { path: "^(packages|apps)/" },
+      to: { path: "^(node:)?module$" },
+    },
+    {
       name: "no-circular",
       severity: "error",
       comment: "Circular dependencies make the trust layering unverifiable.",

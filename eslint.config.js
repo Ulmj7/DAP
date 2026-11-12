@@ -85,6 +85,26 @@ const SYNTAX_OUTSIDE = [...SYNTAX_BASE, SEL_DYN_MINT, SEL_DYN_DEEP, SEL_REQ_MINT
 // @dap/contracts/mint but nothing deeper.
 const SYNTAX_MINTER = [...SYNTAX_BASE, SEL_DYN_DEEP, SEL_REQ_DEEP];
 
+// Aliased createRequire calls are invisible to static dependency extraction. Runtime
+// packages use explicit ESM imports; tooling outside packages/apps can still load CJS.
+const LOADER_MSG = "Alternate module loaders are forbidden in runtime packages; use explicit ESM imports.";
+const MODULE_LOADERS = [
+  {
+    selector: ["ImportDeclaration", "ExportNamedDeclaration", "ExportAllDeclaration", "ImportExpression"]
+      .map((kind) => `${kind}[source.value=/^(node:)?module$/]`).join(", "),
+    message: LOADER_MSG,
+  },
+  {
+    selector: [
+      "MemberExpression[property.name=/^(getBuiltinModule|mainModule)$/]",
+      "MemberExpression[computed=true][property.value=/^(getBuiltinModule|mainModule)$/]",
+      "Property[key.name=/^(getBuiltinModule|mainModule)$/]",
+      "Property[key.value=/^(getBuiltinModule|mainModule)$/]",
+    ].join(", "),
+    message: LOADER_MSG,
+  },
+];
+
 export default tseslint.config(
   { ignores: ["**/dist/**", "**/node_modules/**", "**/coverage/**", ".specify/**", ".claude/**", ".agents/**", "specs/**"] },
   ...tseslint.configs.recommended,
@@ -99,20 +119,30 @@ export default tseslint.config(
     },
   },
   {
+    files: ["packages/**", "apps/**"],
+    rules: {
+      "no-restricted-syntax": ["error", ...SYNTAX_OUTSIDE, ...MODULE_LOADERS],
+      "no-restricted-globals": ["error",
+        { name: "require", message: LOADER_MSG },
+        { name: "module", message: LOADER_MSG },
+      ],
+    },
+  },
+  {
     // packages/contracts may import its own modules (and the mint tree) freely by relative path.
     files: ["packages/contracts/**"],
     rules: {
       "no-restricted-imports": "off",
-      "no-restricted-syntax": ["error", ...SYNTAX_BASE],
+      "no-restricted-syntax": ["error", ...SYNTAX_BASE, ...MODULE_LOADERS],
     },
   },
   {
     // Trusted minters: the security package and the testkit may import the restricted
-    // @dap/contracts/mint subpath (static, dynamic, or require) but NOT deep imports.
+    // @dap/contracts/mint subpath (static or dynamic ESM) but NOT deep imports.
     files: ["packages/security/**", "packages/testkit/**"],
     rules: {
       "no-restricted-imports": ["error", DEEP_ONLY],
-      "no-restricted-syntax": ["error", ...SYNTAX_MINTER],
+      "no-restricted-syntax": ["error", ...SYNTAX_MINTER, ...MODULE_LOADERS],
     },
   },
 );
