@@ -7,10 +7,14 @@
  * the narrow `isMintedContext` and `authorizeAndConsume` operations by relative path — it never
  * touches a registry record, and exports nothing that does.
  *
- * Fail-closed + reentrancy-safe (C): `execute` FIRST reads every decision-relevant field of
- * `call` exactly once into plain locals (this is where a hostile getter would fire, before any
- * state change), THEN in one synchronous block verifies the context is minted and consumes the
- * grant (single-use, all-five-fields), and ONLY then runs the body. A mismatched or re-entrant
+ * Fail-closed + reentrancy-safe (C): `execute` FIRST reads EVERY field of `call` exactly once
+ * into plain locals (this is where a hostile getter would fire, before any state change), THEN
+ * in one synchronous block verifies the context is minted and consumes the grant (single-use,
+ * all-five-fields), builds a plain FROZEN snapshot from those locals, and ONLY then runs the
+ * body — passing THAT snapshot, never the original accessor-bearing `call`. So the guard and the
+ * body act on the SAME verified values: a `call.security` getter that returns the minted context
+ * on the first read and a different object on the second can never let the body act under a
+ * different tenant, and the body always receives a frozen object. A mismatched or re-entrant
  * attempt never burns a correct grant and the body runs at most once per grant.
  */
 import type { ActionExecutor, ExecutionCall, ExecutionResult } from "./execution.js";
@@ -53,11 +57,13 @@ export function defineExecutor<TParams = unknown, TValue = unknown>(
   return {
     id: spec.id as ExecutorId,
     execute: async (call: ExecutionCall<TParams>): Promise<ExecutionResult<TValue>> => {
-      // 1. Read EVERY decision-relevant field of `call` exactly once into plain locals.
-      //    A hostile getter fires HERE, before any state check or body run. We never read
-      //    `call.*` again after this point (the body receives the original `call`, but the guard
-      //    decision is made solely from these locals).
+      // 1. Read EVERY field of `call` exactly once into plain locals. A hostile getter fires
+      //    HERE, before any state check or body run. We never read `call.*` again after this
+      //    point: the guard decision and the body input are both derived from these locals.
+      const grant = call.grant;
       const security = call.security;
+      const params = call.params;
+      const resource = call.resource;
       const requestId = call.requestId;
       const actionId = call.actionId;
       const paramsDigest = call.paramsDigest;
@@ -68,7 +74,7 @@ export function defineExecutor<TParams = unknown, TValue = unknown>(
       // 2. One synchronous block: verify context provenance + consume the grant (single-use,
       //    all-five-fields). No `call.*` reads and no untrusted code between these steps.
       const granted = mintedCtx
-        ? authorizeAndConsume(call.grant, { requestId, actionId, paramsDigest, tenantId, userId })
+        ? authorizeAndConsume(grant, { requestId, actionId, paramsDigest, tenantId, userId })
         : false;
 
       if (!granted) {
@@ -77,8 +83,21 @@ export function defineExecutor<TParams = unknown, TValue = unknown>(
         );
       }
 
-      // 3. Only now run the body.
-      return spec.run(call);
+      // 3. Build a plain frozen snapshot from the verified locals and hand THAT (never the
+      //    original accessor-bearing `call`) to the body. `security` is the exact minted context
+      //    the guard verified; every field was read once, so no getter re-fires for the body.
+      const snapshot: ExecutionCall<TParams> = Object.freeze({
+        grant,
+        security,
+        params,
+        resource,
+        requestId,
+        actionId,
+        paramsDigest,
+      });
+
+      // 4. Only now run the body, against the verified snapshot.
+      return spec.run(snapshot);
     },
   };
 }

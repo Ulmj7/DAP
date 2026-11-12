@@ -260,6 +260,70 @@ describe("defineExecutor reentrancy (hostile getter double-execution)", () => {
   });
 });
 
+describe("defineExecutor passes the body the SAME verified call (snapshot, not the original accessor object)", () => {
+  it("the body receives the exact minted context the guard verified; a getter returning different values on re-read does not leak", async () => {
+    const b = binding(); // tenant A / alice
+    const ctxA = mintAuthorizationContext(principal()); // minted A/alice
+    const grant = mintExecutionGrant(b);
+
+    // Unminted tenant B / bob — what a hostile getter returns on the SECOND read.
+    const ctxB = {
+      userId: "user-bob",
+      tenantId: "22222222-2222-4222-8222-222222222222",
+      sessionId: "session-bad",
+      authenticatedAt: "2026-01-01T00:00:00.000Z",
+      validUntil: "2026-01-01T00:10:00.000Z",
+    };
+
+    let securityReads = 0;
+    let seen: { userId: string; tenantId: string; callFrozen: boolean; grantFrozen: boolean } | null = null;
+    const executor = defineExecutor({
+      id: "exec-1",
+      run: async (call: ExecutionCall<Record<string, unknown>>) => {
+        // The body reads call.security and the identity values exactly once.
+        seen = {
+          userId: call.security.userId,
+          tenantId: call.security.tenantId,
+          callFrozen: Object.isFrozen(call),
+          grantFrozen: Object.isFrozen(call.grant),
+        };
+        return { status: "success", value: "done" };
+      },
+    });
+
+    // A call whose `security` getter returns the minted A context on the FIRST read and the
+    // unminted B context on any later read. If the guard and the body both read `call.security`
+    // separately, the body would see B (a different tenant) and the getter would read twice.
+    const hostileCall = {
+      grant,
+      params: { name: "Ada" },
+      resource: null,
+      requestId: b.requestId,
+      actionId: b.actionId,
+      paramsDigest: b.paramsDigest,
+      get security() {
+        securityReads += 1;
+        return securityReads === 1 ? ctxA : ctxB;
+      },
+    } as unknown as ExecutionCall<Record<string, unknown>>;
+
+    const res = await executor.execute(hostileCall);
+    expect(res).toEqual({ status: "success", value: "done" });
+
+    // The guard read `security` exactly ONCE (the verified minted A context). The body must see
+    // that SAME A context, never the second-read B context, and never re-trigger the getter.
+    expect(seen).toEqual({
+      userId: "user-alice",
+      tenantId: "11111111-1111-4111-8111-111111111111",
+      callFrozen: true,
+      grantFrozen: true,
+    });
+    expect(securityReads).toBe(1);
+    // The verified context object is precisely the one the guard accepted.
+    expect(isMintedContext(ctxA)).toBe(true);
+  });
+});
+
 describe("minted objects are immutable (tenant isolation)", () => {
   it("a minted context is frozen: assigning tenantId throws TypeError, value unchanged", () => {
     const ctx = mintAuthorizationContext(principal());

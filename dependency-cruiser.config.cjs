@@ -38,15 +38,24 @@ module.exports = {
       name: "no-deep-imports-into-contracts",
       severity: "error",
       comment:
-        "Outside packages/contracts, only the declared entry points are reachable: the package root " +
-        "(packages/contracts/src/index.ts) and the restricted mint subpath (packages/contracts/src/mint/index.ts). " +
-        "Deep imports into contracts' src/dist (e.g. execution-runtime, grant-registry) are forbidden, " +
-        "so registerGrant/grantRecord-style internals stay behind the mint boundary (ATK-ARCH-05).",
+        "Outside packages/contracts, only the two DECLARED entry points are reachable: the package root " +
+        "(packages/contracts/src/index.ts) and the mint subpath (packages/contracts/src/mint/index.ts). " +
+        "Deep imports into contracts' src/dist (e.g. execution-runtime, grant-registry, or the mint tree's " +
+        "other files) are forbidden, so registerGrant/grantRecord-style internals stay behind the mint " +
+        "boundary (ATK-ARCH-05). Applies to static, DYNAMIC, and compiled (dist) imports alike. The mint " +
+        "entry itself is governed by the dedicated mint-entry-restricted rule (trusted minters may use it).",
       from: { pathNot: "^packages/contracts/" },
-      to: {
-        path: "^packages/contracts/(src|dist)/",
-        pathNot: "^packages/contracts/src/(index|mint/index)\\.ts$",
-      },
+      to: { path: "^packages/contracts/(src|dist)/", pathNot: "^packages/contracts/src/(index|mint/index)\\.ts$" },
+    },
+    {
+      name: "mint-entry-restricted",
+      severity: "error",
+      comment:
+        "The mint entry (@dap/contracts/mint -> packages/contracts/src/mint/index.ts) is the ONLY way in " +
+        "for the trusted minters (security, testkit). Everything outside security/testkit/contracts " +
+        "(ai, actions, and the apps) must not reach it, for static OR dynamic imports (ATK-ARCH-05).",
+      from: { path: "^(packages/(ai|actions)|apps)/" },
+      to: { path: "^packages/contracts/src/mint/index\\.ts$" },
     },
     {
       name: "no-circular",
@@ -57,7 +66,10 @@ module.exports = {
     },
   ],
   options: {
-    doNotFollow: { path: "node_modules" },
+    // dist is NOT excluded: compiled targets must still appear as dependency EDGES (leaf nodes) so
+    // no-deep-imports-into-contracts can fire on dist targets. We simply don't crawl INTO dist or
+    // node_modules (doNotFollow), and we scan only the src trees as roots.
+    doNotFollow: { path: "node_modules|(^|/)dist/" },
     tsPreCompilationDeps: true,
     tsConfig: { fileName: "tsconfig.base.json" },
     enhancedResolveOptions: {
@@ -65,6 +77,6 @@ module.exports = {
       conditionNames: ["@dap/source", "import", "node", "default"],
       mainFields: ["module", "main", "types"],
     },
-    exclude: { path: "(^|/)(dist|coverage|node_modules)/" },
+    exclude: { path: "(^|/)(coverage|node_modules)/" },
   },
 };
