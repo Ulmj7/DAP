@@ -121,3 +121,62 @@ describe("ExecutionGrant minting and single-use consumption", () => {
     expect(consumeExecutionGrant({}, b)).toBe(false);
   });
 });
+
+describe("grant registry hardening (input aliasing + getter reentrancy)", () => {
+  it("does not alias the caller's binding: mutating the original after minting cannot rebind the grant (B)", () => {
+    const original: GrantBinding = binding();
+    const grant = mintExecutionGrant(original);
+
+    // Mutate the ORIGINAL binding object to tenant B / bob AFTER minting.
+    const mutable = original as unknown as Record<string, string>;
+    mutable.tenantId = "22222222-2222-4222-8222-222222222222";
+    mutable.userId = "user-bob";
+
+    // Consuming against the MUTATED values must be false: the grant is bound to the original snapshot.
+    const mutatedExpected: GrantBinding = {
+      requestId: "req-1",
+      actionId: "act-1",
+      paramsDigest: "digest-1",
+      tenantId: "22222222-2222-4222-8222-222222222222",
+      userId: "user-bob",
+    } as unknown as GrantBinding;
+    expect(consumeExecutionGrant(grant, mutatedExpected)).toBe(false);
+
+    // Consuming against the ORIGINAL values is still true.
+    const originalExpected: GrantBinding = {
+      requestId: "req-1",
+      actionId: "act-1",
+      paramsDigest: "digest-1",
+      tenantId: "11111111-1111-4111-8111-111111111111",
+      userId: "user-alice",
+    } as unknown as GrantBinding;
+    expect(consumeExecutionGrant(grant, originalExpected)).toBe(true);
+  });
+
+  it("a hostile getter on `expected` that consumes the same grant cannot double-consume (C)", () => {
+    const b = binding();
+    const grant = mintExecutionGrant(b);
+    let consumedCount = 0;
+
+    // A `requestId` getter that, when read, recursively consumes the grant with a correct binding.
+    const hostile: GrantBinding = {
+      actionId: b.actionId,
+      paramsDigest: b.paramsDigest,
+      tenantId: b.tenantId,
+      userId: b.userId,
+      get requestId() {
+        const inner = consumeExecutionGrant(grant, b); // fires BEFORE the outer reads requestId
+        if (inner) consumedCount += 1;
+        return b.requestId; // then return the correct id
+      },
+    } as unknown as GrantBinding;
+
+    const outer = consumeExecutionGrant(grant, hostile);
+    if (outer) consumedCount += 1;
+
+    // Total successful consumptions must be <= 1 (the inner one); the outer must be rejected.
+    expect(consumedCount).toBeLessThanOrEqual(1);
+    // The grant is now consumed: any further correct consume fails.
+    expect(consumeExecutionGrant(grant, b)).toBe(false);
+  });
+});

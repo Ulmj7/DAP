@@ -210,6 +210,56 @@ describe("defineExecutor single-use + fail-closed details", () => {
   });
 });
 
+describe("defineExecutor reentrancy (hostile getter double-execution)", () => {
+  it("a hostile call.requestId getter that re-enters the executor cannot double-run the body (C)", async () => {
+    const b = binding();
+    const ctx = mintAuthorizationContext(principal());
+    const grant = mintExecutionGrant(b);
+    let runs = 0;
+    const executor = defineExecutor({
+      id: "exec-1",
+      run: async () => {
+        runs += 1;
+        return { status: "success", value: "done" };
+      },
+    });
+
+    // A plain, fully-matching call that the getter will feed to the executor.
+    const plainCall: ExecutionCall<Record<string, unknown>> = {
+      grant,
+      security: ctx,
+      params: { name: "Ada" },
+      resource: null,
+      requestId: b.requestId,
+      actionId: b.actionId,
+      paramsDigest: b.paramsDigest,
+    };
+
+    // A call whose `requestId` getter recursively executes the executor with `plainCall`.
+    const hostileCall = {
+      grant,
+      security: ctx,
+      params: { name: "Ada" },
+      resource: null,
+      get requestId() {
+        void executor.execute(plainCall); // fires when the guard reads call.requestId
+        return b.requestId;
+      },
+      actionId: b.actionId,
+      paramsDigest: b.paramsDigest,
+    } as unknown as ExecutionCall<Record<string, unknown>>;
+
+    // The inner execution (triggered by the getter) consumes the grant and runs the body once.
+    // The outer call must then be rejected. Total successful body runs must stay <= 1.
+    await expect(executor.execute(hostileCall)).rejects.toThrow();
+    expect(runs).toBeLessThanOrEqual(1);
+
+    // The grant is consumed: a plain correct call now fails too.
+    await expect(executor.execute(plainCall)).rejects.toThrow();
+    expect(runs).toBeLessThanOrEqual(1);
+  });
+});
+
 describe("minted objects are immutable (tenant isolation)", () => {
   it("a minted context is frozen: assigning tenantId throws TypeError, value unchanged", () => {
     const ctx = mintAuthorizationContext(principal());

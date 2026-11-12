@@ -35,6 +35,20 @@ module.exports = {
     forbid("nothing-imports-apps", "^packages/", "^apps/",
       "Apps are composition roots; nothing imports them."),
     {
+      name: "no-deep-imports-into-contracts",
+      severity: "error",
+      comment:
+        "Outside packages/contracts, only the declared entry points are reachable: the package root " +
+        "(packages/contracts/src/index.ts) and the restricted mint subpath (packages/contracts/src/mint/index.ts). " +
+        "Deep imports into contracts' src/dist (e.g. execution-runtime, grant-registry) are forbidden, " +
+        "so registerGrant/grantRecord-style internals stay behind the mint boundary (ATK-ARCH-05).",
+      from: { pathNot: "^packages/contracts/" },
+      to: {
+        path: "^packages/contracts/(src|dist)/",
+        pathNot: "^packages/contracts/src/(index|mint/index)\\.ts$",
+      },
+    },
+    {
       name: "no-circular",
       severity: "error",
       comment: "Circular dependencies make the trust layering unverifiable.",
