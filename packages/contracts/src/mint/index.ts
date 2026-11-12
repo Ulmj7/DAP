@@ -2,9 +2,10 @@
  * @dap/contracts/mint — the trusted minting runtime (research D5).
  *
  * The ONLY way to produce a recognized `AuthorizationContext` or `ExecutionGrant`. Both are
- * tracked in module-private structures (a WeakSet of contexts here; a WeakMap of grants in the
- * contracts execution runtime) that no other module can reach, so a plain data literal with the
- * same fields, a spread copy, or a fabricated object fails verification.
+ * tracked in module-private registries that live in the contracts execution runtime
+ * (a WeakSet of minted contexts and a WeakMap of grants), which no other module can reach. A
+ * plain data literal with the same fields, a spread copy, or a fabricated object therefore fails
+ * verification.
  *
  * This subpath is importable ONLY by @dap/security and @dap/testkit (enforced by lint,
  * ATK-ARCH-05). Production code in @dap/actions and the AI layer must not import it — they
@@ -12,48 +13,21 @@
  *
  * Fail-closed: every check below rejects on anything it cannot prove to be minted and valid.
  */
-import type { AuthorizationContext, AuthenticatedPrincipal } from "../security-context.js";
 import type { ExecutionGrant } from "../execution.js";
 import { grantRecord, registerGrant, type GrantBinding } from "../execution-runtime.js";
 
-/**
- * The full grant binding: bound to (requestId, actionId, paramsDigest, tenantId, userId),
- * single-use. Re-exported so @dap/security can name it. `tenantId` is validated as a UUID by
- * the caller (@dap/security), not here.
- */
+// The full grant binding (requestId, actionId, paramsDigest, tenantId, userId), single-use.
+// Re-exported so @dap/security can name it. `tenantId` is validated as a UUID by the caller.
 export type { GrantBinding } from "../execution-runtime.js";
 
-// Module-private registry of minted contexts. Nothing is exported, so no caller can add,
-// remove, or clear entries.
-const mintedContexts = new WeakSet<AuthorizationContext>();
-
-/**
- * Mint an AuthorizationContext from a strictly-validated principal. The returned object is
- * recognized ONLY by identity via `isMintedContext`; a structurally identical literal is not.
- */
-export function mintAuthorizationContext(principal: AuthenticatedPrincipal): AuthorizationContext {
-  const ctx = {
-    userId: principal.userId,
-    tenantId: principal.tenantId,
-    sessionId: principal.sessionId,
-    authenticatedAt: principal.authenticatedAt,
-    validUntil: principal.validUntil,
-  };
-  mintedContexts.add(ctx as AuthorizationContext);
-  return ctx as AuthorizationContext;
-}
-
-/**
- * Type guard. True ONLY for an object minted by `mintAuthorizationContext`. A plain literal
- * with the same fields, a spread copy, or any other object returns false.
- */
-export function isMintedContext(ctx: unknown): ctx is AuthorizationContext {
-  return typeof ctx === "object" && ctx !== null && mintedContexts.has(ctx as AuthorizationContext);
-}
+// Minting of AuthorizationContexts is owned by the execution runtime (so defineExecutor can
+// require a minted context). Exposed HERE from the mint subpath only — never from the barrel.
+export { isMintedContext, mintContext as mintAuthorizationContext } from "../execution-runtime.js";
 
 /**
  * Mint an ExecutionGrant bound to the 5-tuple. The grant is single-use: it can be consumed
- * exactly once, and only by a call whose binding matches all five fields.
+ * exactly once, and only by a call whose binding matches all five fields. The grant object is
+ * frozen.
  */
 export function mintExecutionGrant(binding: GrantBinding): ExecutionGrant {
   return registerGrant(binding) as unknown as ExecutionGrant;

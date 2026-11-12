@@ -44,6 +44,10 @@ export interface ExecutionCall<TParams> {
   readonly params: DeepReadonly<TParams>;
   readonly resource: ResolvedResource | null;
   readonly requestId: RequestId;
+  /** The resolved action id. Must equal the grant's bound actionId (defineExecutor verifies). */
+  readonly actionId: ActionId;
+  /** SHA-256 over canonical JSON of the validated params. Must equal the grant's bound paramsDigest. */
+  readonly paramsDigest: Sha256Hex;
 }
 
 export type UiInstruction =

@@ -5,9 +5,13 @@ import { isMintedContext, mintAuthorizationContext, mintExecutionGrant } from ".
 import type { GrantBinding } from "./mint/index.js";
 import type { AuthenticatedPrincipal } from "./security-context.js";
 
-// T021: defineExecutor's wrapper must verify AND consume the grant BEFORE running the body
-// (FR-017, ATK-ARCH-02). No grant, a forged grant, a wrong-binding grant, and a consumed
-// grant all refuse to run; the body never executes.
+// T021: defineExecutor's wrapper verifies AND consumes the grant BEFORE running the body
+// (FR-017, ATK-ARCH-02). The guard requires:
+//   - call.security to be a context minted by mintAuthorizationContext (a plain literal is not),
+//   - the grant to be minted, unconsumed, and bound to the call on ALL FIVE fields
+//     (requestId, actionId, paramsDigest, security.tenantId, security.userId).
+// Any failure throws ExecutionGuardError and runs nothing, and a mismatched attempt must NOT
+// consume the grant (so a correct later call still works).
 
 function principal(overrides: Partial<AuthenticatedPrincipal> = {}): AuthenticatedPrincipal {
   return {
@@ -32,49 +36,59 @@ function binding(overrides: Record<string, string> = {}): GrantBinding {
   return base as unknown as GrantBinding;
 }
 
-function makeWorld(overrides: Record<string, string> = {}) {
-  const p = principal();
-  const ctx = mintAuthorizationContext(p);
-  const b = binding(overrides);
+interface WorldOpts {
+  /** Affects the minted call.security (tenant/user identity carried by the call). */
+  principal?: Partial<AuthenticatedPrincipal>;
+  /** Affects the grant's binding. */
+  bind?: Record<string, string>;
+  /** Overrides the call's requestId / actionId / paramsDigest (plain-string values). */
+  callField?: Record<string, string>;
+}
+
+function world(opts: WorldOpts = {}) {
+  const ctx = mintAuthorizationContext(principal(opts.principal));
+  const b = binding(opts.bind);
   const grant = mintExecutionGrant(b);
   let runs = 0;
-  const call: ExecutionCall<Record<string, unknown>> = {
+  const call = {
     grant,
     security: ctx,
     params: { name: "Ada" },
     resource: null,
     requestId: b.requestId,
-  };
-  const body = (): Promise<ExecutionResult> => {
+    actionId: b.actionId,
+    paramsDigest: b.paramsDigest,
+    ...opts.callField,
+  } as unknown as ExecutionCall<Record<string, unknown>>;
+  const body = async (): Promise<ExecutionResult> => {
     runs += 1;
-    return Promise.resolve({ status: "success", value: "done" });
+    return { status: "success", value: "done" };
   };
   const executor = defineExecutor({ id: "exec-1", run: body });
-  return { ctx, grant, call, body, executor, getRuns: () => runs };
+  return { ctx, b, grant, call, executor, getRuns: () => runs };
 }
 
 describe("defineExecutor grant guard (ATK-ARCH-02)", () => {
-  it("runs the body when the grant is minted, unconsumed, and matches the call", async () => {
-    const { call, executor, getRuns } = makeWorld();
+  it("runs the body when the grant, minted context, and all five binding fields match", async () => {
+    const { call, executor, getRuns } = world();
     const result = await executor.execute(call);
     expect(result).toEqual({ status: "success", value: "done" });
     expect(getRuns()).toBe(1);
   });
 
   it("throws and never runs the body when there is no grant", async () => {
-    const { ctx, call, executor, getRuns } = makeWorld();
+    const { ctx, call, executor, getRuns } = world();
     const noGrant: ExecutionCall<Record<string, unknown>> = {
       ...call,
       grant: null as unknown as ExecutionCall<Record<string, unknown>>["grant"],
     };
     await expect(executor.execute(noGrant)).rejects.toThrow();
     expect(getRuns()).toBe(0);
-    // The minted context itself is still recognized (sanity that we minted correctly).
     expect(isMintedContext(ctx)).toBe(true);
   });
 
   it("throws and never runs the body for a forged (plain literal) grant", async () => {
-    const { call, executor, getRuns } = makeWorld();
+    const { call, executor, getRuns } = world();
     const forged = { requestId: "req-1", actionId: "act-1", paramsDigest: "digest-1" };
     const forgedCall: ExecutionCall<Record<string, unknown>> = {
       ...call,
@@ -83,31 +97,139 @@ describe("defineExecutor grant guard (ATK-ARCH-02)", () => {
     await expect(executor.execute(forgedCall)).rejects.toThrow();
     expect(getRuns()).toBe(0);
   });
+});
 
-  it("throws and never runs the body for a grant bound to a different request", async () => {
-    const { call, executor, getRuns } = makeWorld({ requestId: "req-OTHER" });
-    // The call carries the world's original requestId; the grant is bound to another.
-    const mismatchCall = { ...call, requestId: "req-1" } as unknown as ExecutionCall<Record<string, unknown>>;
-    await expect(executor.execute(mismatchCall)).rejects.toThrow();
+describe("defineExecutor verifies ALL FIVE binding fields (single-field mismatch rejected)", () => {
+  it("rejects a wrong actionId; body never runs", async () => {
+    const { executor, call, getRuns } = world({ callField: { actionId: "act-OTHER" } });
+    await expect(executor.execute(call)).rejects.toThrow();
     expect(getRuns()).toBe(0);
   });
 
-  it("throws and never runs the body for a grant bound to a different tenant/user", async () => {
-    const { call, executor, getRuns } = makeWorld({
-      tenantId: "22222222-2222-4222-8222-222222222222",
-      userId: "user-bob",
+  it("rejects a wrong paramsDigest; body never runs", async () => {
+    const { executor, call, getRuns } = world({ callField: { paramsDigest: "digest-OTHER" } });
+    await expect(executor.execute(call)).rejects.toThrow();
+    expect(getRuns()).toBe(0);
+  });
+
+  it("rejects a wrong tenantId (call.security differs from the grant); body never runs", async () => {
+    const { executor, call, getRuns } = world({
+      principal: { tenantId: "22222222-2222-4222-8222-222222222222" },
     });
     await expect(executor.execute(call)).rejects.toThrow();
     expect(getRuns()).toBe(0);
   });
 
+  it("rejects a wrong userId (call.security differs from the grant); body never runs", async () => {
+    const { executor, call, getRuns } = world({ principal: { userId: "user-bob" } });
+    await expect(executor.execute(call)).rejects.toThrow();
+    expect(getRuns()).toBe(0);
+  });
+
+  it("rejects a wrong requestId; body never runs", async () => {
+    const { executor, call, getRuns } = world({ callField: { requestId: "req-OTHER" } });
+    await expect(executor.execute(call)).rejects.toThrow();
+    expect(getRuns()).toBe(0);
+  });
+});
+
+describe("defineExecutor single-use + fail-closed details", () => {
+  it("a mismatched attempt does NOT consume the grant (a correct later call still succeeds)", async () => {
+    const w = world();
+    // Wrong actionId: rejected, and must NOT burn the grant.
+    const bad = {
+      grant: w.grant,
+      security: w.ctx,
+      params: { name: "Ada" },
+      resource: null,
+      requestId: w.b.requestId,
+      actionId: "act-OTHER",
+      paramsDigest: w.b.paramsDigest,
+    } as unknown as ExecutionCall<Record<string, unknown>>;
+    await expect(w.executor.execute(bad)).rejects.toThrow();
+
+    // The correct call with the same grant still succeeds.
+    const good = {
+      grant: w.grant,
+      security: w.ctx,
+      params: { name: "Ada" },
+      resource: null,
+      requestId: w.b.requestId,
+      actionId: w.b.actionId,
+      paramsDigest: w.b.paramsDigest,
+    } as unknown as ExecutionCall<Record<string, unknown>>;
+    const res = await w.executor.execute(good);
+    expect(res).toEqual({ status: "success", value: "done" });
+    expect(w.getRuns()).toBe(1);
+  });
+
   it("throws and never re-runs the body for a consumed grant", async () => {
-    const { call, executor, getRuns } = makeWorld();
-    // First call succeeds and consumes the grant.
-    await executor.execute(call);
+    const { call, executor, getRuns } = world();
+    await executor.execute(call); // consumes
     expect(getRuns()).toBe(1);
-    // The same grant + call again must be rejected (single-use).
     await expect(executor.execute(call)).rejects.toThrow();
     expect(getRuns()).toBe(1);
+  });
+
+  it("rejects a plain-literal security (matching ids) and does not consume the grant", async () => {
+    const w = world();
+    // A structurally identical but NOT-minted context.
+    const fakeSecurity = {
+      userId: "user-alice",
+      tenantId: "11111111-1111-4111-8111-111111111111",
+      sessionId: "session-1",
+      authenticatedAt: "2026-01-01T00:00:00.000Z",
+      validUntil: "2026-01-01T00:10:00.000Z",
+    };
+    const call = {
+      grant: w.grant,
+      security: fakeSecurity,
+      params: { name: "Ada" },
+      resource: null,
+      requestId: w.b.requestId,
+      actionId: w.b.actionId,
+      paramsDigest: w.b.paramsDigest,
+    } as unknown as ExecutionCall<Record<string, unknown>>;
+    await expect(w.executor.execute(call)).rejects.toThrow();
+    expect(w.getRuns()).toBe(0);
+
+    // The grant was NOT burned: a call with a real minted context still works.
+    const realCtx = mintAuthorizationContext(principal());
+    const good = {
+      grant: w.grant,
+      security: realCtx,
+      params: { name: "Ada" },
+      resource: null,
+      requestId: w.b.requestId,
+      actionId: w.b.actionId,
+      paramsDigest: w.b.paramsDigest,
+    } as unknown as ExecutionCall<Record<string, unknown>>;
+    const res = await w.executor.execute(good);
+    expect(res).toEqual({ status: "success", value: "done" });
+    expect(w.getRuns()).toBe(1);
+  });
+});
+
+describe("minted objects are immutable (tenant isolation)", () => {
+  it("a minted context is frozen: assigning tenantId throws TypeError, value unchanged", () => {
+    const ctx = mintAuthorizationContext(principal());
+    expect(Object.isFrozen(ctx)).toBe(true);
+    const before = ctx.tenantId;
+    const mutable = ctx as unknown as { tenantId: string };
+    expect(() => {
+      mutable.tenantId = "99999999-9999-4999-8999-999999999999";
+    }).toThrow(TypeError);
+    expect(ctx.tenantId).toBe(before);
+  });
+
+  it("a minted grant is frozen: assigning actionId throws TypeError, value unchanged", () => {
+    const grant = mintExecutionGrant(binding());
+    expect(Object.isFrozen(grant)).toBe(true);
+    const before = grant.actionId;
+    const mutable = grant as unknown as { actionId: string };
+    expect(() => {
+      mutable.actionId = "act-OTHER";
+    }).toThrow(TypeError);
+    expect(grant.actionId).toBe(before);
   });
 });
