@@ -6,9 +6,10 @@ import { withTenant } from "../../postgres/tenant-tx.js";
 const tenantA = "11111111-1111-4111-8111-111111111111";
 const tenantB = "22222222-2222-4222-8222-222222222222";
 const table = `public.tenant_tx_probe_${randomUUID().replaceAll("-", "")}`;
+const safeTable = `public.tenant_tx_nullif_probe_${randomUUID().replaceAll("-", "")}`;
 let app: Pool;
 let owner: Pool;
-let created = false;
+const createdTables: string[] = [];
 
 // Live-DB tests live under conformance so `--project unit` needs no PostgreSQL.
 describe("withTenant against forced PostgreSQL RLS as dap_app", () => {
@@ -39,33 +40,39 @@ describe("withTenant against forced PostgreSQL RLS as dap_app", () => {
     expect((await app.query("SELECT pg_has_role(current_user, 'dap_owner', 'MEMBER') AS member")).rows)
       .toEqual([{ member: false }]);
 
-    await owner.query(`CREATE TABLE ${table} (tenant_id uuid NOT NULL, marker text NOT NULL)`);
-    created = true;
-    await owner.query(`
-      ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;
-      CREATE POLICY tenant_scope ON ${table}
-        USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-        WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
-      GRANT SELECT, INSERT ON ${table} TO dap_app;
-    `);
-    // Seed as the owner, still subject to FORCED RLS, independently of withTenant.
-    for (const tenantId of [tenantA, tenantB]) {
-      await owner.query("BEGIN");
-      try {
-        await owner.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
-        await owner.query(`INSERT INTO ${table} (tenant_id, marker) VALUES ($1, 'seed')`, [tenantId]);
-        await owner.query("COMMIT");
-      } catch (error) {
-        await owner.query("ROLLBACK");
-        throw error;
+    for (const [probeTable, predicate] of [
+      [table, "tenant_id = current_setting('app.tenant_id', true)::uuid"],
+      // Final sec_* migrations must use this predicate for both USING and WITH CHECK.
+      [safeTable, "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"],
+    ] as const) {
+      await owner.query(`CREATE TABLE ${probeTable} (tenant_id uuid NOT NULL, marker text NOT NULL)`);
+      createdTables.push(probeTable);
+      await owner.query(`
+        ALTER TABLE ${probeTable} ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE ${probeTable} FORCE ROW LEVEL SECURITY;
+        CREATE POLICY tenant_scope ON ${probeTable}
+          USING (${predicate})
+          WITH CHECK (${predicate});
+        GRANT SELECT, INSERT ON ${probeTable} TO dap_app;
+      `);
+      // Seed as the owner, still subject to FORCED RLS, independently of withTenant.
+      for (const tenantId of [tenantA, tenantB]) {
+        await owner.query("BEGIN");
+        try {
+          await owner.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+          await owner.query(`INSERT INTO ${probeTable} (tenant_id, marker) VALUES ($1, 'seed')`, [tenantId]);
+          await owner.query("COMMIT");
+        } catch (error) {
+          await owner.query("ROLLBACK");
+          throw error;
+        }
       }
     }
   });
 
   afterAll(async () => {
     try {
-      if (created) await owner.query(`DROP TABLE ${table}`);
+      await Promise.all(createdTables.map((probeTable) => owner.query(`DROP TABLE ${probeTable}`)));
     } finally {
       await Promise.all([app?.end(), owner?.end()]);
     }
@@ -176,5 +183,68 @@ describe("withTenant against forced PostgreSQL RLS as dap_app", () => {
     expect(results.map((result) => result.rows)).toEqual([
       [{ tenant_id: tenantA }], [{ tenant_id: tenantB }],
     ]);
+  });
+
+  it.each(["commit", "rollback"])("pins why the raw UUID-cast policy is unsafe after %s", async (ending) => {
+    const reused = new Pool({ connectionString: process.env.DAP_DATABASE_URL, max: 1, connectionTimeoutMillis: 2_000 });
+    try {
+      const operation = withTenant(reused, tenantA, async (client) => {
+        expect((await client.query(`SELECT tenant_id FROM ${table} WHERE marker = 'seed'`)).rows)
+          .toEqual([{ tenant_id: tenantA }]);
+        if (ending === "rollback") throw new Error("intentional rollback");
+      });
+      if (ending === "rollback") await expect(operation).rejects.toThrow("intentional rollback");
+      else await operation;
+
+      expect((await reused.query("SELECT current_setting('app.tenant_id', true) AS tenant")).rows)
+        .toEqual([{ tenant: "" }]);
+      // A previously used connection has an empty custom setting, which cannot cast to UUID.
+      await expect(reused.query(`SELECT * FROM ${table}`)).rejects.toMatchObject({ code: "22P02" });
+    } finally {
+      await reused.end();
+    }
+  });
+
+  it.each(["commit", "rollback"])("NULLIF denies unscoped reads before use and after %s", async (ending) => {
+    const reused = new Pool({ connectionString: process.env.DAP_DATABASE_URL, max: 1, connectionTimeoutMillis: 2_000 });
+    try {
+      expect((await reused.query("SELECT current_setting('app.tenant_id', true) AS tenant")).rows)
+        .toEqual([{ tenant: null }]);
+      expect((await reused.query(`SELECT * FROM ${safeTable}`)).rows).toEqual([]);
+      const operation = withTenant(reused, tenantA, async (client) => {
+        expect((await client.query(`SELECT tenant_id FROM ${safeTable}`)).rows)
+          .toEqual([{ tenant_id: tenantA }]);
+        expect((await client.query(`SELECT * FROM ${safeTable} WHERE tenant_id = $1`, [tenantB])).rows)
+          .toEqual([]);
+        if (ending === "rollback") throw new Error("intentional rollback");
+      });
+      if (ending === "rollback") await expect(operation).rejects.toThrow("intentional rollback");
+      else await operation;
+
+      expect((await reused.query("SELECT current_setting('app.tenant_id', true) AS tenant")).rows)
+        .toEqual([{ tenant: "" }]);
+      expect((await reused.query(`SELECT * FROM ${safeTable}`)).rows).toEqual([]);
+      expect((await withTenant(reused, tenantB, (client) =>
+        client.query(`SELECT tenant_id FROM ${safeTable}`))).rows).toEqual([{ tenant_id: tenantB }]);
+      expect((await reused.query(`SELECT * FROM ${safeTable}`)).rows).toEqual([]);
+    } finally {
+      await reused.end();
+    }
+  });
+
+  it("NULLIF rejects cross-tenant and unscoped writes", async () => {
+    await expect(withTenant(app, tenantA, (client) =>
+      client.query(`INSERT INTO ${safeTable} VALUES ($1, 'forbidden')`, [tenantB])))
+      .rejects.toMatchObject({ code: "42501" });
+    expect((await withTenant(app, tenantB, (client) =>
+      client.query(`SELECT marker FROM ${safeTable}`))).rows).toEqual([{ marker: "seed" }]);
+
+    const unscoped = new Pool({ connectionString: process.env.DAP_DATABASE_URL, max: 1, connectionTimeoutMillis: 2_000 });
+    try {
+      await expect(unscoped.query(`INSERT INTO ${safeTable} VALUES ($1, 'unscoped')`, [tenantA]))
+        .rejects.toMatchObject({ code: "42501" });
+    } finally {
+      await unscoped.end();
+    }
   });
 });
