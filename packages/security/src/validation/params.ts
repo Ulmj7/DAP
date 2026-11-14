@@ -59,7 +59,11 @@ function pointer(path: readonly PropertyKey[]): string {
   return path.map((segment) => `/${String(segment).replaceAll("~", "~0").replaceAll("/", "~1")}`).join("");
 }
 
-/** Present in the input at `path`? An absent key, or an explicit undefined, is "required"; anything else is a wrong type. */
+/**
+ * Is the value at `path` absent from `input`? An absent LAST key is "required"; a value that is present, or whose
+ * parent is absent or not an object, is a wrong type. `input` is the strict copy, which is JSON data and so can
+ * never hold an explicit undefined: presence is the only question.
+ */
 function isMissing(input: unknown, path: readonly PropertyKey[]): boolean {
   let node: unknown = input;
   for (const segment of path) {
@@ -67,7 +71,7 @@ function isMissing(input: unknown, path: readonly PropertyKey[]): boolean {
     if (!Object.hasOwn(node, segment)) return segment === path.at(-1);
     node = (node as Record<PropertyKey, unknown>)[segment];
   }
-  return node === undefined;
+  return false;
 }
 
 interface ZodLike { readonly code: string; readonly path: readonly PropertyKey[]; readonly origin?: unknown }
@@ -80,7 +84,7 @@ function toIssues(issues: readonly ZodLike[], input: unknown): readonly Feedback
     let code: Code;
     switch (issue.code) {
       case "invalid_type": code = isMissing(input, issue.path) ? "required" : "type"; break;
-      case "too_big": code = issue.origin === "string" ? "too_long" : issue.origin === "array" || issue.origin === "set" ? "too_many" : "out_of_range"; break;
+      case "too_big": code = issue.origin === "string" ? "too_long" : issue.origin === "array" ? "too_many" : "out_of_range"; break;
       case "too_small": case "not_multiple_of": code = "out_of_range"; break;
       case "invalid_format": code = "format"; break;
       // The offending key is model-authored text: only the object that contains it is reported.
@@ -90,26 +94,31 @@ function toIssues(issues: readonly ZodLike[], input: unknown): readonly Feedback
     const key = `${code}\u0000${path}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(Object.freeze({ path, code }));
+    out.push({ path, code });
     if (out.length >= MAX_ISSUES) break;
   }
-  return Object.freeze(out);
+  return out;
 }
 
+// `duplicate_key` and `syntax` arise only from JSON TEXT, and a string is rejected before intake; they stay so the map is exhaustive.
 const STRICT_JSON_ISSUE: Record<StrictJsonCode, Code> = {
   too_large: "too_long", too_deep: "out_of_range", duplicate_key: "unknown_key", forbidden_key: "unknown_key",
   not_finite: "out_of_range", unsafe_number: "out_of_range", not_plain: "type", syntax: "type",
 };
 
-const reject = (issues: readonly FeedbackIssue[]): ValidatedParams => Object.freeze({ ok: false, issues: Object.freeze(issues) });
+const reject = (issues: readonly FeedbackIssue[]): ValidatedParams =>
+  Object.freeze({ ok: false, issues: Object.freeze(issues.map(({ path, code }) => Object.freeze({ path, code }))) });
 
-/** A resource extractor's answer, proven to be exactly `{ type, id }` of non-empty text, copied and frozen. */
+/**
+ * A resource extractor's answer, proven to be exactly `{ type, id }` of non-empty text, copied once and frozen.
+ * A string is never an answer: strict intake would read it as JSON text, which an extractor must not return.
+ */
 function captureResource(answer: unknown): ResourceRef | null {
   if (answer === null || answer === undefined) return null;
-  const copy = parseStrictJson(answer);
-  if (!copy.ok || copy.value === null || typeof copy.value !== "object" || Array.isArray(copy.value)) throw new TypeError("A resource extractor must return { type, id } or null");
+  const copy = typeof answer === "object" ? parseStrictJson(answer) : undefined;
+  if (!copy?.ok) throw new TypeError("A resource extractor must return { type, id } or null");
   const { type, id } = copy.value as Record<string, unknown>;
-  if (Object.keys(copy.value).length !== 2 || !text(type) || !text(id)) throw new TypeError("A resource extractor must return { type, id } or null");
+  if (Object.keys(copy.value as object).length !== 2 || !text(type) || !text(id)) throw new TypeError("A resource extractor must return { type, id } or null");
   return Object.freeze({ type, id });
 }
 
