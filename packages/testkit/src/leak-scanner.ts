@@ -9,12 +9,12 @@
  *  - canary: any registered canary substring (canary-secret registry).
  *  - stack-trace: V8-style frames (`at Foo (file.js:1:2)`) or an `Error:` line followed by an
  *    `at ` frame.
- *  - secret-shaped: JWT-like base64url triples (three segments of 4+ base64url chars),
+ *  - secret-shaped: JWT-like base64url triples with a JSON token header,
  *    `sk-` + 16+ alnum, `AKIA` + 16 uppercase alnum, or 32+ consecutive hex chars.
- *  - reason-code: any exact value from the contract REASON_CODES.
+ *  - reason-code: any delimited internal value from the contract REASON_CODES.
  *  - confirmation-id: UUID-shaped strings (confirmation ids are never handed to the planner).
  *
- * Traversal is capped at depth 20 and cycle-safe (visited objects are remembered).
+ * Traversal is iterative and cycle-safe; unreadable output yields a scan-error finding.
  * A single string yields at most ONE finding per kind (multiple pattern hits of the same
  * kind collapse), keeping results deterministic and deduplicated.
  */
@@ -25,7 +25,8 @@ export type LeakKind =
   | "stack-trace"
   | "secret-shaped"
   | "reason-code"
-  | "confirmation-id";
+  | "confirmation-id"
+  | "scan-error";
 
 export interface LeakFinding {
   readonly kind: LeakKind;
@@ -38,17 +39,26 @@ export interface LeakScannerOptions {
   readonly canaries?: readonly string[];
 }
 
-const MAX_DEPTH = 20;
-
-const RE_STACK_FRAME = /at\s+[A-Za-z0-9_$.<>]+\s*\([^)\n]*\d+:\d+\)/;
+const RE_STACK_FRAME = /(?:^|\n)\s*at\s+(?:.*?\()?[^()\n]+:\d+:\d+\)?(?:\n|$)/;
 const RE_ERROR_THEN_AT = /\bError\b[^\n]*\n\s*at\s/;
-const RE_JWT_LIKE = /^(?:[A-Za-z0-9_-]{4,}\.){2}[A-Za-z0-9_-]{4,}$/;
-const RE_SK_KEY = /sk-[A-Za-z0-9]{16,}/;
+const RE_JWT_LIKE = /(?:^|[^A-Za-z0-9_-])([A-Za-z0-9_-]{4,})\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?=$|[^A-Za-z0-9_-])/g;
+const RE_SK_KEY = /sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{16,}/;
 const RE_AKIA_KEY = /AKIA[A-Z0-9]{16}/;
 const RE_HEX_RUN = /[0-9a-fA-F]{32,}/;
-const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RE_UUID = /(?<![0-9a-z])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-z])/i;
+const REASON_CODE_SET: ReadonlySet<string> = new Set(REASON_CODES);
+const RE_REASON = new RegExp(`\\b(?:${REASON_CODES.filter((code) => code.includes("_")).join("|")})\\b`);
 
-const REASON_CODE_SET: ReadonlySet<string> = new Set<string>(REASON_CODES);
+function hasJwt(value: string): boolean {
+  for (const match of value.matchAll(RE_JWT_LIKE)) {
+    try {
+      const header: unknown = JSON.parse(Buffer.from(match[1]!, "base64url").toString("utf8"));
+      if (header !== null && typeof header === "object" &&
+        (typeof Reflect.get(header, "alg") === "string" || Reflect.get(header, "typ") === "JWT")) return true;
+    } catch { /* Ordinary dotted words are not token headers. */ }
+  }
+  return false;
+}
 
 export class LeakScanner {
   private readonly canaries: string[] = [];
@@ -66,41 +76,32 @@ export class LeakScanner {
     }
   }
 
-  /** Scan a JSON-like value and return all findings (empty list means clean). */
+  /** Scan keys and values iteratively: deep output cannot silently evade the scanner. */
   scan(value: unknown): readonly LeakFinding[] {
     const findings: LeakFinding[] = [];
-    this.walk(value, "$", 0, new WeakSet<object>(), findings);
-    return findings;
-  }
-
-  private walk(
-    value: unknown,
-    path: string,
-    depth: number,
-    seen: WeakSet<object>,
-    findings: LeakFinding[],
-  ): void {
-    if (depth > MAX_DEPTH) return;
-
-    if (typeof value === "string") {
-      this.recordStringFindings(value, path, findings);
-      return;
+    const pending = [{ value, path: "$" }];
+    const seen = new WeakSet<object>();
+    while (pending.length > 0) {
+      const { value: item, path } = pending.pop()!;
+      if (typeof item === "string") { this.recordStringFindings(item, path, findings); continue; }
+      if (typeof item !== "object" || item === null || seen.has(item)) continue;
+      seen.add(item);
+      try {
+        const keys = Reflect.ownKeys(item);
+        keys.forEach((key, index) => {
+          const keyFindings: LeakFinding[] = [];
+          const label = typeof key === "string" ? key : String(key);
+          this.recordStringFindings(label, "", keyFindings);
+          const childPath = keyFindings.length > 0 || typeof key === "symbol"
+            ? `${path}[key:${index}]` : `${path}.${label}`;
+          for (const finding of keyFindings) findings.push({ kind: finding.kind, path: childPath });
+          try { pending.push({ value: Reflect.get(item, key), path: childPath }); }
+          catch { findings.push({ kind: "scan-error", path: childPath }); }
+        });
+      } catch { findings.push({ kind: "scan-error", path }); }
     }
-    if (typeof value !== "object" || value === null) {
-      return; // numbers, booleans, null: nothing to walk
-    }
-    if (seen.has(value)) return; // cycle guard
-    seen.add(value);
-
-    if (Array.isArray(value)) {
-      for (let i = 0; i < value.length; i++) {
-        this.walk(value[i], `${path}.${i}`, depth + 1, seen, findings);
-      }
-      return;
-    }
-    for (const [key, child] of Object.entries(value)) {
-      this.walk(child, `${path}.${key}`, depth + 1, seen, findings);
-    }
+    const unique = new Map(findings.map((finding) => [JSON.stringify([finding.kind, finding.path]), Object.freeze(finding)]));
+    return Object.freeze([...unique.values()]);
   }
 
   private recordStringFindings(value: string, path: string, findings: LeakFinding[]): void {
@@ -111,14 +112,14 @@ export class LeakScanner {
       findings.push({ kind: "stack-trace", path });
     }
     if (
-      RE_JWT_LIKE.test(value) ||
+      hasJwt(value) ||
       RE_SK_KEY.test(value) ||
       RE_AKIA_KEY.test(value) ||
       RE_HEX_RUN.test(value)
     ) {
       findings.push({ kind: "secret-shaped", path });
     }
-    if (REASON_CODE_SET.has(value)) {
+    if (REASON_CODE_SET.has(value) || RE_REASON.test(value)) {
       findings.push({ kind: "reason-code", path });
     }
     if (RE_UUID.test(value)) {
