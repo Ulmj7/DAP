@@ -8,6 +8,7 @@ import { snapshotAnswer } from "./answer-snapshot.js";
 import { createPipeline, type StageMap } from "./pipeline.js";
 import { createProposalGateway } from "./submitter.js";
 import { createIntakeStage } from "./stages/intake.js";
+import { createAuthorizeStage } from "./stages/authorize.js";
 import { createValidateStage } from "./stages/validate.js";
 import { createContextStage } from "./stages/context.js";
 import { createResolveStage } from "./stages/resolve.js";
@@ -16,7 +17,7 @@ const positive = z.number().int().positive();
 const rule = z.strictObject({ limit: positive, windowSeconds: positive });
 const configSchema = z.strictObject({
   limits: z.strictObject({ proposalsPerTurn: positive, executionsPerTurn: positive, maxChainDepth: z.number().int().nonnegative(), turnBudgetMs: positive, perUserPerMinute: rule, perTenantPerMinute: rule, perUserPerCapabilityPerMinute: rule, highRiskPerUserPerHour: rule, denialThrottle: z.strictObject({ denials: positive, windowSeconds: positive, blockSeconds: positive }) }),
-  maxPayloadBytes: positive, maxJsonDepth: positive, replayRetentionSeconds: positive, confirmationDefaultTtlSeconds: positive.max(900), hookTimeoutMs: positive.max(0x7fff_ffff),
+  maxPayloadBytes: positive, maxJsonDepth: positive, replayRetentionSeconds: positive, confirmationDefaultTtlSeconds: positive.max(900), hookTimeoutMs: positive.max(0x7fff_ffff), proposalBudgetMs: positive.max(0x7fff_ffff).optional(),
 });
 
 /**
@@ -98,12 +99,13 @@ export function composeStages(deps: GatewayDependencies): StageMap {
     intake: createIntakeStage(caps),
     resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),
     validate: createValidateStage(deps.registry, caps),
+    authorize: createAuthorizeStage({ registry: deps.registry, permissions: deps.hooks.permissions, resources: deps.hooks.resources, pages: deps.hooks.pages, clock: deps.clock }, options),
   };
 }
 
 export function createPolicyGateway(source: GatewayDependencies): Readonly<{ proposals: PolicyGateway; confirmations: ConfirmationService }> {
   const deps = captureDependencies(source);
-  const pipeline = createPipeline(composeStages(deps), { hookTimeoutMs: deps.config.hookTimeoutMs });
+  const pipeline = createPipeline(composeStages(deps), { hookTimeoutMs: deps.config.hookTimeoutMs, ...(deps.config.proposalBudgetMs === undefined ? {} : { proposalBudgetMs: deps.config.proposalBudgetMs }) });
   const proposals = createProposalGateway({ pipeline, ids: deps.ids });
   const confirmations: ConfirmationService = Object.freeze({
     decide: Object.freeze(async () => Object.freeze({ status: "not_valid", category: "not_found" } as const)),

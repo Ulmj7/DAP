@@ -4,6 +4,18 @@ import { denyDecision } from "../decision.js";
 import { wrapHook, type HookOptions } from "../hook-wrapper.js";
 import type { PolicyStage } from "../pipeline.js";
 
+/**
+ * Is a minted session usable at `now` (epoch ms)? Judged on every use, because time passes between stages: an
+ * authenticatedAt in the future, or a validUntil not after it, is as unusable as an expired one (fail closed).
+ */
+export function sessionVerdict(ctx: { readonly authenticatedAt: string; readonly validUntil: string }, now: number): "ok" | "unauthenticated" | "session_expired" {
+  if (!Number.isFinite(now)) return "unauthenticated";
+  const validUntil = Date.parse(ctx.validUntil);
+  const authenticatedAt = Date.parse(ctx.authenticatedAt);
+  if (!Number.isFinite(validUntil) || !Number.isFinite(authenticatedAt) || authenticatedAt > now || validUntil <= authenticatedAt) return "unauthenticated";
+  return validUntil <= now ? "session_expired" : "ok";
+}
+
 export function createContextStage(clock: Clock, options: HookOptions = {}): PolicyStage {
   const currentTime = wrapHook(clock.now.bind(clock), "instant", options);
   return async (request) => {
@@ -15,10 +27,8 @@ export function createContextStage(clock: Clock, options: HookOptions = {}): Pol
     const now = Date.parse(answer.value);
     // Expiry is decided here, so this stage must not rely on the hook's schema alone to rule out NaN.
     if (!Number.isFinite(now)) return stop("DENIED", "dependency_failure");
-    const validUntil = Date.parse(ctx.validUntil);
-    const authenticatedAt = Date.parse(ctx.authenticatedAt);
-    if (!Number.isFinite(validUntil) || !Number.isFinite(authenticatedAt) || authenticatedAt > now || validUntil <= authenticatedAt) return stop("UNAUTHORIZED", "unauthenticated");
-    if (validUntil <= now) return stop("UNAUTHORIZED", "session_expired");
+    const verdict = sessionVerdict(ctx, now);
+    if (verdict !== "ok") return stop("UNAUTHORIZED", verdict);
     return { kind: "continue", data: {} };
   };
 }

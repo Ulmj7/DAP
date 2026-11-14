@@ -100,7 +100,7 @@ describe("exact resolution and live default-deny enablement", () => {
     let reads = 0;
     const { deps } = dependencies();
     const stage = createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: { isDisabled: async () => { reads++; return false; } } });
-    const record = { ...input(), run, context: null, facts: { intake: { action: "viewProject" } } };
+    const record = { ...input(), run, context: null, facts: { intake: { action: "viewProject" } }, budget: { remainingMs: () => 1 } };
     expect(await stage(record)).toMatchObject({ kind: "stop", decision: { outcome: "DENIED", reason: "dependency_failure", stage: "resolve" } });
     expect(reads).toBe(0);
   });

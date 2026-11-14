@@ -23,7 +23,7 @@ describe("pipeline fail-closed boundary (T058)", () => {
         return fault === "undefined" ? undefined : { kind: "continue", data: { value: () => true } };
       }) as PolicyStage;
       stages[stage] = broken;
-      const pending = createPipeline(stages, { hookTimeoutMs: 20 }).run(input());
+      const pending = createPipeline(stages, { hookTimeoutMs: 20, proposalBudgetMs: 20 }).run(input());
       await vi.advanceTimersByTimeAsync(20);
       const decision = await pending;
       expect(decision).toMatchObject({ outcome: "DENIED", reason: ["throw", "reject"].includes(fault) ? "internal_error" : "dependency_failure", stage });
