@@ -18,12 +18,19 @@
  *   because the scan cannot see what they load (fail closed). `process.<member>` for any other member is fine.
  * - global-fetch / global-network: a reference to the global `fetch`, `WebSocket`, `XMLHttpRequest` or
  *   `EventSource` that does not resolve to a local binding, including `globalThis.fetch`.
- * - dynamic-code: `eval`, the `Function` constructor, or a `.constructor(...)` call, none of which a
- *   production capability needs and each of which reaches every other capability.
+ * - dynamic-code: `eval`, the `Function` constructor (any use but `x instanceof Function` and
+ *   `Function.prototype`), or a function's `.constructor` used for anything but comparing, type-testing,
+ *   assigning to, or inspecting it (`.name`, `.prototype`); aliasing it, calling it, or following it with
+ *   `.call`/`.apply`/`.bind`/`.constructor` is a finding. None of this is needed by a production capability
+ *   and each of it reaches every other capability.
  * - global-object: any reference to `globalThis`, `global`, `window` or `self` that is not a local
  *   binding. No production code needs the global object, and every alias of it (`const g = globalThis`,
  *   `const { fetch } = globalThis`, `const fetch = globalThis.fetch`) passes through such a reference.
  * - unparseable: the compiler reports a syntax error, so the rest of the scan cannot be trusted.
+ *
+ * Names used only as TYPES (`x: WebSocket`, `typeof fetch`, `implements Function`) emit nothing and are not
+ * findings. Known limits, by design of a denylist: computed keys (`fn["con" + "structor"]`), `var` hoisted out of a
+ * nested block, and code reached through a package the denylist does not name.
  *
  * The scan refuses to run (throws at import time) if the installed TypeScript lacks a node kind or
  * guard it relies on, instead of silently matching nothing.
@@ -55,22 +62,41 @@ export const REQUIRED_COMPILER_API = {
     "isVariableDeclaration", "isBindingElement", "isFunctionDeclaration", "isFunctionExpression", "isArrowFunction", "isParameter", "isCatchClause",
     "isClassDeclaration", "isClassExpression", "isEnumDeclaration", "isTypeAliasDeclaration", "isInterfaceDeclaration", "isModuleDeclaration",
     "isQualifiedName", "isConstructorDeclaration", "isBlock", "isSourceFile", "isVariableStatement", "isNamedImports", "isNamespaceImport",
-    "isTypeReferenceNode", "isTypeQueryNode", "isNewExpression", "isBinaryExpression", "isObjectBindingPattern", "isForStatement", "isForInStatement", "isForOfStatement",
-    "isVariableDeclarationList", "isCaseClause", "isDefaultClause", "isModuleBlock", "isGetAccessorDeclaration", "isSetAccessorDeclaration", "isEnumMember", "isLabeledStatement",
-    "isBreakStatement", "isContinueStatement",
+    "isTypeReferenceNode", "isTypeQueryNode", "isBinaryExpression", "isObjectBindingPattern", "isForStatement", "isForInStatement",
+    "isForOfStatement", "isVariableDeclarationList", "isCaseClause", "isDefaultClause", "isModuleBlock", "isGetAccessorDeclaration",
+    "isSetAccessorDeclaration", "isEnumMember", "isLabeledStatement", "isBreakStatement", "isContinueStatement", "isTypeOfExpression",
+    "isExpressionWithTypeArguments", "isHeritageClause", "isTypeParameterDeclaration", "isNamedTupleMember",
   ],
-  syntaxKinds: ["ImportKeyword", "ExternalModuleReference", "DeclareKeyword", "InstanceOfKeyword"],
+  syntaxKinds: [
+    "ImportKeyword", "ExternalModuleReference", "DeclareKeyword", "InstanceOfKeyword", "ImplementsKeyword", "EqualsToken", "EqualsEqualsToken",
+    "EqualsEqualsEqualsToken", "ExclamationEqualsToken", "ExclamationEqualsEqualsToken",
+  ],
+  /** Other enums the scan reads: name -> members. */
+  enums: { ScriptTarget: ["ES2022"], ModuleKind: ["ESNext"], JsxEmit: ["Preserve"], DiagnosticCategory: ["Error"] },
 } as const;
 
 /** Throws, naming the missing entry, unless `api` provides everything the scan depends on. */
 export function assertCompilerApi(api: typeof ts): void {
   const missing: string[] = [];
+  const table = api as unknown as Record<string, unknown> | undefined;
   for (const name of REQUIRED_COMPILER_API.functions) {
-    if (typeof (api as unknown as Record<string, unknown> | undefined)?.[name] !== "function") missing.push(name);
+    if (typeof table?.[name] !== "function") missing.push(name);
   }
-  const kinds = (api as unknown as { SyntaxKind?: Record<string, unknown> } | undefined)?.SyntaxKind;
+  const kinds = table?.SyntaxKind as Record<string, unknown> | undefined;
   for (const name of REQUIRED_COMPILER_API.syntaxKinds) {
     if (typeof kinds?.[name] !== "number") missing.push(`SyntaxKind.${name}`);
+  }
+  for (const [enumName, members] of Object.entries(REQUIRED_COMPILER_API.enums)) {
+    const values = table?.[enumName] as Record<string, unknown> | undefined;
+    if (values === undefined || values === null || typeof values !== "object") { missing.push(enumName); continue; }
+    for (const member of members) if (typeof values[member] !== "number") missing.push(`${enumName}.${member}`);
+  }
+  // Methods the scan calls on the nodes it is given, not on the `ts` namespace.
+  if (typeof table?.createSourceFile === "function") {
+    try {
+      const sample = (api.createSourceFile as typeof ts.createSourceFile)("probe.ts", "", ts.ScriptTarget.ES2022, true);
+      if (typeof (sample as unknown as Record<string, unknown>).getLineAndCharacterOfPosition !== "function") missing.push("SourceFile.getLineAndCharacterOfPosition");
+    } catch { missing.push("createSourceFile"); }
   }
   if (missing.length > 0) throw new Error(`static-scan: the installed TypeScript lacks ${missing.join(", ")}; the scan cannot be trusted`);
 }
@@ -79,6 +105,8 @@ assertCompilerApi(ts);
 /** Bare module names (after dropping `node:` and any subpath) that grant a network, shell or script capability. */
 const FORBIDDEN_MODULES: ReadonlySet<string> = new Set([
   "child_process", "vm", "http", "https", "http2", "net", "tls", "dgram", "dns", "inspector", "repl", "module", "worker_threads", "cluster",
+  // `node:process` re-exports process.binding / dlopen / getBuiltinModule as bare names the member rules never see.
+  "process",
   // The usual third-party routes to the same capabilities. A denylist is never complete: a new dependency is reviewed by a human.
   "undici", "axios", "node-fetch", "ws", "got", "ky", "superagent", "needle", "execa", "cross-spawn", "shelljs", "vm2", "isolated-vm", "node-pty",
 ]);
@@ -136,6 +164,7 @@ function isNamePosition(node: ts.Identifier, parent: ts.Node | undefined): boole
   if (ts.isPropertySignature(parent) && parent.name === node) return true;
   if ((ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent)) && parent.name === node) return true;
   if (ts.isEnumMember(parent) && parent.name === node) return true;
+  if ((ts.isTypeParameterDeclaration(parent) || ts.isNamedTupleMember(parent)) && parent.name === node) return true;
   if ((ts.isLabeledStatement(parent) || ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === node) return true;
   if (ts.isImportSpecifier(parent) && (parent.name === node || parent.propertyName === node)) return true;
   if (ts.isExportSpecifier(parent) && (parent.name === node || parent.propertyName === node)) return true;
@@ -226,7 +255,39 @@ const memberName = (access: ts.PropertyAccessExpression | ts.ElementAccessExpres
 function inTypePosition(node: ts.Node): boolean {
   let parent = node.parent;
   while (parent && ts.isQualifiedName(parent)) parent = parent.parent;
-  return parent !== undefined && (ts.isTypeReferenceNode(parent) || ts.isTypeQueryNode(parent));
+  if (parent === undefined) return false;
+  if (ts.isTypeReferenceNode(parent) || ts.isTypeQueryNode(parent)) return true;
+  // `interface I extends X` and `class C implements X` name types only; `class C extends X` is a runtime use.
+  if (ts.isExpressionWithTypeArguments(parent) && ts.isHeritageClause(parent.parent)) {
+    return parent.parent.token === ts.SyntaxKind.ImplementsKeyword || ts.isInterfaceDeclaration(parent.parent.parent);
+  }
+  return false;
+}
+
+/** Members that turn a function's `.constructor` into a way to build code from text. */
+const CONSTRUCTOR_ESCAPES: ReadonlySet<string> = new Set(["call", "apply", "bind", "constructor"]);
+
+/** `x.constructor` read in a way that grants nothing: compared, type-tested, assigned to, or only inspected (`.name`, `.prototype`, `.registry`). */
+function constructorReadIsHarmless(node: ts.Node): boolean {
+  let top: ts.Node = node;
+  while (top.parent && (ts.isParenthesizedExpression(top.parent) || ts.isNonNullExpression(top.parent) || ts.isAsExpression(top.parent) ||
+    ts.isTypeAssertionExpression(top.parent) || ts.isSatisfiesExpression(top.parent))) top = top.parent;
+  const parent = top.parent;
+  if (!parent) return false;
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === top) return !CONSTRUCTOR_ESCAPES.has(parent.name.text);
+  if (ts.isElementAccessExpression(parent) && parent.expression === top) {
+    const key = stringKey(parent.argumentExpression);
+    return key !== undefined && !CONSTRUCTOR_ESCAPES.has(key);
+  }
+  if (ts.isTypeOfExpression(parent)) return true;
+  if (ts.isBinaryExpression(parent)) {
+    const operator = parent.operatorToken.kind;
+    if (operator === ts.SyntaxKind.EqualsEqualsToken || operator === ts.SyntaxKind.EqualsEqualsEqualsToken || operator === ts.SyntaxKind.ExclamationEqualsToken ||
+      operator === ts.SyntaxKind.ExclamationEqualsEqualsToken || operator === ts.SyntaxKind.InstanceOfKeyword) return true;
+    // Writing to it (`this.constructor = F`) reads nothing.
+    return operator === ts.SyntaxKind.EqualsToken && parent.left === top;
+  }
+  return false;
 }
 
 /** Look through parentheses, `as`, `!`, `<T>x` and `satisfies`, which change nothing at runtime. */
@@ -326,11 +387,8 @@ export function scanSource(file: string, text: string, repoRoot?: string): Stati
       // A loader reached through a member: only a direct call with a literal specifier is visible to this scan.
       if (member === "getBuiltinModule" && !isDirectLiteralCall(node)) report(node, "dynamic-module");
       else if (member !== undefined && member !== "getBuiltinModule" && LOADER_MEMBERS.has(member) && global === "process") report(node, "dynamic-module");
-      // `x.constructor` is how a function's Function constructor is reached; only `x.constructor.name` is a read that grants nothing.
-      if (member === "constructor") {
-        const reads = node.parent && ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node && node.parent.name.text === "name";
-        if (!reads) report(node, "dynamic-code");
-      }
+      // `x.constructor` is how a function's Function constructor is reached; see constructorReadIsHarmless for what is fine.
+      if (member === "constructor" && !constructorReadIsHarmless(node)) report(node, "dynamic-code");
     }
 
     // `const { constructor: F } = fn` reaches it without a member access.

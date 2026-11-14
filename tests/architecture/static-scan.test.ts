@@ -522,6 +522,60 @@ describe("false positives on realistic production code, and the next layer of by
   });
 });
 
+describe("third round: node:process, constructor idioms, heritage clauses and type-level names", () => {
+  it.each([
+    ["a default import of node:process", 'import process from "node:process";\nexport const b = process.binding("spawn_sync");\n', "node:process"],
+    ["a namespace import of process", 'import * as proc from "process";\nexport const b = proc;\n', "process"],
+    ["a named getBuiltinModule from node:process", 'import { getBuiltinModule } from "node:process";\nexport const cp = getBuiltinModule("child_process");\n', "node:process"],
+    ["a named dlopen from node:process", 'import { dlopen } from "node:process";\nexport const d = dlopen;\n', "node:process"],
+    ["a dynamic import of node:process", 'export const load = () => import("node:process");\n', "node:process"],
+  ])("flags %s", (_label, code, module) => {
+    expect(scanSource("packages/ai/src/probe.ts", code).map((finding) => [finding.kind, finding.module])).toEqual([["forbidden-import", module]]);
+  });
+
+  it.each([
+    ["a static-member access through this.constructor", "export class Base {\n  static registry = 1;\n  read(): number { return (this.constructor as typeof Base).registry; }\n}\n"],
+    ["a plain-object check", "export const isPlain = (v: object): boolean => v.constructor === Object;\n"],
+    ["a negated plain-object check", "export const notPlain = (v: object): boolean => v.constructor !== Object;\n"],
+    ["a loose comparison", "export const same = (a: object, b: object): boolean => a.constructor == b.constructor;\n"],
+    ["an instanceof against a constructor", "export const sameKind = (a: object, b: object): boolean => a instanceof (b.constructor as new () => object);\n"],
+    ["a typeof probe", 'export const callable = (v: { constructor?: unknown }): boolean => typeof v.constructor === "function";\n'],
+    ["an assignment to constructor", "export class A { constructor() { (this as { constructor: unknown }).constructor = A; } }\n"],
+    ["reading constructor.prototype", "export const proto = (o: object): object => o.constructor.prototype;\n"],
+    ["reading constructor.name through an optional chain", "export const name = (o?: object): string | undefined => o?.constructor.name;\n"],
+    ["a class constructor declaration", "export class A {\n  constructor(readonly n: number) {}\n}\n"],
+  ])("does not flag %s", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code), code).toEqual([]);
+  });
+
+  it.each([
+    ["constructor.call", 'export const F = (f: () => void) => f.constructor.call(null, "return 1");\n'],
+    ["constructor.apply", 'export const F = (f: () => void) => f.constructor.apply(null, ["return 1"]);\n'],
+    ["constructor.bind", "export const F = (f: () => void) => f.constructor.bind(null);\n"],
+    ["constructor.constructor", 'export const F = (f: () => void) => f.constructor.constructor("return 1");\n'],
+    ["a computed constructor.call", 'export const F = (f: () => void) => f["constructor"]["call"](null, "x");\n'],
+    ["a returned constructor", "export const F = (f: () => void) => f.constructor;\n"],
+    ["an alias", "export const F = (f: () => void) => { const g = f.constructor; return g; };\n"],
+  ])("still flags %s", (_label, code) => {
+    expect(kinds(code), code).toContain("dynamic-code");
+  });
+
+  it.each([
+    ["an interface extending a global class", "export interface S extends EventSource { extra: number }\n"],
+    ["a class implementing Function", "export class C implements Function {\n  apply = () => 1;\n}\n"],
+    ["a class implementing a global type", "export class C implements WebSocket {}\n"],
+    ["a type parameter named like a global", "export function f<self>(x: self): self { return x; }\n"],
+    ["a named tuple member", "export type T = [fetch: number, window: string];\n"],
+  ])("does not flag %s: it emits nothing", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code), code).toEqual([]);
+  });
+
+  it("still flags a class that really extends a watched global at runtime", () => {
+    expect(kinds("export class Callable extends Function {}\n")).toContain("dynamic-code");
+    expect(kinds("export class Sock extends WebSocket {}\n")).toContain("global-network");
+  });
+});
+
 describe("failing loudly", () => {
   it("reports a file the compiler cannot parse instead of silently scanning half of it", () => {
     const findings = scanSource("packages/ai/src/broken.ts", 'import { exec } from "node:child_process";\nexport const = ;\nexport function (\n');
@@ -558,14 +612,32 @@ describe("failing loudly", () => {
     }
   });
 
-  it("lists every compiler API the scan actually uses, so the guard cannot drift from the code", () => {
+  it("lists every compiler API the scan uses and uses every one it lists, in both directions", () => {
     const text = readFileSync(join(REPO_ROOT, "tests/architecture/static-scan.ts"), "utf8");
-    const used = new Set([...text.matchAll(/\bts\.(is[A-Z]\w*|create\w+|transpileModule|forEachChild)\b/g)].map((match) => match[1]));
-    const guarded = new Set<string>(REQUIRED_COMPILER_API.functions);
-    for (const name of used) expect(guarded.has(name as string), `ts.${name} is used but not asserted present`).toBe(true);
-    const kindsUsed = new Set([...text.matchAll(/\bts\.SyntaxKind\.(\w+)\b/g)].map((match) => match[1]));
-    const guardedKinds = new Set<string>(REQUIRED_COMPILER_API.syntaxKinds);
-    for (const name of kindsUsed) expect(guardedKinds.has(name as string), `SyntaxKind.${name} is used but not asserted present`).toBe(true);
+    // Drop comments and string literals so prose never counts as use.
+    const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/`(?:[^`\\]|\\.)*`/g, "``").replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+    const functionsUsed = new Set([...code.matchAll(/\bts\.([a-z]\w*)\b/g)].map((match) => match[1] as string));
+    const memberUsed = new Map<string, Set<string>>();
+    for (const [, enumName, member] of code.matchAll(/\bts\.([A-Z]\w*)\.(\w+)\b/g)) {
+      memberUsed.set(enumName as string, (memberUsed.get(enumName as string) ?? new Set()).add(member as string));
+    }
+    expect([...functionsUsed].sort()).toEqual([...REQUIRED_COMPILER_API.functions].sort());
+    expect([...(memberUsed.get("SyntaxKind") ?? [])].sort()).toEqual([...REQUIRED_COMPILER_API.syntaxKinds].sort());
+    const enumsUsed = Object.fromEntries([...memberUsed].filter(([name]) => name !== "SyntaxKind").map(([name, members]) => [name, [...members].sort()]));
+    expect(enumsUsed).toEqual(Object.fromEntries(Object.entries(REQUIRED_COMPILER_API.enums).map(([name, members]) => [name, [...members].sort()])));
+  });
+
+  it("also refuses a TypeScript whose enums or source-file methods the scan relies on are missing", () => {
+    for (const [name, members] of Object.entries(REQUIRED_COMPILER_API.enums)) {
+      expect(() => assertCompilerApi({ ...ts, [name]: undefined } as unknown as typeof ts), name).toThrow(name);
+      for (const member of members) {
+        const trimmed = { ...(ts as unknown as Record<string, Record<string, unknown>>)[name] };
+        delete trimmed[member];
+        expect(() => assertCompilerApi({ ...ts, [name]: trimmed } as unknown as typeof ts), `${name}.${member}`).toThrow(member);
+      }
+    }
+    const withoutLineMethod = { ...ts, createSourceFile: (...args: Parameters<typeof ts.createSourceFile>) => Object.assign(ts.createSourceFile(...args), { getLineAndCharacterOfPosition: undefined }) };
+    expect(() => assertCompilerApi(withoutLineMethod as unknown as typeof ts)).toThrow(/getLineAndCharacterOfPosition/);
   });
 });
 
