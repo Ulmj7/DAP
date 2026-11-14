@@ -19,7 +19,7 @@ const freshActionId = (): ActionId => `conformance-${randomUUID()}` as ActionId;
 describe("InMemoryTenantActionPolicyStore", () => {
   runTenantPolicyConformance(async () => {
     const store = new InMemoryTenantActionPolicyStore();
-    return { store, setDisabled: (scope, actionId, disabled) => store.setDisabled(scope, actionId, disabled) };
+    return { store, setDisabled: (scope, actionId, disabled) => store.setDisabled(scope, actionId, disabled, "conformance-operator") };
   });
 });
 

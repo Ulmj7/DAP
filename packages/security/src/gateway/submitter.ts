@@ -27,7 +27,12 @@ export function createProposalGateway({ pipeline, ids }: { readonly pipeline: De
               void Promise.resolve(id).catch(() => undefined);
               return unavailable;
             }
-            // One trusted identifier per proposal; the proposal itself is only read if a stage asks.
+            // ONE identifier per proposal, drawn from ids.newDecisionId(), serves as both the `decisionId` and the `requestId`
+            // (a deliberate choice, confirmed in review): the decision, its audit events and the single-use ExecutionGrant all
+            // key on this same value. The grant binding names it `requestId`, the PolicyDecision names it `decisionId`, and audit
+            // events carry it as `requestId`; they are always equal. `callId` is the OTHER identifier: the trusted runner's
+            // replay-protection key, which travels only in facts.intake and is never used as a request or decision id.
+            // The proposal itself is only read if a stage asks.
             const decision = await pipeline.run({ context, run: capturedRun, decisionId: id, requestId: id as RequestId, readProposal: () => call });
             return toPlannerFeedback(decision);
           } catch { return unavailable; }
