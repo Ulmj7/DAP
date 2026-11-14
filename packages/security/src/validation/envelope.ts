@@ -17,6 +17,7 @@
  *   (feedback is built from the outcome alone). Results are frozen.
  */
 import type { JsonValue, ReasonCode } from "@dap/contracts";
+import { scrubText } from "../audit/scrubber.js";
 import { parseStrictJsonDeferred } from "./strict-json.js";
 import type { NumberFault, StrictJsonCode, StrictJsonOptions } from "./strict-json.js";
 
@@ -30,11 +31,13 @@ export const ATTEMPTED_ACTION_MAX = 64;
 /**
  * A planner-authored name made safe to store in an audit record: printable ASCII only, every other code point
  * (controls, newlines, look-alikes, zero-width and bidi characters) and the backslash itself written as `\u{hex}`,
- * so the text is unambiguous and cannot forge a line, a field or another name. Truncated on a whole-token boundary.
+ * so the text is unambiguous and cannot forge a line, a field or another name. Secret-shaped text is redacted before the cut.
+ * Truncated on a whole-token boundary.
  */
 export function auditableName(name: string): string {
   let out = "";
-  for (const symbol of name) {
+  // Secret-shaped text goes first, while the whole secret is still in view: a cut would leave half of it.
+  for (const symbol of scrubText(name)) {
     const code = symbol.codePointAt(0) as number;
     const token = code >= 0x20 && code <= 0x7e && code !== 0x5c ? symbol : `\\u{${code.toString(16)}}`;
     if (out.length + token.length > ATTEMPTED_ACTION_MAX) break;

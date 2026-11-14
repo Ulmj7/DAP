@@ -56,8 +56,9 @@ export interface AuditEvent {
    */
   readonly paramsView: { readonly [key: string]: JsonValue };
   readonly risk: RiskLevel | null;
-  readonly outcome: Outcome;
-  readonly reason: ReasonCode;
+  /** Null only for AI_ACTION_PROPOSED: a proposal has no decision yet (research D13). Every other event type carries both. */
+  readonly outcome: Outcome | null;
+  readonly reason: ReasonCode | null;
   readonly confirmationId: ConfirmationId | null;
   readonly confirmationState: "pending" | "accepted" | "rejected" | "invalidated" | null;
   readonly executionResult: "success" | "failure" | null;
@@ -67,7 +68,8 @@ export interface AuditEvent {
 /**
  * `append` resolves ONLY after the event is durably committed. A rejected promise means
  * "not recorded". For allowed actions the Gateway then refuses to execute (research D13).
- * For denials the denial stands regardless.
+ * For denials the denial stands regardless. `append` MUST be idempotent on `event.id`: a retry of
+ * an event that was in fact committed leaves one row (the same id with different content is an error).
  */
 export interface AuditSink {
   append(event: AuditEvent): Promise<void>;
