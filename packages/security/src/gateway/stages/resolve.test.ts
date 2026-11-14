@@ -4,8 +4,8 @@ import { buildRegistry } from "../../registry/build-registry.js";
 import { createEnablementPolicy } from "../../registry/enablement.js";
 import { createResolveStage } from "./resolve.js";
 import { createPipeline } from "../pipeline.js";
-import { allowedDecision } from "../decision.js";
-import { context, dependencies, input, stageMap } from "../fixtures.test-support.js";
+import { allowedDecision, denyDecision } from "../decision.js";
+import { context, dependencies, input, run, stageMap } from "../fixtures.test-support.js";
 
 afterEach(() => { vi.useRealTimers(); });
 function harness(overrides: Partial<Pick<GatewayDependencies, "registry" | "globalAllowlist">> = {}, store: TenantActionPolicyStore = { isDisabled: async () => false }) {
@@ -84,17 +84,25 @@ describe("exact resolution and live default-deny enablement", () => {
     expect(executions).toBe(0);
   });
 
-  it("denies when the request carries no minted context, without consulting the tenant", async () => {
-    let reads = 0;
+  it("the runner denies at context when no minted context exists, so resolve never runs", async () => {
+    let resolves = 0;
     const { deps } = dependencies();
-    let executions = 0;
-    const stages = stageMap(() => { executions++; throw new Error("unreachable"); });
+    const real = createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: { isDisabled: async () => false } });
+    const stages = stageMap(() => { throw new Error("unreachable"); });
     stages.context = () => ({ kind: "continue", data: {} });
     stages.intake = () => ({ kind: "continue", data: { action: "viewProject" } });
-    stages.resolve = createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: { isDisabled: async () => { reads++; return false; } } });
-    expect(await createPipeline(stages).run({ ...input(), context: { ...context() } })).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "resolve" });
+    stages.resolve = (request) => { resolves++; return real(request); };
+    expect(await createPipeline(stages).run({ ...input(), context: { ...context() } })).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "context" });
+    expect(resolves).toBe(0);
+  });
+
+  it("still refuses, on its own, a request record that carries no context", async () => {
+    let reads = 0;
+    const { deps } = dependencies();
+    const stage = createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: { isDisabled: async () => { reads++; return false; } } });
+    const record = { ...input(), run, context: null, facts: { intake: { action: "viewProject" } } };
+    expect(await stage(record)).toMatchObject({ kind: "stop", decision: { outcome: "DENIED", reason: "dependency_failure", stage: "resolve" } });
     expect(reads).toBe(0);
-    expect(executions).toBe(0);
   });
 
   it("truncates a very long attempted action name in the decision", async () => {
@@ -146,6 +154,66 @@ describe("exact resolution and live default-deny enablement", () => {
       expect(reached).toBe(enabled);
       expect(decision.outcome === "DENIED" && decision.stage === "resolve").toBe(!enabled);
       expect(enabled).toBe(allowlisted && tenant === false);
+    });
+  });
+
+  describe("registry entry capture", () => {
+    /** The registry answers truthfully while the stage is built (allowlist validation) and `entryFor` afterwards. */
+    function run(entryFor: (name: string) => unknown) {
+      const { deps, definition } = dependencies();
+      let live = false;
+      const registry = { get: (name: string) => (live ? entryFor(name) : deps.registry.get(name)), list: deps.registry.list, isReservedForbidden: deps.registry.isReservedForbidden, fingerprint: deps.registry.fingerprint } as unknown as GatewayDependencies["registry"];
+      let tenantReads = 0;
+      let executions = 0;
+      let facts: unknown;
+      const stages = stageMap(() => { executions++; throw new Error("unreachable"); });
+      stages.intake = () => ({ kind: "continue", data: { action: "viewProject" } });
+      stages.resolve = createResolveStage({ registry, globalAllowlist: new Set([definition.id]), tenantPolicy: { isDisabled: async () => { tenantReads++; await Promise.resolve(); return false; } } });
+      // validate observes what resolve published, then ends the run with a denial of its own.
+      stages.validate = (request) => { facts = request.facts.resolve; return { kind: "stop", decision: denyDecision({ decisionId: request.decisionId, requestId: request.requestId, outcome: "DENIED", reason: "dependency_failure", stage: "validate" }) }; };
+      live = true;
+      return createPipeline(stages).run(input()).then((decision) => ({ decision, facts, tenantReads, executions }));
+    }
+
+    it("reads the entry and each of its fields exactly once, all before the tenant policy await", async () => {
+      const { deps, definition } = dependencies();
+      const real = deps.registry.get(definition.id)!;
+      const reads = new Map<string, number>();
+      const count = (key: string) => reads.set(key, (reads.get(key) ?? 0) + 1);
+      const entry = {
+        get definition() { count("definition"); return { get id() { count("id"); return real.definition.id; }, get version() { count("version"); return real.definition.version; }, get risk() { count("risk"); return real.definition.risk; } }; },
+        get definitionHash() { count("definitionHash"); return real.definitionHash; },
+      };
+      const result = await run(() => entry);
+      expect(result.decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "validate" });
+      expect(result.facts).toEqual({ id: definition.id, version: 1, risk: "SAFE", definitionHash: real.definitionHash });
+      expect([...reads.entries()].sort()).toEqual([["definition", 1], ["definitionHash", 1], ["id", 1], ["risk", 1], ["version", 1]]);
+      expect(result.tenantReads).toBe(1);
+      expect(Object.isFrozen(result.facts)).toBe(true);
+    });
+
+    it("refuses an entry whose definition is not the action that was asked for", async () => {
+      const { definition } = dependencies();
+      const registry = buildRegistry([{ ...definition, id: "otherAction" as ActionId }]);
+      const result = await run(() => registry.get("otherAction"));
+      expect(result.decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "resolve" });
+      expect(result.tenantReads).toBe(0);
+      expect(result.executions).toBe(0);
+    });
+
+    it.each([undefined, null, 5, "entry", [], {}, { definition: null, definitionHash: "x" }, { definition: { id: "viewProject", version: "1", risk: "SAFE" }, definitionHash: "x" }, { definition: { id: "viewProject", version: 1, risk: 5 }, definitionHash: "x" }, { definition: { id: "viewProject", version: 1, risk: "SAFE" }, definitionHash: 5 }])("treats the malformed entry %j as a failure, never an allow", async (entry) => {
+      const result = await run(() => entry);
+      expect(result.decision.outcome).not.toBe("ALLOWED");
+      expect(result.decision).toMatchObject({ stage: "resolve" });
+      expect(result.tenantReads).toBe(0);
+      expect(result.executions).toBe(0);
+    });
+
+    it("contains a registry that throws", async () => {
+      const result = await run(() => { throw new Error("CANARY"); });
+      expect(result.decision).toMatchObject({ outcome: "DENIED", reason: "internal_error", stage: "resolve" });
+      expect(JSON.stringify(result.decision)).not.toContain("CANARY");
+      expect(result.tenantReads).toBe(0);
     });
   });
 });
