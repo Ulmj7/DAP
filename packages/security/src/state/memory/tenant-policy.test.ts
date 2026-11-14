@@ -27,11 +27,15 @@ describe("memory tenant policy isolation", () => {
     await expect(store.isDisabled({ tenantId: "bad" as TenantId }, "action" as ActionId)).rejects.toBeInstanceOf(TypeError);
     await expect(store.setDisabled({ tenantId: A }, "action" as ActionId, undefined as never, "operator")).rejects.toBeInstanceOf(TypeError);
     await expect(store.setDisabled({ tenantId: A }, "action\u0000id" as ActionId, true, "operator")).rejects.toBeInstanceOf(TypeError);
+    for (const actionId of ["", { length: 1, includes: () => false }]) {
+      await expect(store.isDisabled({ tenantId: A }, actionId as ActionId)).rejects.toBeInstanceOf(TypeError);
+      await expect(store.setDisabled({ tenantId: A }, actionId as ActionId, true, "operator")).rejects.toBeInstanceOf(TypeError);
+    }
   });
 });
 
 describe("memory and Postgres stores take the same write arguments", () => {
-  it.each([undefined, null, "", 7, {}, "operator\u0000id"])("the memory store rejects the operator id %j exactly as Postgres does", async (operator) => {
+  it.each([undefined, null, "", 7, {}, { length: 1, includes: () => false }, "operator\u0000id"])("the memory store rejects the operator id %j exactly as Postgres does", async (operator) => {
     const store = new InMemoryTenantActionPolicyStore();
     await expect(store.setDisabled({ tenantId: A }, "action" as ActionId, true, operator as never)).rejects.toBeInstanceOf(TypeError);
     expect(await store.isDisabled({ tenantId: A }, "action" as ActionId)).toBe(false);
