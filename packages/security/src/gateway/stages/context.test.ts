@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import type { AuthorizationContext, Clock } from "@dap/contracts";
+import { mintAuthorizationContext } from "@dap/contracts/mint";
 import { createContextStage } from "./context.js";
 import { createPipeline } from "../pipeline.js";
 import { allowedDecision } from "../decision.js";
@@ -31,6 +32,21 @@ describe("minted context stage", () => {
     const { decision, executions } = await check(context(), { now: () => time as never });
     expect(decision).toMatchObject({ outcome: "UNAUTHORIZED", reason: "session_expired" });
     expect(executions).toBe(0);
+  });
+  const minted = (authenticatedAt: string, validUntil: string) => mintAuthorizationContext({ userId: "alice", tenantId: "00000000-0000-4000-8000-000000000001", sessionId: "session", authenticatedAt: authenticatedAt as never, validUntil: validUntil as never });
+  it.each([
+    ["authenticated after the clock reading", "2026-01-01T00:00:01Z", "2026-01-01T01:00:00Z"],
+    ["valid-until before authentication", "2025-12-31T23:00:00Z", "2025-12-31T22:00:00Z"],
+    ["valid-until equal to authentication", "2025-12-31T23:00:00Z", "2025-12-31T23:00:00Z"],
+    ["unparseable instants", "never", "forever"],
+  ])("a minted context with an incoherent validity window (%s) is unauthenticated", async (_label, authenticatedAt, validUntil) => {
+    const { decision, executions } = await check(minted(authenticatedAt, validUntil));
+    expect(decision).toMatchObject({ outcome: "UNAUTHORIZED", reason: "unauthenticated", stage: "context" });
+    expect(executions).toBe(0);
+  });
+  it("accepts a context authenticated exactly at the clock reading", async () => {
+    const result = await check(minted("2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z"));
+    expect(result.decision.outcome).toBe("ALLOWED");
   });
   it("accepts the original minted identity before expiry", async () => {
     const result = await check(context());
