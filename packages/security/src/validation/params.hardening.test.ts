@@ -340,3 +340,128 @@ describe("defects in the definition are programmer errors, not planner feedback"
     expect(result).toMatchObject({ ok: true, paramsDigest: paramsDigest({ actionId: "probeAction", version: 1, params: good(), resource: null, tenantId: TENANT, userId: USER }) });
   });
 });
+
+/**
+ * Guards a mutation sweep found unpinned: each case below fails if the guard named in its title is removed or
+ * weakened. Stand-in schemas are used where a real schema cannot reach the branch (a JSON input has no Set, and
+ * no real schema reports a missing parent), so the guard itself is judged.
+ */
+describe("guards pinned by mutation testing", () => {
+  const fake = (safeParse: () => unknown) => ({ ...registered, inputSchema: { safeParse } }) as never;
+  const reporting = (...found: object[]) => fake(() => ({ success: false, error: { issues: found } }));
+  const typeIssue = (...path: string[]) => ({ code: "invalid_type", path });
+
+  describe("the caller's scope and the definition are rejected with their own reason", () => {
+    it.each([["no tenant", { tenantId: "", userId: USER }], ["no user", { tenantId: TENANT, userId: "" }], ["a non-text tenant", { tenantId: 5, userId: USER }], ["a non-text user", { tenantId: TENANT, userId: 5 }]])(
+      "%s", (_name, bad) => {
+        expect(() => validateParams(registered, good(), bad as never)).toThrow("Parameters are validated for a tenant and a user");
+      });
+
+    it.each([
+      ["no id", { ...registered, id: "" }], ["a non-text id", { ...registered, id: 7 }], ["a non-numeric version", { ...registered, version: "1" }], ["no version", { ...registered, version: undefined }],
+      ["a null schema", { ...registered, inputSchema: null }], ["a schema that is not an object", { ...registered, inputSchema: "schema" }], ["a schema without safeParse", { ...registered, inputSchema: {} }],
+      ["a schema whose safeParse is not a function", { ...registered, inputSchema: { safeParse: 1 } }], ["a function that carries a safeParse", { ...registered, inputSchema: Object.assign(() => 1, { safeParse: () => ({ success: true, data: {} }) }) }],
+    ])("%s", (_name, bad) => {
+      expect(() => validateParams(bad as never, good(), scope)).toThrow("Cannot validate against a malformed definition");
+    });
+  });
+
+  describe("paramsDigest judges every part of the resource", () => {
+    const resourceDigest = (resource: unknown) => () => paramsDigest({ actionId: "probeAction", version: 1, params: {}, resource: resource as never, tenantId: TENANT, userId: USER });
+    it.each([["an empty type", { type: "", id: "x" }], ["a non-text type", { type: 1, id: "x" }], ["an empty id", { type: "x", id: "" }], ["a non-text id", { type: "x", id: 1 }], ["a missing id", { type: "x" }]])("rejects %s", (_name, resource) => {
+      expect(resourceDigest(resource)).toThrow("A parameter digest needs a resource");
+    });
+    it("still accepts null and a well-formed resource", () => {
+      expect(resourceDigest(null)()).toMatch(/^[a-f0-9]{64}$/);
+      expect(resourceDigest({ type: "x", id: "y" })()).toMatch(/^[a-f0-9]{64}$/);
+    });
+  });
+
+  describe("an extractor's answer is judged on its own, with its own reason", () => {
+    const ANSWER = "A resource extractor must return { type, id } or null";
+    it.each([
+      ["JSON text for a resource", '{"type":"p","id":"1"}'], ["the text null", "null"], ["a number", 5], ["true", true], ["an array of two", ["p", "1"]], ["an empty array", []], ["an empty object", {}],
+      ["an empty type", { type: "", id: "1" }], ["a non-text type", { type: 1, id: "1" }], ["an empty id", { type: "p", id: "" }], ["a non-text id", { type: "p", id: 1 }], ["an extra key", { type: "p", id: "1", x: 1 }],
+      ["an object that is not plain data", new Date()], ["a value strict intake refuses", { type: "p", id: "1", n: Number.NaN }],
+    ])("rejects %s", (_name, answer) => {
+      expect(() => validateParams(define(schema, { resource: (() => answer) as never }), good(), scope)).toThrow(ANSWER);
+    });
+  });
+
+  describe("issue codes", () => {
+    it("distinguishes an absent value from a present one, at any depth", () => {
+      const where = (input: unknown, ...path: string[]) => { const result = validateParams(reporting(typeIssue(...path)), input, scope); return result.ok ? null : result.issues.map((issue) => issue.code); };
+      expect(where({}, "a")).toEqual(["required"]);
+      expect(where({ a: 1 }, "a")).toEqual(["type"]);
+      expect(where({ a: {} }, "a", "b")).toEqual(["required"]);
+      expect(where({ a: { b: 1 } }, "a", "b")).toEqual(["type"]);
+      expect(where({}, "ghost", "x")).toEqual(["type"]); // an absent PARENT is not the missing value
+      expect(where({ a: null }, "a", "b")).toEqual(["type"]); // nor is a null one
+      expect(where({ a: "text" }, "a", "b")).toEqual(["type"]); // nor a scalar one
+      expect(where({}, "toString")).toEqual(["required"]); // only own properties count as present
+      expect(where({}, "constructor")).toEqual(["required"]);
+      expect(where({ a: 1 }, ...[])).toEqual(["type"]); // the root itself is never "missing"
+    });
+
+    it("collapses an exact duplicate, but keeps two codes at one path and one code at two paths", () => {
+      const tooBig = { code: "too_big", origin: "string", path: ["a"] };
+      const format = { code: "invalid_format", path: ["a"] };
+      const codes = (...found: object[]) => { const result = validateParams(reporting(...found), {}, scope); return result.ok ? null : result.issues.map((issue) => `${issue.path}:${issue.code}`); };
+      expect(codes(tooBig, tooBig)).toEqual(["/a:too_long"]);
+      expect(codes(tooBig, format)).toEqual(["/a:too_long", "/a:format"]);
+      expect(codes(tooBig, { ...tooBig, path: ["b"] })).toEqual(["/a:too_long", "/b:too_long"]);
+    });
+
+    it("maps a number that is not a multiple to out_of_range", () => {
+      const definition = define(z.strictObject({ n: z.number().multipleOf(5) }));
+      const result = validateParams(definition, { n: 7 }, scope);
+      expect(result).toMatchObject({ ok: false, issues: [{ path: "/n", code: "out_of_range" }] });
+    });
+
+    it("reports a rejection that carries no issues as an empty list, never as success", () => {
+      expect(validateParams(fake(() => ({ success: false })), {}, scope)).toEqual({ ok: false, issues: [] });
+    });
+  });
+
+  describe("a rejection is frozen all the way down", () => {
+    const walk = (node: unknown): void => { if (node && typeof node === "object") { expect(Object.isFrozen(node)).toBe(true); Object.values(node).forEach(walk); } };
+    it.each([["a schema rejection", { ...good(), count: 99, name: 5 }], ["an input that strict intake refuses", { n: Number.NaN }], ["text instead of an object", "{}"]])("%s", (_name, params) => {
+      const result = validateParams(registered, params, scope);
+      expect(result.ok).toBe(false);
+      walk(result);
+      if (result.ok) throw new Error("expected a rejection");
+      expect(result.issues.length).toBeGreaterThan(0);
+      expect(() => { (result.issues as unknown as { path: string }[])[0]!.path = "/forged"; }).toThrow(TypeError);
+    });
+  });
+
+  describe("what the schema sees and what is bound", () => {
+    it("holds the schema's OUTPUT to the configured caps, not only its input", () => {
+      const deep = { a: { b: { c: { d: 1 } } } };
+      const definition = fake(() => ({ success: true, data: deep }));
+      expect(validateParams(definition, {}, scope, { maxJsonDepth: 8 })).toMatchObject({ ok: true });
+      expect(() => validateParams(definition, {}, scope, { maxJsonDepth: 3 })).toThrow("A schema's normalized output must be plain JSON data");
+    });
+
+    it("never touches the caller's object again after the single copy, not even to classify an issue", () => {
+      const touched: PropertyKey[] = [];
+      const hostile = new Proxy({ name: "ok", count: 2, tags: ["a"] } as Record<string, unknown>, {
+        getOwnPropertyDescriptor(target, key) { touched.push(key); return Reflect.getOwnPropertyDescriptor(target, key); },
+        has(target, key) { touched.push(key); return Reflect.has(target, key); },
+        get(target, key) { touched.push(key); return Reflect.get(target, key); },
+      });
+      const result = validateParams(registered, hostile, scope); // `nested` is required and absent
+      expect(result).toMatchObject({ ok: false, issues: [{ path: "/nested", code: "required" }] });
+      expect(touched).not.toContain("nested");
+    });
+
+    it("digests the normalized output, not the input", () => {
+      const definition = define(z.strictObject({ name: z.string().trim().min(1).max(5), n: z.number().int().min(0).max(9).default(7) }));
+      const result = validateParams(definition, { name: "  ab  " }, scope);
+      if (!result.ok) throw new Error("expected success");
+      expect(result.normalized).toEqual({ name: "ab", n: 7 });
+      expect(result.paramsDigest).toBe(paramsDigest({ actionId: "probeAction", version: 1, params: { name: "ab", n: 7 }, resource: null, tenantId: TENANT, userId: USER }));
+      expect(result.paramsDigest).not.toBe(paramsDigest({ actionId: "probeAction", version: 1, params: { name: "  ab  " }, resource: null, tenantId: TENANT, userId: USER }));
+    });
+  });
+});
