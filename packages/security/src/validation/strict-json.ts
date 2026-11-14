@@ -450,7 +450,8 @@ class Copier {
       case "string": this.chargeString(value); return value;
       case "number": {
         const fault: NumberFault | undefined = !Number.isFinite(value) ? "not_finite" : Math.abs(value) > Number.MAX_SAFE_INTEGER ? "unsafe_number" : undefined;
-        if (fault) { this.numberFault ??= fault; this.charge(1); return 0; }
+        // Charged as the text it would serialize to (NaN and the infinities serialize to null), so a fault cannot hide an oversized payload.
+        if (fault) { this.numberFault ??= fault; this.charge(Number.isFinite(value) ? String(value).length : 4); return 0; }
         const normalized = value === 0 ? 0 : value;
         this.charge(String(normalized).length);
         return normalized;
@@ -512,16 +513,18 @@ class Copier {
 
 /** Result of a strict parse that has not yet reported a number fault; see `parseStrictJsonDeferred`. */
 export type DeferredStrictJsonResult =
-  | { ok: true; readonly value: JsonValue; readonly numberFault?: NumberFault }
-  | { ok: false; readonly code: Exclude<StrictJsonCode, NumberFault> };
+  | { readonly ok: true; readonly value: JsonValue; readonly numberFault?: undefined; readonly shape?: undefined }
+  | { readonly ok: true; readonly numberFault: NumberFault; readonly shape: JsonValue; readonly value?: undefined }
+  | { readonly ok: false; readonly code: Exclude<StrictJsonCode, NumberFault> };
 
 /**
  * Strict intake of one untrusted value (T061), with number faults deferred.
  *
  * A caller that must classify by STRUCTURE first (the envelope: a planner must not pick its own outcome by
- * putting a number fault ahead of a structural one) gets `{ ok: true, value, numberFault }` when the document
- * is structurally fine but holds an unusable number. In that case `value` has 0 in place of every faulty
- * number and MUST NOT be used as data; it exists so the caller can judge the document's shape.
+ * putting a number fault ahead of a structural one) gets `{ ok: true, numberFault, shape }` when the document
+ * is structurally fine but holds an unusable number. `shape` has 0 in place of every faulty number, so it can
+ * be judged for structure but is never `value`: data is only ever offered when every number is usable, and
+ * misusing the result as data does not type-check.
  */
 export function parseStrictJsonDeferred(
   input: unknown,
@@ -538,7 +541,7 @@ export function parseStrictJsonDeferred(
       const parser = new Parser(input, maxDepth);
       const result = parser.parseDocument();
       if (!result.ok) return result as { ok: false; code: Exclude<StrictJsonCode, NumberFault> };
-      return { ok: true, value: freeze(result.value), ...(parser.numberFault ? { numberFault: parser.numberFault } : {}) };
+      return parser.numberFault ? { ok: true, numberFault: parser.numberFault, shape: freeze(result.value) } : { ok: true, value: freeze(result.value) };
     } catch (error) {
       // Only reachable with an absurd depth cap exhausting the stack. Fail closed, never echo.
       return { ok: false, code: error instanceof RangeError ? "too_deep" : "syntax" };
@@ -547,7 +550,7 @@ export function parseStrictJsonDeferred(
   try {
     const copier = new Copier(maxDepth, maxPayloadBytes);
     const value = freeze(copier.copy(input, 0));
-    return { ok: true, value, ...(copier.numberFault ? { numberFault: copier.numberFault } : {}) };
+    return copier.numberFault ? { ok: true, numberFault: copier.numberFault, shape: value } : { ok: true, value };
   } catch (error) {
     // A hostile proxy, accessor or exotic value throwing from inside the copy is simply not plain data.
     const code = error instanceof Rejection ? error.code : error instanceof RangeError ? "too_deep" : "not_plain";

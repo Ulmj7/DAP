@@ -6,7 +6,7 @@
  */
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { parseStrictJson, type StrictJsonCode } from "./strict-json.js";
+import { parseStrictJson, parseStrictJsonDeferred, type StrictJsonCode } from "./strict-json.js";
 
 type Outcome = "ok" | StrictJsonCode;
 const outcome = (input: unknown, options?: Parameters<typeof parseStrictJson>[1]): Outcome => {
@@ -279,6 +279,47 @@ describe("a structural fault outranks a numeric fault, wherever each sits", () =
 
   it("does not let a numeric fault hide an oversized payload", () => {
     expect(outcome([NaN, ...Array.from({ length: 10_000 }, () => 1)])).toBe("too_large");
+  });
+});
+
+describe("a faulty number is charged like the text it would serialize to, so it cannot hide an oversized payload", () => {
+  it.each([
+    ["NaN", Number.NaN, 3276, "not_finite"], ["Infinity", Infinity, 3276, "not_finite"], ["-Infinity", -Infinity, 3276, "not_finite"],
+    ["1e300", 1e300, 2340, "unsafe_number"], ["2^60", 2 ** 60, 819, "unsafe_number"],
+  ] as const)("%s: the boundary is where the compact text crosses the cap", (_label, number, fits, fault) => {
+    // JSON.stringify writes NaN and Infinity as null, so [x, x, ...] costs n * (len("[x]") - 1) + 1 bytes.
+    const perElement = JSON.stringify([number]).length - 1;
+    const size = (n: number): number => n * perElement + 1;
+    expect(size(fits)).toBeLessThanOrEqual(16384);
+    expect(size(fits + 1)).toBeGreaterThan(16384);
+    expect(outcome(Array.from({ length: fits }, () => number))).toBe(fault);
+    expect(outcome(Array.from({ length: fits + 1 }, () => number))).toBe("too_large");
+  });
+
+  it("agrees with the text branch on what is too large", () => {
+    const numbers = Array.from({ length: 5000 }, () => Number.NaN);
+    expect(outcome(numbers)).toBe("too_large");
+    expect(outcome(`[${Array.from({ length: 5000 }, () => "1e999").join(",")}]`)).toBe("too_large");
+  });
+});
+
+describe("parseStrictJsonDeferred cannot be mistaken for usable data", () => {
+  it("offers value only when every number is usable, and a shape only otherwise", () => {
+    const good = parseStrictJsonDeferred('{"a":[1,2]}');
+    expect(good).toEqual({ ok: true, value: { a: [1, 2] } });
+    expect(good).not.toHaveProperty("shape");
+    for (const input of ['{"a":1e999}', '{"a":9007199254740993}', '{"a":1e-999}', { a: NaN }, { a: 2 ** 60 }]) {
+      const faulty = parseStrictJsonDeferred(input);
+      expect(faulty).toMatchObject({ ok: true, numberFault: expect.stringMatching(/not_finite|unsafe_number/), shape: { a: 0 } });
+      expect(faulty).not.toHaveProperty("value");
+    }
+  });
+
+  it("is frozen like any other result, and reports structural faults as failures", () => {
+    const faulty = parseStrictJsonDeferred('{"a":1e999}');
+    if (!faulty.ok || !("shape" in faulty)) throw new Error("expected a deferred number fault");
+    expect(Object.isFrozen(faulty.shape)).toBe(true);
+    expect(parseStrictJsonDeferred('{"a":1e999,"a":1}')).toEqual({ ok: false, code: "duplicate_key" });
   });
 });
 

@@ -365,17 +365,22 @@ describe("parseStrictJson: fast-check property", () => {
   it("a successful result never contains a forbidden key or two colliding keys", () => {
     // fc.json() is always valid JSON, so after setting aside what strict intake rejects ON PURPOSE (magnitudes beyond
     // 2^53-1, underflow to zero, lone surrogates) every other text MUST be accepted: this cannot pass by rejecting everything.
+    // fast-check deliberately generates __proto__, constructor and prototype keys, and nesting beyond the cap.
+    const depthOf = (node: unknown): number => (Array.isArray(node) ? 1 + Math.max(0, ...node.map(depthOf)) : node !== null && typeof node === "object" ? 1 + Math.max(0, ...Object.values(node).map(depthOf)) : 0);
     const rejectedOnPurpose = (node: unknown): boolean => {
       if (typeof node === "number") return Math.abs(node) > Number.MAX_SAFE_INTEGER;
       if (typeof node === "string") return /[\ud800-\udfff]/.test(node.replace(/[\ud800-\udbff][\udc00-\udfff]/g, ""));
       if (Array.isArray(node)) return node.some(rejectedOnPurpose);
-      if (node !== null && typeof node === "object") return Object.entries(node).some(([key, child]) => rejectedOnPurpose(key) || rejectedOnPurpose(child));
+      if (node !== null && typeof node === "object") {
+        return Object.entries(node).some(([key, child]) => ["__proto__", "constructor", "prototype"].includes(key) || rejectedOnPurpose(key) || rejectedOnPurpose(child));
+      }
       return false;
     };
     let accepted = 0;
     fc.assert(
       fc.property(fc.json(), (text) => {
-        fc.pre(!rejectedOnPurpose(JSON.parse(text)));
+        const parsed: unknown = JSON.parse(text);
+        fc.pre(!rejectedOnPurpose(parsed) && depthOf(parsed) <= 8 && text.length <= 16384);
         fc.pre(!/[eE]-\d{3,}/.test(text));
         const result = parseStrictJson(text);
         expect(result.ok, text).toBe(true);

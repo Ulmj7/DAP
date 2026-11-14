@@ -101,21 +101,6 @@ describe("toProposalCall: raw text identity", () => {
 describe("@dap/ai export surface", () => {
   /** The complete public surface of @dap/ai (compile-time). */
   const ALLOWLIST = ["PlannerPort", "RawToolCall", "toProposalCall"] as const;
-  const FORBIDDEN = [
-    "ExecutorTable",
-    "defineExecutor",
-    "ActionRegistry",
-    "defineAction",
-    "AuthorizationContext",
-    "SecurityStateStore",
-    "ConfirmationService",
-    "ConfirmationChannel",
-    "PolicyGateway",
-    "createPolicyGateway",
-    "toPlannerFeedback",
-    "MintToken",
-  ] as const;
-
   it("exposes exactly the allowlisted names (compile-time, as the type checker sees them)", () => {
     expect(exportedNames().sort()).toEqual([...ALLOWLIST].sort());
   });
@@ -123,13 +108,6 @@ describe("@dap/ai export surface", () => {
   it("exposes exactly the allowlisted runtime values", () => {
     // Type exports are erased at runtime; only toProposalCall is a value.
     expect(Object.keys(ai).sort()).toEqual(["toProposalCall"]);
-  });
-
-  it("does not export executor, registry, context, or confirmation names", () => {
-    const runtime = Object.keys(ai);
-    for (const name of FORBIDDEN) {
-      expect(runtime, name).not.toContain(name);
-    }
   });
 });
 

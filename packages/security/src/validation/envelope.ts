@@ -68,7 +68,8 @@ export function parseEnvelope(value: unknown, options: StrictJsonOptions = {}): 
   // planner cannot choose its own outcome by putting a number fault ahead of a structural one.
   const parsed = parseStrictJsonDeferred(value, options);
   if (!parsed.ok) return STRICT_JSON_FAILURE[parsed.code]();
-  const candidate = parsed.value;
+  // With a deferred number fault only the shape is judged here; it is never returned as data.
+  const candidate = parsed.numberFault ? parsed.shape : parsed.value;
   if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) return malformed();
   const record = candidate as Record<string, JsonValue>;
   // Exactly two keys: action and params. Anything else is invalid.
