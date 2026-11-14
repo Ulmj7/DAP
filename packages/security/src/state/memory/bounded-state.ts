@@ -13,7 +13,8 @@ export function positiveInteger(value: unknown, maximum: number): number {
 export function stateKey(scope: TenantScope, key: string): string {
   const tenantId: unknown = scope?.tenantId;
   if (!uuid.safeParse(tenantId).success) throw new TypeError("Security state requires a UUID tenant");
-  if (typeof key !== "string" || key.length < 1 || key.length > 1024 || key.includes("\u0000") || Buffer.byteLength(key, "utf8") > 1024) throw new TypeError("Invalid security state key");
+  // A lone surrogate has no UTF-8 form: a database driver would silently turn two different keys into the same U+FFFD text.
+  if (typeof key !== "string" || key.length < 1 || key.length > 1024 || key.includes("\u0000") || !key.isWellFormed() || Buffer.byteLength(key, "utf8") > 1024) throw new TypeError("Invalid security state key");
   return JSON.stringify([(tenantId as string).toLowerCase(), key]);
 }
 
