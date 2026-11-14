@@ -13,6 +13,8 @@ export function createContextStage(clock: Clock, options: HookOptions = {}): Pol
     const answer = await currentTime();
     if (!answer.ok) return stop("DENIED", "dependency_failure");
     const now = Date.parse(answer.value);
+    // Expiry is decided here, so this stage must not rely on the hook's schema alone to rule out NaN.
+    if (!Number.isFinite(now)) return stop("DENIED", "dependency_failure");
     const validUntil = Date.parse(ctx.validUntil);
     const authenticatedAt = Date.parse(ctx.authenticatedAt);
     if (!Number.isFinite(validUntil) || !Number.isFinite(authenticatedAt) || authenticatedAt > now || validUntil <= authenticatedAt) return stop("UNAUTHORIZED", "unauthenticated");

@@ -58,6 +58,16 @@ describe("minted context stage", () => {
     expect(decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
     expect(executions).toBe(0);
   });
+  it("fails closed locally if a clock reading cannot be turned into a time", async () => {
+    const reading = "2026-01-01T00:00:00.5Z";
+    const original = Date.parse.bind(Date);
+    const spy = vi.spyOn(Date, "parse").mockImplementation((text) => (text === reading ? Number.NaN : original(text)));
+    try {
+      const { decision, executions } = await check(context(), { now: () => reading as never });
+      expect(decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "context" });
+      expect(executions).toBe(0);
+    } finally { spy.mockRestore(); }
+  });
   it("contains a throwing clock", async () => {
     const { decision, executions } = await check(context(), { now: () => { throw new Error("CANARY"); } });
     expect(decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
