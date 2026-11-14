@@ -5,7 +5,7 @@
     "outDir": "dist"
   },
   "include": [
-    "architecture/**/*.test.ts"
+    "architecture/**/*.ts"
   ],
   "references": []
 }
