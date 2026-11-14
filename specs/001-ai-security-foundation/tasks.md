@@ -291,7 +291,7 @@ execution counts stay within limits and every replay is rejected, including from
 
 ### Implementation for User Story 6
 
-- [ ] T110 [P] [US6] Create in-memory `packages/security/src/state/memory/replay.ts` implementing `ReplayGuard`
+- [X] T110 [P] [US6] Create in-memory `packages/security/src/state/memory/replay.ts` implementing `ReplayGuard` — Bounded process-local adapter passes the shared memory conformance suite.
 - [ ] T111 [P] [US6] Create in-memory `packages/security/src/state/memory/rate-limiter.ts` implementing `RateLimiter`
 - [ ] T112 [US6] Create migration `db/migrations/040_sec_replay_claims.sql`: `namespace`, `claim_key`, `claimed_at`, `expires_at`; "Primary key `(tenant_id, namespace, claim_key)`"; row-level security forced (depends on T025)
 - [ ] T113 [US6] Create migration `db/migrations/050_sec_rate_counters.sql`: `bucket_key`, `window_start`, `count`, `expires_at`; "Primary key `(tenant_id, bucket_key, window_start)`"; row-level security forced (depends on T025)
