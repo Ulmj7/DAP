@@ -287,12 +287,12 @@ execution counts stay within limits and every replay is rejected, including from
 
 - [ ] T107 [P] [US6] Create `packages/testkit/src/attacks/replay.ts` (ATK-REPLAY-01..08, ATK-XTENANT-06: duplicate `callId`, new Gateway instance on the same database, 50 parallel submissions across two instances, retention boundary, per-tenant independence, model-supplied ids rejected, invalid-then-corrected resubmission) and `tests/security/replay.test.ts`
 - [ ] T108 [P] [US6] Create `packages/testkit/src/attacks/rate-abuse.ts` (ATK-RATE-01..08, ATK-XTENANT-08: 10,000 proposals in one turn execute at most the per-turn cap with bounded database round trips; per-user; per-capability; HIGH and CRITICAL per hour; denial throttle; limiter unavailable; depth cap; wall-clock budget) and `tests/security/rate-abuse.test.ts`
-- [ ] T109 [P] [US6] Create `packages/security/src/state/conformance/replay.conformance.ts` (atomic claim; independent per tenant; retention) and `packages/security/src/state/conformance/rate-limiter.conformance.ts` (atomic count; window; `block` and `isBlocked`; tenant independence)
+- [X] T109 [P] [US6] Create `packages/security/src/state/conformance/replay.conformance.ts` (atomic claim; independent per tenant; retention) and `packages/security/src/state/conformance/rate-limiter.conformance.ts` (atomic count; window; `block` and `isBlocked`; tenant independence) — Memory conformance complete; PostgreSQL reuse remains T114.
 
 ### Implementation for User Story 6
 
 - [X] T110 [P] [US6] Create in-memory `packages/security/src/state/memory/replay.ts` implementing `ReplayGuard` — Bounded process-local adapter passes the shared memory conformance suite.
-- [ ] T111 [P] [US6] Create in-memory `packages/security/src/state/memory/rate-limiter.ts` implementing `RateLimiter`
+- [X] T111 [P] [US6] Create in-memory `packages/security/src/state/memory/rate-limiter.ts` implementing `RateLimiter` — Bounded adapter passes concurrent count, clock-boundary, isolation and block conformance.
 - [ ] T112 [US6] Create migration `db/migrations/040_sec_replay_claims.sql`: `namespace`, `claim_key`, `claimed_at`, `expires_at`; "Primary key `(tenant_id, namespace, claim_key)`"; row-level security forced (depends on T025)
 - [ ] T113 [US6] Create migration `db/migrations/050_sec_rate_counters.sql`: `bucket_key`, `window_start`, `count`, `expires_at`; "Primary key `(tenant_id, bucket_key, window_start)`"; row-level security forced (depends on T025)
 - [ ] T114 [US6] Create `packages/security/src/state/postgres/replay.ts` (`INSERT ... ON CONFLICT DO NOTHING`; zero rows inserted means duplicate) and `packages/security/src/state/postgres/rate-limiter.ts` (`INSERT ... ON CONFLICT DO UPDATE SET count = count + 1 RETURNING count`; block rows), and run T109 on memory and PostgreSQL (depends on T109, T110-T113)

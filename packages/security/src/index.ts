@@ -18,3 +18,4 @@ export { validateParams, paramsDigest } from "./validation/params.js";
 export type { ParamsDigestInput, ParamsScope, ValidatedParams } from "./validation/params.js";
 export { RESERVED_FORBIDDEN_ACTION_NAMES, RESERVED_PARAMETER_NAMES, normalizeForClassification } from "./registry/reserved-names.js";
 export { InMemoryReplayGuard } from "./state/memory/replay.js";
+export { InMemoryRateLimiter } from "./state/memory/rate-limiter.js";
