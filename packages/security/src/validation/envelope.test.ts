@@ -8,8 +8,11 @@
  */
 import { REASON_CODES } from "@dap/contracts";
 import { describe, expect, it } from "vitest";
-import { parseEnvelope } from "./envelope.js";
+import { ATTEMPTED_ACTION_MAX, auditableName, parseEnvelope } from "./envelope.js";
 import { parseStrictJson } from "./strict-json.js";
+
+/** The failure without its audit-only attemptedAction, which has its own tests below. */
+const bare = (result: object): object => Object.fromEntries(Object.entries(result).filter(([key]) => key !== "attemptedAction"));
 
 function isInvalid(result: {
   ok: boolean;
@@ -25,7 +28,8 @@ function assertNoLeak(result: {
   reason?: string;
 }): void {
   // The failure result is exactly (ok, outcome, reason) — no input content.
-  expect(Object.keys(result).sort()).toEqual(["ok", "outcome", "reason"]);
+  // (ok, outcome, reason), plus the audit-only attemptedAction when the planner wrote a string name.
+  expect(Object.keys(result).filter((key) => key !== "attemptedAction").sort()).toEqual(["ok", "outcome", "reason"]);
   expect(["INVALID_ACTION", "INVALID_PARAMETERS"]).toContain(result.outcome);
   expect(REASON_CODES).toContain(result.reason);
 }
@@ -223,7 +227,7 @@ describe("parseEnvelope: QA hardening", () => {
       { action: "sendEmail", params: { n: NaN } }, { action: "sendEmail", params: { n: Infinity } }, { action: "sendEmail", params: { n: { deep: -Infinity } } },
     ]) {
       const result = parseEnvelope(input);
-      expect(result).toEqual({ ok: false, outcome: "INVALID_PARAMETERS", reason: "invalid_parameters" });
+      expect(bare(result)).toEqual({ ok: false, outcome: "INVALID_PARAMETERS", reason: "invalid_parameters" });
       assertNoLeak(result);
     }
   });
@@ -235,7 +239,7 @@ describe("parseEnvelope: QA hardening", () => {
       '{"action":"ab","params":{"n":1e999}}', '{"action":"sendEmail"}', '{"n":1e999}', "1e999", '{"action":"sendEmail","params":{"n":9007199254740993},"extra":1}',
       '{"action":"sendEmail","params":{"n":1e999,"n":2}}', { action: "sendEmail", params: { n: NaN }, callId: "x" }, { action: "sendEmail", params: { n: NaN, bad: 1n } },
     ]) {
-      expect(parseEnvelope(input), typeof input === "string" ? input : "an already-parsed envelope").toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+      expect(bare(parseEnvelope(input)), typeof input === "string" ? input : "an already-parsed envelope").toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
     }
   });
 
@@ -243,9 +247,9 @@ describe("parseEnvelope: QA hardening", () => {
     const orders = [
       '{"action":"sendEmail","params":{"n":1e999},"callId":"x"}', '{"callId":"x","params":{"n":1e999},"action":"sendEmail"}', '{"params":{"n":1e999},"callId":"x","action":"sendEmail"}',
     ];
-    for (const text of orders) expect(parseEnvelope(text), text).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+    for (const text of orders) expect(bare(parseEnvelope(text)), text).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
     for (const text of ['{"action":"sendEmail","params":{"n":1e999}}', '{"params":{"n":1e999},"action":"sendEmail"}']) {
-      expect(parseEnvelope(text), text).toEqual({ ok: false, outcome: "INVALID_PARAMETERS", reason: "invalid_parameters" });
+      expect(bare(parseEnvelope(text)), text).toEqual({ ok: false, outcome: "INVALID_PARAMETERS", reason: "invalid_parameters" });
     }
   });
 
@@ -268,11 +272,11 @@ describe("parseEnvelope: QA hardening", () => {
     for (const escaped of ["sendEmail\\n", "sendEmail\\r\\n", "sendEmail\\u0000", "\\u0073endEmail\\r", "send\\u200bEmail", "s\\u0435ndEmail", "\\nsendEmail", "send\\u00e9Email", "\\uff53endEmail"]) {
       const text = `{"action":"${escaped}","params":{}}`;
       expect(parseStrictJson(text).ok, `${escaped} must be valid JSON for this case to test the grammar`).toBe(true);
-      expect(parseEnvelope(text), escaped).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+      expect(bare(parseEnvelope(text)), escaped).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
     }
     // Plain-text values that fail the grammar on length or class.
     for (const action of ["ab", "a".repeat(65), "SendEmail", "1send", "send_email", "send-email", "send email", ""]) {
-      expect(parseEnvelope(`{"action":"${action}","params":{}}`), action).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+      expect(bare(parseEnvelope(`{"action":"${action}","params":{}}`)), action).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
     }
     // A lone surrogate is rejected by the parser before the grammar sees it.
     expect(parseEnvelope('{"action":"\\ud800sendEmail","params":{}}')).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
@@ -286,6 +290,8 @@ describe("parseEnvelope: QA hardening", () => {
       for (const input of ['{"a":1,"b":2}', '{"x":"sendEmail","params":{}}', '{"action":"sendEmail","y":{}}', { a: 1, b: 2 }]) {
         expect(parseEnvelope(input), JSON.stringify(input)).toMatchObject({ ok: false, reason: "malformed_envelope" });
       }
+      // An inherited `action` is not a name the planner wrote: it must not reach the audit record either.
+      for (const input of ['{"a":1,"b":2}', '{"x":"sendEmail","params":{}}', { a: 1, b: 2 }]) expect(Object.hasOwn(parseEnvelope(input), "attemptedAction"), JSON.stringify(input)).toBe(false);
     } finally {
       delete proto.action;
       delete proto.params;
@@ -319,5 +325,80 @@ describe("parseEnvelope: QA hardening", () => {
     for (const params of ["[]", "null", "1", '"x"', "true"]) {
       expect(parseEnvelope(`{"action":"sendEmail","params":${params}}`), params).toMatchObject({ ok: false, reason: "malformed_envelope" });
     }
+  });
+});
+
+describe("parseEnvelope: attemptedAction (audit only)", () => {
+  const attempted = (input: unknown): unknown => (parseEnvelope(input) as { attemptedAction?: string }).attemptedAction;
+
+  it("carries the name the planner wrote for every envelope-level failure", () => {
+    expect(attempted('{"action":"sendEmail","params":{},"callId":"x"}')).toBe("sendEmail");
+    expect(attempted('{"action":"sendEmail"}')).toBe("sendEmail");
+    expect(attempted('{"action":"sendEmail","params":[1]}')).toBe("sendEmail");
+    expect(attempted('{"action":"SendEmail","params":{}}')).toBe("SendEmail");
+    expect(attempted('{"action":"sendEmail","params":{"n":1e999}}')).toBe("sendEmail");
+    expect(attempted({ action: "sendEmail", params: { n: NaN } })).toBe("sendEmail");
+  });
+
+  it("is absent when the name is not a string, or when there is no readable envelope", () => {
+    for (const input of ['{"action":42,"params":{}}', '{"action":null,"params":{}}', '{"action":["a"],"params":{}}', '{"params":{}}', "{}", "[1]", "42", "not json",
+      '{"action":"sendEmail","action":"other","params":{}}', '{"action":"sendEmail","params":{"__proto__":1}}', undefined, null]) {
+      const result = parseEnvelope(input);
+      expect(result.ok, String(input)).toBe(false);
+      expect(Object.hasOwn(result, "attemptedAction"), String(input)).toBe(false);
+    }
+  });
+
+  it("is absent on success", () => {
+    expect(Object.hasOwn(parseEnvelope('{"action":"sendEmail","params":{}}'), "attemptedAction")).toBe(false);
+  });
+
+  it("escapes look-alikes and control characters, so a name cannot forge a line, a field or another action", () => {
+    for (const [written, expected] of [
+      ["EXECUTE_SHELL\\n{\\\"outcome\\\":\\\"ALLOWED\\\"}", "EXECUTE_SHELL\\u{a}{\"outcome\":\"ALLOWED\"}"],
+      ["sendEmail\\r\\nX-Injected: 1", "sendEmail\\u{d}\\u{a}X-Injected: 1"],
+      ["s\\u0435ndEmail", "s\\u{435}ndEmail"], ["send\\u200bEmail", "send\\u{200b}Email"], ["a\\u202eb", "a\\u{202e}b"], ["nul\\u0000", "nul\\u{0}"], ["\\ud83d\\ude00", "\\u{1f600}"],
+    ] as const) {
+      const text = `{"action":"${written}","params":{}}`;
+      expect(parseStrictJson(text).ok, written).toBe(true);
+      expect(attempted(text), written).toBe(expected);
+    }
+  });
+
+  it("escapes the backslash itself, so an escape sequence typed by the planner is not confused with a real one", () => {
+    expect(auditableName("a\\u{a}")).toBe("a\\u{5c}u{a}");
+    expect(auditableName("a\nb")).toBe("a\\u{a}b");
+    expect(auditableName("a\nb")).not.toBe(auditableName("a\\u{a}b"));
+  });
+
+  it("only ever contains printable ASCII, whatever the input", () => {
+    for (const name of ["", "plain", "\u0000\u001f\u007f\u0080", "  ﻿", "\ud800", "é".repeat(200), "x".repeat(10_000), "\\".repeat(100)]) {
+      const out = auditableName(name);
+      expect(out, name.slice(0, 8)).toMatch(/^[\x20-\x7e]*$/);
+      expect(out.length).toBeLessThanOrEqual(ATTEMPTED_ACTION_MAX);
+    }
+  });
+
+  it("keeps every printable ASCII character as it is, and escapes the first characters on either side", () => {
+    const printable = Array.from({ length: 0x7e - 0x20 + 1 }, (_, index) => String.fromCharCode(0x20 + index)).filter((char) => char !== "\\");
+    for (const char of printable) expect(auditableName(char), char).toBe(char);
+    expect(auditableName("~")).toBe("~");
+    expect(auditableName(" ")).toBe(" ");
+    expect(auditableName("\u007f")).toBe("\\u{7f}");
+    expect(auditableName("\u001f")).toBe("\\u{1f}");
+  });
+
+  it("is bounded, and never cuts an escape in half", () => {
+    expect(ATTEMPTED_ACTION_MAX).toBe(64); // the decision's own cap (decision.ts); the brief allows up to 128
+    expect(auditableName("a".repeat(ATTEMPTED_ACTION_MAX))).toBe("a".repeat(ATTEMPTED_ACTION_MAX));
+    expect(auditableName("a".repeat(ATTEMPTED_ACTION_MAX + 1))).toBe("a".repeat(ATTEMPTED_ACTION_MAX));
+    // Each newline is the 5-character token `\u{a}`; 13 fit in 64, a 14th would be cut mid-token and is dropped whole.
+    const truncated = auditableName("\n".repeat(50));
+    expect(truncated).toBe("\\u{a}".repeat(12));
+    expect(truncated).toMatch(/^(?:\\u\{a\})+$/);
+    expect(auditableName("a".repeat(ATTEMPTED_ACTION_MAX - 2) + "\n")).toBe("a".repeat(ATTEMPTED_ACTION_MAX - 2));
+    // Once a token does not fit, nothing after it is kept either, however small: the name is a prefix, never a patchwork.
+    expect(auditableName("a".repeat(ATTEMPTED_ACTION_MAX - 2) + "\nbb")).toBe("a".repeat(ATTEMPTED_ACTION_MAX - 2));
+    expect(attempted(JSON.stringify({ action: "x".repeat(5000), params: {} }))).toBe("x".repeat(ATTEMPTED_ACTION_MAX));
   });
 });

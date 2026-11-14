@@ -3,6 +3,9 @@ import type { GatewayDependencies } from "@dap/contracts";
 import { createPolicyGateway } from "./create-gateway.js";
 import { context, dependencies, run } from "./fixtures.test-support.js";
 
+/** A well-formed envelope: intake, resolve and validate pass, and the first absent stage then denies fail-closed. */
+const VALID = '{"action":"viewProject","params":{}}';
+
 describe("gateway composition and planner boundary", () => {
   it("returns the two frozen doors and a fail-closed confirmation placeholder", async () => {
     const { deps, calls } = dependencies();
@@ -64,7 +67,7 @@ describe("gateway composition and planner boundary", () => {
       return proxy;
     }
     const gateway = createPolicyGateway(watch(deps) as GatewayDependencies);
-    expect(await gateway.proposals.forSession(context(), run).submit({ callId: "call", raw: {} })).toEqual({ outcome: "DENIED", category: "try_later" });
+    expect(await gateway.proposals.forSession(context(), run).submit({ callId: "call", raw: VALID })).toEqual({ outcome: "DENIED", category: "try_later" });
     expect(clockCalls).toBe(1);
     expect(receivers).toHaveLength(1);
     expect(receivers[0]).toBe(copies.get(port));
@@ -76,8 +79,8 @@ describe("gateway composition and planner boundary", () => {
     let reads = 0;
     const metadata = { ...run, get model() { reads++; return "model"; } };
     const submitter = createPolicyGateway(deps).proposals.forSession(context(), metadata);
-    await submitter.submit({ callId: "one", raw: {} });
-    await submitter.submit({ callId: "two", raw: {} });
+    await submitter.submit({ callId: "one", raw: VALID });
+    await submitter.submit({ callId: "two", raw: VALID });
     expect(reads).toBe(1);
     expect(calls()).toBe(0);
   });
@@ -89,7 +92,7 @@ describe("gateway composition and planner boundary", () => {
     const gateway = createPolicyGateway(deps);
     Object.assign(deps.clock, { now: () => { throw new Error("replacement"); } });
     Object.assign(deps.config, { hookTimeoutMs: -1 });
-    expect(await gateway.proposals.forSession(context(), run).submit({ callId: "call", raw: {} })).toEqual({ outcome: "DENIED", category: "try_later" });
+    expect(await gateway.proposals.forSession(context(), run).submit({ callId: "call", raw: VALID })).toEqual({ outcome: "DENIED", category: "try_later" });
     expect(clocks).toBe(1);
     expect(calls()).toBe(0);
   });
