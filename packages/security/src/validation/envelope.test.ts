@@ -9,6 +9,7 @@
 import { REASON_CODES } from "@dap/contracts";
 import { describe, expect, it } from "vitest";
 import { parseEnvelope } from "./envelope.js";
+import { parseStrictJson } from "./strict-json.js";
 
 function isInvalid(result: {
   ok: boolean;
@@ -210,7 +211,7 @@ describe("parseEnvelope: QA hardening", () => {
 
   it("reports a non-finite number as invalid parameters, not an invalid action (ATK-PARAMS-10)", () => {
     for (const input of [
-      '{"action":"sendEmail","params":{"n":1e999}}', '{"action":"sendEmail","params":{"n":[-1e999]}}',
+      '{"action":"sendEmail","params":{"n":1e999}}', '{"action":"sendEmail","params":{"n":[-1e999]}}', '{"action":"sendEmail","params":{"id":9007199254740993}}',
       { action: "sendEmail", params: { n: NaN } }, { action: "sendEmail", params: { n: Infinity } }, { action: "sendEmail", params: { n: { deep: -Infinity } } },
     ]) {
       const result = parseEnvelope(input);
@@ -233,11 +234,19 @@ describe("parseEnvelope: QA hardening", () => {
   });
 
   it("judges the decoded action, not the escaped text", () => {
-    expect(parseEnvelope('{"action":"\u0073endEmail","params":{}}')).toMatchObject({ ok: true, action: "sendEmail" });
-    for (const action of ["sendEmail\n", "sendEmail\u0000", "\u0073endEmail\r", "send\u200bEmail", "s\u0435ndEmail", "\ud800sendEmail", "ab", "a".repeat(65), "SendEmail", "1send", "send_email", "send-email", "send email", ""]) {
-      const result = parseEnvelope(`{"action":"${action}","params":{}}`);
-      expect(result, action).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+    expect(parseEnvelope('{"action":"\\u0073endEmail","params":{}}')).toMatchObject({ ok: true, action: "sendEmail" });
+    // JSON escapes (a backslash in the text), so the document is valid and the GRAMMAR is what rejects the decoded value.
+    for (const escaped of ["sendEmail\\n", "sendEmail\\r\\n", "sendEmail\\u0000", "\\u0073endEmail\\r", "send\\u200bEmail", "s\\u0435ndEmail", "\\nsendEmail", "send\\u00e9Email", "\\uff53endEmail"]) {
+      const text = `{"action":"${escaped}","params":{}}`;
+      expect(parseStrictJson(text).ok, `${escaped} must be valid JSON for this case to test the grammar`).toBe(true);
+      expect(parseEnvelope(text), escaped).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
     }
+    // Plain-text values that fail the grammar on length or class.
+    for (const action of ["ab", "a".repeat(65), "SendEmail", "1send", "send_email", "send-email", "send email", ""]) {
+      expect(parseEnvelope(`{"action":"${action}","params":{}}`), action).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+    }
+    // A lone surrogate is rejected by the parser before the grammar sees it.
+    expect(parseEnvelope('{"action":"\\ud800sendEmail","params":{}}')).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
   });
 
   it("does not take an action or params from the prototype chain", () => {

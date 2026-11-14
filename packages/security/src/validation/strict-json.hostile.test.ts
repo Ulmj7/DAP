@@ -62,7 +62,7 @@ describe("strings: escapes and surrogates (RFC 8259 section 7 and 8.2)", () => {
 });
 
 describe("numbers (RFC 8259 section 6)", () => {
-  it.each(["0", "-0", "1", "-1", "10", "1.5", "-1.25", "1e5", "1E5", "1e+5", "1e-5", "0.1e2", "0e0", "123456789012345680000", "1e308", "5e-324"])(
+  it.each(["0", "-0", "1", "-1", "10", "1.5", "-1.25", "1e5", "1E5", "1e+5", "1e-5", "0.1e2", "0e0", "5e-324", "4503599627370496.5", "12345678901234567890e-5"])(
     "accepts %s", (text) => { expect(outcome(text)).toBe("ok"); expect(outcome(`[${text},{"n":${text}}]`)).toBe("ok"); });
 
   it.each(["01", "-01", "00", "+1", ".5", "-.5", "5.", "1.e3", "1e", "1e+", "1e-", "0x10", "0b1", "Infinity", "-Infinity", "NaN", "1_000", "- 1", "--1", "1.2.3", "1e5.5", "０", "١"])(
@@ -70,6 +70,21 @@ describe("numbers (RFC 8259 section 6)", () => {
 
   it.each(["1e999", "-1e999", "1e309", "1.8e308", "[1e999]", '{"a":-1e400}', "1" + "0".repeat(400)])("reports overflow %s as non-finite", (text) => {
     expect(outcome(text)).toBe("not_finite");
+  });
+
+  it.each([
+    "9007199254740992", "9007199254740993", "-9007199254740993", "12345678901234567890", "[9007199254740992]", '{"id":18446744073709551615}', "1" + "0".repeat(30),
+    "9007199254740992.0", "9007199254740993.5", "1e20", "-1e20", "1e21", "1.5e300", "123456789012345680000", "1e308",
+  ])("rejects %s: beyond 2^53-1 a double may name a different id or amount than the text did", (text) => {
+    expect(outcome(text)).toBe("unsafe_number");
+  });
+
+  it.each(["9007199254740991", "-9007199254740991", "0.1", "123456789012345.6", "4503599627370496.5", "1e15", "-1e-300"])(
+    "accepts %s", (text) => { expect(outcome(text)).toBe("ok"); });
+
+  it("applies the same limit to already-parsed numbers, so both branches agree on what a number is", () => {
+    for (const n of [Number.MAX_SAFE_INTEGER + 1, 2 ** 60, 1e21, -1e21, 1.5e300, Number.MAX_VALUE]) expect(outcome([n]), String(n)).toBe("unsafe_number");
+    for (const n of [Number.MAX_SAFE_INTEGER, -Number.MAX_SAFE_INTEGER, 0.1, 5e-324, Number.MIN_VALUE]) expect(outcome([n]), String(n)).toBe("ok");
   });
 
   it.each(["-0", "-0.0", "-0e0", "-0e5", "-1e-999", "[-0]", '{"a":-0}'])("never returns negative zero from %s", (text) => {
@@ -295,6 +310,13 @@ describe("already-parsed input: it is copied once, and only what is really data 
     expect(performance.now() - started).toBeLessThan(500);
   });
 
+  it.each([
+    ["an array with an object prototype", () => Object.setPrototypeOf([1], {})], ["an array with a null prototype", () => Object.setPrototypeOf([1], null)],
+    ["an Array subclass instance", () => new (class Tuple extends Array<number> {})(1, 2)], ["a nested subclass", () => ({ a: new (class Tuple extends Array<number> {})() })],
+  ])("rejects %s, which is not plain data", (_label, make) => {
+    expect(outcome(make())).toBe("not_plain");
+  });
+
   it("accepts null-prototype objects, including nested ones", () => {
     const bare = Object.assign(Object.create(null) as Record<string, unknown>, { a: Object.assign(Object.create(null), { b: 1 }) });
     expect(value(bare)).toEqual({ a: { b: 1 } });
@@ -397,6 +419,12 @@ describe("already-parsed input: shared references are data, cycles are not, and 
       if (node && typeof node === "object") return Object.entries(node).every(([key, child]) => wellFormedText(key) && wellFormed(child));
       return true;
     };
+    const hasUnsafeNumber = (node: unknown): boolean => {
+      if (typeof node === "number") return Math.abs(node) > Number.MAX_SAFE_INTEGER;
+      if (Array.isArray(node)) return node.some(hasUnsafeNumber);
+      if (node && typeof node === "object") return Object.values(node).some(hasUnsafeNumber);
+      return false;
+    };
     const hasForbiddenKey = (node: unknown): boolean => {
       if (Array.isArray(node)) return node.some(hasForbiddenKey);
       if (node && typeof node === "object") return Object.entries(node).some(([key, child]) => ["__proto__", "constructor", "prototype"].includes(key) || hasForbiddenKey(child));
@@ -405,7 +433,7 @@ describe("already-parsed input: shared references are data, cycles are not, and 
     fc.assert(fc.property(fc.jsonValue({ maxDepth: 4 }), (generated) => {
       // A bare string would be read as JSON text, so only containers can be offered as already-parsed data.
       fc.pre(typeof generated === "object" && generated !== null);
-      fc.pre(wellFormed(generated) && !hasForbiddenKey(generated));
+      fc.pre(wellFormed(generated) && !hasForbiddenKey(generated) && !hasUnsafeNumber(generated));
       const text = JSON.stringify(generated);
       const size = utf8(text);
       fc.pre(size > 1);
@@ -434,19 +462,45 @@ describe("options are validated rather than trusted", () => {
   });
 });
 
+/** What a success may look like, and nothing else: plain frozen JSON, no forbidden key, finite non-negative-zero numbers, well-formed text, within the cap. */
+function assertStrictShape(node: unknown, path = "$"): void {
+  if (node === null || typeof node === "boolean") return;
+  if (typeof node === "string") { expect(/[\ud800-\udfff]/.test(node.replace(/[\ud800-\udbff][\udc00-\udfff]/g, "")), `${path} lone surrogate`).toBe(false); return; }
+  if (typeof node === "number") { expect(Number.isFinite(node) && !Object.is(node, -0), `${path} number`).toBe(true); return; }
+  expect(typeof node, `${path} type`).toBe("object");
+  expect(Object.isFrozen(node), `${path} frozen`).toBe(true);
+  if (Array.isArray(node)) {
+    expect(Object.getPrototypeOf(node), `${path} prototype`).toBe(Array.prototype);
+    node.forEach((child, index) => assertStrictShape(child, `${path}[${index}]`));
+    return;
+  }
+  expect(Object.getPrototypeOf(node), `${path} prototype`).toBe(Object.prototype);
+  expect(Reflect.ownKeys(node as object).every((key) => typeof key === "string" && !["__proto__", "constructor", "prototype"].includes(key)), `${path} keys`).toBe(true);
+  for (const [key, child] of Object.entries(node as object)) { assertStrictShape(key, `${path}.key`); assertStrictShape(child, `${path}.${key}`); }
+}
+
 describe("totality", () => {
-  it("never throws and never succeeds with a forbidden shape, for arbitrary values", () => {
+  it("never throws, and a success is always strictly shaped, for arbitrary values", () => {
     fc.assert(fc.property(fc.anything({ withBigInt: true, withDate: true, withMap: true, withSet: true, withObjectString: true, withNullPrototype: true, withTypedArray: true, withSparseArray: true, withBoxedValues: true }), (anything) => {
       const result = parseStrictJson(anything);
-      if (result.ok) expect(Object.isFrozen(result.value) || result.value === null || typeof result.value !== "object").toBe(true);
+      if (result.ok) assertStrictShape(result.value);
     }), { numRuns: 300 });
   });
 
-  it("never throws on arbitrary text, including text built from JSON fragments", () => {
-    const fragment = fc.constantFrom('{', '}', '[', ']', ',', ':', '"', '\\', 'u', '0', '1', '-', 'e', '.', 'true', 'null', ' ', '\n', '"a"', '\\u00', '\ud800', '1e999', '"__proto__"');
+  it("never lets an exotic value through when it is nested anywhere in an otherwise valid document", () => {
+    const cyclic: Record<string, unknown> = {}; cyclic.self = cyclic;
+    const exotics: unknown[] = [new Date(0), new Map(), new Set(), () => 1, Symbol("s"), 1n, undefined, NaN, Infinity, -Infinity, new (class Thing { x = 1; })(), Object.create({ inherited: 1 }), cyclic, new Uint8Array(1), /x/, Promise.resolve(1), new Error("e"), "\ud800", Object.assign([1], { extra: 1 }), [, 1]];
+    fc.assert(fc.property(fc.jsonValue({ maxDepth: 3 }), fc.constantFrom(...exotics), fc.constantFrom("object", "array", "deep"), (generated, exotic, place) => {
+      const wrapped = place === "object" ? { ok: generated, bad: exotic } : place === "array" ? [generated, exotic] : { a: { b: [generated, { c: exotic }] } };
+      expect(outcome(wrapped, { maxPayloadBytes: 1_000_000 })).not.toBe("ok");
+    }), { numRuns: 300 });
+  });
+
+  it("never throws on arbitrary text, and a success is strictly shaped, for text built from JSON fragments", () => {
+    const fragment = fc.constantFrom('{', '}', '[', ']', ',', ':', '"', '\\', 'u', '0', '1', '-', 'e', '.', 'true', 'null', ' ', '\n', '"a"', '\\u00', '\ud800', '1e999', '"__proto__"', '9007199254740993');
     fc.assert(fc.property(fc.array(fragment, { maxLength: 40 }).map((parts) => parts.join("")), (text) => {
       const result = parseStrictJson(text);
-      if (result.ok) expect(JSON.parse(JSON.stringify(result.value))).toEqual(parsedAsJson(text));
+      if (result.ok) { assertStrictShape(result.value); expect(JSON.parse(JSON.stringify(result.value))).toEqual(parsedAsJson(text)); }
     }), { numRuns: 500 });
   });
 
@@ -456,9 +510,11 @@ describe("totality", () => {
       fc.pre(JSON.stringify(generated).length < 3000);
       const text = JSON.stringify(generated);
       fc.pre(!/[\ud800-\udfff]/.test(text.replace(/[\ud800-\udbff][\udc00-\udfff]/g, "")));
+      // A strict rule that rejects on purpose: a number JSON.parse would accept but whose magnitude exceeds 2^53-1.
+      fc.pre(!JSON.stringify(generated, (_key, node: unknown) => (typeof node === "number" && Math.abs(node) > Number.MAX_SAFE_INTEGER ? "UNSAFE" : node)).includes('"UNSAFE"'));
       const result = parseStrictJson(text);
       expect(result.ok).toBe(true);
-      if (result.ok) expect(result.value).toEqual(parsedAsJson(text));
+      if (result.ok) { assertStrictShape(result.value); expect(result.value).toEqual(parsedAsJson(text)); }
     }), { numRuns: 300 });
   });
 });

@@ -364,10 +364,12 @@ describe("parseStrictJson: fast-check property", () => {
     fc.assert(
       fc.property(fc.json(), (text) => {
         const result = parseStrictJson(text);
-        expect(result.ok).toBe(true);
-        if (result.ok) {
-          assertNoForbiddenOrDuplicate(result.value);
+        // fc.json() can emit magnitudes beyond 2^53-1 and lone surrogates, which strict intake rejects on purpose.
+        if (!result.ok) {
+          expect(["unsafe_number", "syntax"]).toContain(result.code);
+          return;
         }
+        assertNoForbiddenOrDuplicate(result.value);
       }),
       { numRuns: 500 },
     );
@@ -380,6 +382,7 @@ describe("parseStrictJson: fast-check property", () => {
       "duplicate_key",
       "forbidden_key",
       "not_finite",
+      "unsafe_number",
       "not_plain",
       "syntax",
     ];
@@ -406,8 +409,9 @@ describe("parseStrictJson: fast-check property", () => {
       }
       // JSON.stringify(-0) === "0": -0 does not survive JSON by design.
       if (typeof value === "number") {
-        return Number.isFinite(value) && !Object.is(value, -0);
+        return Number.isFinite(value) && !Object.is(value, -0) && Math.abs(value) <= Number.MAX_SAFE_INTEGER;
       }
+      if (typeof value === "string") return !/[\ud800-\udfff]/.test(value.replace(/[\ud800-\udbff][\udc00-\udfff]/g, ""));
       return true;
     };
     fc.assert(

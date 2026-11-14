@@ -7,8 +7,9 @@
  * - `params` must be a plain object (deep-frozen by the parser).
  * - Any missing key, extra key (`callId`, `requestId`, `userConfirmed`, ...),
  *   or malformed field yields `INVALID_ACTION` with an existing ReasonCode.
- *   The one exception is a non-finite number (ATK-PARAMS-10), which is a
- *   parameter fault: `INVALID_PARAMETERS` with `invalid_parameters`.
+ *   The one exception is a number that is not finite (ATK-PARAMS-10) or an
+ *   integer literal a double cannot hold exactly, which are parameter faults:
+ *   `INVALID_PARAMETERS` with `invalid_parameters`.
  * - The failure result carries only (outcome, reason): the offending key or
  *   value is never echoed back to the planner. Results are frozen.
  */
@@ -19,11 +20,6 @@ import type { StrictJsonCode, StrictJsonOptions } from "./strict-json.js";
 /** Exact action-id grammar (D3). 3-64 chars, starts with a lowercase letter. */
 const ACTION_ID_GRAMMAR = /^[a-z][A-Za-z0-9]{2,63}$/;
 export const isActionIdGrammar = (text: unknown): text is string => typeof text === "string" && ACTION_ID_GRAMMAR.test(text);
-
-export interface Envelope {
-  readonly action: string;
-  readonly params: Readonly<Record<string, JsonValue>>;
-}
 
 /**
  * Success exposes the action id and the frozen params. Failure is a fail-closed decision outcome with an
@@ -47,7 +43,7 @@ const malformed = (): EnvelopeFailure => failure("INVALID_ACTION", "malformed_en
 
 /**
  * Every strict-json failure maps to an existing outcome and ReasonCode. Only the size cap has its own
- * reason, and only a non-finite number is a parameter fault; everything else is a malformed envelope.
+ * reason, and only an out-of-range number is a parameter fault; everything else is a malformed envelope.
  */
 const STRICT_JSON_FAILURE: Record<StrictJsonCode, () => EnvelopeFailure> = {
   too_large: () => failure("INVALID_ACTION", "payload_too_large"),
@@ -55,6 +51,7 @@ const STRICT_JSON_FAILURE: Record<StrictJsonCode, () => EnvelopeFailure> = {
   duplicate_key: malformed,
   forbidden_key: malformed,
   not_finite: () => failure("INVALID_PARAMETERS", "invalid_parameters"),
+  unsafe_number: () => failure("INVALID_PARAMETERS", "invalid_parameters"),
   not_plain: malformed,
   syntax: malformed,
 };

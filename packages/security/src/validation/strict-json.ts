@@ -11,8 +11,12 @@
  *
  * Rejects: payloads over maxPayloadBytes UTF-8 bytes, nesting over maxJsonDepth,
  * duplicate keys, `__proto__` / `constructor` / `prototype` keys, non-finite
- * numbers, and lone surrogates (they are not Unicode text and break UTF-8
- * encoders and jsonb stores). Negative zero is normalized to 0.
+ * numbers, numbers of magnitude beyond 2^53-1 (every such double is an
+ * integer that may silently name a different id or amount than the text did,
+ * and the two branches below must agree on what a number is), and lone surrogates (they are not
+ * Unicode text and break UTF-8 encoders and jsonb stores). Negative zero is
+ * normalized to 0. Property accessors ARE honoured, once each: ATK-PARAMS-12
+ * requires the validated copy, not a second read, to be what executes.
  *
  * An already-parsed (non-string) input is deep-copied exactly once into plain
  * data before any check, so getters and proxies are read exactly once and cannot
@@ -32,6 +36,7 @@ export type StrictJsonCode =
   | "duplicate_key"
   | "forbidden_key"
   | "not_finite"
+  | "unsafe_number"
   | "not_plain"
   | "syntax";
 
@@ -375,6 +380,7 @@ class Parser {
     }
     const value = Number(text.slice(start, this.pos));
     if (!Number.isFinite(value)) return { ok: false, code: "not_finite" };
+    if (Math.abs(value) > Number.MAX_SAFE_INTEGER) return { ok: false, code: "unsafe_number" };
     // -0 is a distinct double that JSON text cannot distinguish from 0 once canonicalized; return plain 0.
     return { ok: true, value: value === 0 ? 0 : value };
   }
@@ -432,6 +438,7 @@ class Copier {
       case "string": this.chargeString(value); return value;
       case "number": {
         if (!Number.isFinite(value)) throw new Rejection("not_finite");
+        if (Math.abs(value) > Number.MAX_SAFE_INTEGER) throw new Rejection("unsafe_number");
         const normalized = value === 0 ? 0 : value;
         this.charge(String(normalized).length);
         return normalized;
@@ -471,6 +478,7 @@ class Copier {
 
   private copyArray(source: unknown[], depth: number): JsonValue {
     this.enter(source, depth);
+    if (Object.getPrototypeOf(source) !== Array.prototype) throw new Rejection("not_plain");
     const length: unknown = Reflect.get(source, "length");
     if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) throw new Rejection("not_plain");
     const out: JsonValue[] = [];
