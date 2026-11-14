@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import type { AuthorizationContext, Clock } from "@dap/contracts";
 import { mintAuthorizationContext } from "@dap/contracts/mint";
-import { createContextStage } from "./context.js";
+import { createContextStage, sessionVerdict } from "./context.js";
 import { createPipeline } from "../pipeline.js";
 import { allowedDecision } from "../decision.js";
 import { context, input, stageMap } from "../fixtures.test-support.js";
@@ -81,5 +81,33 @@ describe("minted context stage", () => {
     const { decision, executions } = await pending;
     expect(decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
     expect(executions).toBe(0);
+  });
+});
+
+describe("sessionVerdict: the one place a session's usability is decided", () => {
+  const at = (iso: string) => Date.parse(iso);
+  const session = { authenticatedAt: "2026-01-01T00:00:00Z", validUntil: "2026-01-01T01:00:00Z" };
+  it.each([
+    ["inside the window", "2026-01-01T00:30:00Z", "ok"], ["the instant it began", "2026-01-01T00:00:00Z", "ok"], ["one ms before expiry", "2026-01-01T00:59:59.999Z", "ok"],
+    ["the instant it expires", "2026-01-01T01:00:00Z", "session_expired"], ["after expiry", "2026-01-01T02:00:00Z", "session_expired"], ["before it began", "2025-12-31T23:59:59.999Z", "unauthenticated"],
+  ])("%s", (_name, now, expected) => {
+    expect(sessionVerdict(session, at(now))).toBe(expected);
+  });
+
+  it.each([
+    ["validUntil before authenticatedAt", { authenticatedAt: "2026-01-01T00:30:00Z", validUntil: "2026-01-01T00:10:00Z" }], ["validUntil equal to authenticatedAt", { authenticatedAt: "2026-01-01T00:30:00Z", validUntil: "2026-01-01T00:30:00Z" }],
+  ])("%s is unauthenticated even when the session would otherwise be live, or expired", (_name, odd) => {
+    expect(sessionVerdict(odd, at("2026-01-01T00:20:00Z"))).toBe("unauthenticated");
+    expect(sessionVerdict(odd, at("2026-01-01T05:00:00Z"))).toBe("unauthenticated");
+  });
+
+  it.each([["an unparseable validUntil", { ...session, validUntil: "never" }], ["an unparseable authenticatedAt", { ...session, authenticatedAt: "once" }], ["an empty validUntil", { ...session, validUntil: "" }], ["both unparseable", { authenticatedAt: "a", validUntil: "b" }]])(
+    "%s is unauthenticated, never usable", (_name, odd) => {
+      expect(sessionVerdict(odd, at("2026-01-01T00:30:00Z"))).toBe("unauthenticated");
+      expect(sessionVerdict(odd, at("2030-01-01T00:30:00Z"))).toBe("unauthenticated");
+    });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])("a reading of %s is unauthenticated", (now) => {
+    expect(sessionVerdict(session, now)).toBe("unauthenticated");
   });
 });

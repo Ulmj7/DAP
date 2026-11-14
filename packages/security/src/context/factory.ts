@@ -5,7 +5,7 @@
  * the caller is into the only thing the Gateway will accept as an identity: a context minted through
  * `@dap/contracts/mint`. Identity comes from nowhere else; the context holds NO permissions (they are checked live).
  *
- * Fail-closed: `establish` resolves to null, never throws, for an unauthenticated caller, a principal that is not
+ * Fail-closed: `establish` resolves to null (the hook wrapper contains every host fault, so it never throws), for an unauthenticated caller, a principal that is not
  * exactly `{ userId, tenantId, sessionId, authenticatedAt, validUntil }` of the right kinds (tenantId a lowercase
  * UUID per research D8, the instants timezone-qualified ISO 8601), a session that has expired or has not begun,
  * a host port that throws, hangs, rejects or answers the wrong shape, and a clock that cannot tell the time.
@@ -15,16 +15,16 @@ import type { AuthenticationPort, Clock, SecurityContextFactory } from "@dap/con
 import { mintAuthorizationContext } from "@dap/contracts/mint";
 import { wrapHook, type HookOptions } from "../gateway/hook-wrapper.js";
 
-/** Printable text of a sane length: these strings end up in audit records and log lines. */
-const identifier = z.string().min(1).max(256).regex(/^[^\p{Cc}\p{Zl}\p{Zp}]+$/u);
-const principalSchema = z.strictObject({
-  userId: identifier,
-  // Canonical lowercase, so one tenant has one spelling (tenant equality is a string comparison); the nil UUID is a "no tenant" sentinel, not a tenant.
-  tenantId: z.uuid().refine((value) => value === value.toLowerCase() && value !== "00000000-0000-0000-0000-000000000000"),
-  sessionId: identifier,
-  authenticatedAt: z.iso.datetime({ offset: true }),
-  validUntil: z.iso.datetime({ offset: true }),
-});
+/**
+ * What this factory adds to the hook wrapper's own principal check (`wrapHook(..., "authentication")` has already proved the
+ * answer is exactly `{ userId, tenantId, sessionId, authenticatedAt, validUntil }` of non-empty text, a UUID tenant and ISO
+ * instants with a zone): printable identifiers of a sane length, and a tenant in its one canonical spelling.
+ * Identifiers end up in audit records and log lines, so no control or line-separator characters.
+ */
+const identifier = z.string().max(256).regex(/^[^\p{Cc}\p{Zl}\p{Zp}]+$/u);
+// Lowercase, so one tenant has one spelling (tenant equality is a string comparison); the nil UUID is a "no tenant" sentinel, not a tenant.
+const canonicalTenant = z.string().refine((value) => value === value.toLowerCase() && value !== "00000000-0000-0000-0000-000000000000");
+const principalExtras = z.object({ userId: identifier, tenantId: canonicalTenant, sessionId: identifier });
 
 export function createSecurityContextFactory<TEvidence = unknown>(
   { authentication, clock }: { readonly authentication: AuthenticationPort<TEvidence>; readonly clock: Clock },
@@ -38,21 +38,17 @@ export function createSecurityContextFactory<TEvidence = unknown>(
   const now = wrapHook(() => Reflect.apply(readClock, clock, []), "instant", options);
   return Object.freeze({
     establish: Object.freeze(async (evidence: TEvidence) => {
-      try {
-        const answer = await who(evidence);
-        if (!answer.ok) return null;
-        const principal = principalSchema.safeParse(answer.value);
-        if (!principal.success) return null;
-        const reading = await now();
-        if (!reading.ok) return null;
-        const present = Date.parse(reading.value);
-        const began = Date.parse(principal.data.authenticatedAt);
-        const until = Date.parse(principal.data.validUntil);
-        if (!Number.isFinite(present) || !Number.isFinite(began) || !Number.isFinite(until)) return null;
-        // Not begun yet, already over, or ending before it began: none of these is a usable session.
-        if (began > present || until <= present || until <= began) return null;
-        return mintAuthorizationContext(principal.data);
-      } catch { return null; }
+      const answer = await who(evidence);
+      if (!answer.ok || !principalExtras.safeParse(answer.value).success) return null;
+      const reading = await now();
+      if (!reading.ok) return null;
+      // Every instant here passed an ISO 8601 check with a zone, so each parses to a finite number.
+      const present = Date.parse(reading.value);
+      const began = Date.parse(answer.value.authenticatedAt);
+      const until = Date.parse(answer.value.validUntil);
+      // Not begun yet, or already over (which also rules out a session that ends before it began).
+      if (began > present || until <= present) return null;
+      return mintAuthorizationContext(answer.value);
     }),
   });
 }

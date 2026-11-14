@@ -113,9 +113,9 @@ export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer =
         const { context, run, decisionId, requestId, readProposal } = source;
         if (typeof decisionId !== "string" || !decisionId || typeof requestId !== "string" || !requestId) return failure(identifiers, current, "dependency_failure");
         identifiers = { decisionId, requestId };
-        // The runner owns the overall deadline: a stage cannot extend it, and a timer that cannot tell the time leaves none.
+        // The runner owns the overall deadline: a stage cannot extend it, and a timer that cannot tell the time leaves none (NaN fails `current >= started`; two infinite readings give NaN, which fails `left > 0`).
         const started = timer.now();
-        const remaining = (): number => { const current = timer.now(); return Number.isFinite(started) && Number.isFinite(current) && current >= started ? proposalBudgetMs - (current - started) : 0; };
+        const remaining = (): number => { const current = timer.now(); return current >= started ? proposalBudgetMs - (current - started) : 0; };
         const budget: ProposalBudget = Object.freeze({ remainingMs: remaining });
         const capturedRun = snapshotAnswer(run);
         if (!runSchema.safeParse(capturedRun).success || typeof readProposal !== "function") return failure(identifiers, current, "dependency_failure");

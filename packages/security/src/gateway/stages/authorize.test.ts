@@ -44,7 +44,7 @@ class ManualTimer implements HookTimer {
   advance(ms: number): void { this.time += ms; for (const [id, entry] of [...this.pending]) if (entry.at <= this.time) { this.pending.delete(id); entry.callback(); } }
 }
 type Answer = () => unknown;
-interface Ports { clock?: Answer; has?: Answer; page?: Answer; resolve?: Answer; registry?: ActionRegistry; timer?: HookTimer; hookTimeoutMs?: number }
+interface Ports { omitHookTimeout?: boolean; clock?: Answer; has?: Answer; page?: Answer; resolve?: Answer; registry?: ActionRegistry; timer?: HookTimer; hookTimeoutMs?: number }
 
 /** The stage with spy ports; `log` records every host call in order, `inFlight` proves they never overlap. */
 function harness(ports: Ports = {}) {
@@ -63,7 +63,7 @@ function harness(ports: Ports = {}) {
     registry: ports.registry ?? registry,
     permissions: { has: spy("has", ports.has ?? (() => true)) as never }, resources: { resolve: spy("resolve", ports.resolve ?? (() => resolvedFor())) as never },
     pages: { currentPage: spy("page", ports.page ?? (() => "page.edit")) as never }, clock: { now: spy("clock", ports.clock ?? (() => NOW)) as never },
-  }, { timer, hookTimeoutMs: ports.hookTimeoutMs ?? 2000 });
+  }, ports.omitHookTimeout ? { timer } : { timer, hookTimeoutMs: ports.hookTimeoutMs ?? 2000 });
   const budget = { remainingMs: () => 10_000 };
   const record = (facts: object, overrides: Partial<PipelineRecord> | Record<string, unknown> = {}) => ({ ...input(), run, context: context(), facts, budget, ...overrides }) as unknown as PipelineRecord;
   return { stage: stage as PolicyStage, log, args, record, timer: timer as ManualTimer, overlapped: () => overlapped };
@@ -368,6 +368,26 @@ describe("the proposal budget bounds every host call", () => {
     expect(decisionOf(await pending)).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
   });
 
+  it("defaults hookTimeoutMs to 2000 when none is configured", async () => {
+    const test = harness({ has: () => new Promise(() => {}), omitHookTimeout: true });
+    const pending = test.stage(withBudget(test, 60_000));
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    const [only] = [...test.timer.pending.values()];
+    expect(only!.at).toBe(2000);
+    test.timer.advance(2000);
+    expect(decisionOf(await pending)).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
+  });
+
+  it("handles a fractional remaining budget by rounding DOWN, never by throwing", async () => {
+    const test = harness({ has: () => new Promise(() => {}) });
+    const pending = test.stage(test.record(factsFor("listProjects"), { budget: { remainingMs: () => 2.9 } }));
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    const [only] = [...test.timer.pending.values()];
+    expect(only!.at).toBe(2);
+    test.timer.advance(2);
+    expect(decisionOf(await pending)).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
+  });
+
   it("recomputes what is left before EACH call: time spent by an earlier call shortens the next", async () => {
     const test = harness({ has: () => { test.timer.time += 700; return true; }, resolve: () => new Promise(() => {}), hookTimeoutMs: 1000 }); // the permission check takes 700 ms of a 1000 ms budget
     const pending = test.stage(withBudget(test, 1000));
@@ -423,5 +443,37 @@ describe("authorize inside the real runner", () => {
     timer.advance(1);
     expect(await pending).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "authorize" });
     expect(timer.pending.size).toBe(0);
+  });
+});
+
+describe("host objects keep their own receiver", () => {
+  it("calls the registry and every port as methods of the host's object", async () => {
+    const receivers: Record<string, unknown> = {};
+    const entry = registry.get("openProject")!;
+    class Registry { get(id: string) { receivers.registry = this; return registry.get(id); } list() { return []; } isReservedForbidden() { return false; } readonly fingerprint = registry.fingerprint; }
+    class Permissions { async has() { receivers.permissions = this; return true; } }
+    class Resources { async resolve() { receivers.resources = this; return resolvedFor(); } }
+    class Pages { async currentPage() { receivers.pages = this; return "page.edit"; } }
+    class Clock { now() { receivers.clock = this; return NOW; } }
+    const [host, permissions, resources, pages, clock] = [new Registry(), new Permissions(), new Resources(), new Pages(), new Clock()];
+    const stage = createAuthorizeStage({ registry: host as never, permissions: permissions as never, resources: resources as never, pages: pages as never, clock: clock as never }, {});
+    const facts = { resolve: { id: "openProject", version: entry.definition.version, risk: "SAFE", definitionHash: entry.definitionHash }, validate: { params: {}, paramsDigest: "a".repeat(64), resource: PROJECT } };
+    const result = await stage({ ...input(), run, context: context(), facts, budget: { remainingMs: () => 10_000 } } as unknown as PipelineRecord);
+    expect(result).toMatchObject({ kind: "continue" });
+    expect(receivers.registry).toBe(host);
+    expect(receivers.permissions).toBe(permissions);
+    expect(receivers.resources).toBe(resources);
+    expect(receivers.clock).toBe(clock);
+  });
+
+  it("calls the page provider as a method of the host's object", async () => {
+    const receivers: unknown[] = [];
+    const entry = registry.get("editOnPage")!;
+    const pages = { async currentPage(this: unknown) { receivers.push(this); return "page.edit"; } };
+    const stage = createAuthorizeStage({ registry, permissions: { has: async () => true }, resources: { resolve: async () => null }, pages: pages as never, clock: { now: () => NOW as never } }, {});
+    const facts = { resolve: { id: "editOnPage", version: entry.definition.version, risk: "SAFE", definitionHash: entry.definitionHash }, validate: { params: {}, paramsDigest: "a".repeat(64), resource: null } };
+    expect(await stage({ ...input(), run, context: context(), facts, budget: { remainingMs: () => 10_000 } } as unknown as PipelineRecord)).toMatchObject({ kind: "continue" });
+    expect(receivers).toEqual([pages]);
+    expect(receivers[0]).toBe(pages);
   });
 });

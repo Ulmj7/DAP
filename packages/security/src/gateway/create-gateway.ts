@@ -5,7 +5,7 @@ import type {
   SecurityStateStore, TenantActionPolicyStore,
 } from "@dap/contracts";
 import { snapshotAnswer } from "./answer-snapshot.js";
-import { createPipeline, type StageMap } from "./pipeline.js";
+import { createPipeline, type PipelineOptions, type StageMap } from "./pipeline.js";
 import { createProposalGateway } from "./submitter.js";
 import { createIntakeStage } from "./stages/intake.js";
 import { createAuthorizeStage } from "./stages/authorize.js";
@@ -103,9 +103,14 @@ export function composeStages(deps: GatewayDependencies): StageMap {
   };
 }
 
+/** The runner's options from the validated config: the per-call timeout and, when configured, the per-proposal budget. */
+export function pipelineOptions(config: GatewayConfig): PipelineOptions {
+  return { hookTimeoutMs: config.hookTimeoutMs, ...(config.proposalBudgetMs === undefined ? {} : { proposalBudgetMs: config.proposalBudgetMs }) };
+}
+
 export function createPolicyGateway(source: GatewayDependencies): Readonly<{ proposals: PolicyGateway; confirmations: ConfirmationService }> {
   const deps = captureDependencies(source);
-  const pipeline = createPipeline(composeStages(deps), { hookTimeoutMs: deps.config.hookTimeoutMs, ...(deps.config.proposalBudgetMs === undefined ? {} : { proposalBudgetMs: deps.config.proposalBudgetMs }) });
+  const pipeline = createPipeline(composeStages(deps), pipelineOptions(deps.config));
   const proposals = createProposalGateway({ pipeline, ids: deps.ids });
   const confirmations: ConfirmationService = Object.freeze({
     decide: Object.freeze(async () => Object.freeze({ status: "not_valid", category: "not_found" } as const)),
