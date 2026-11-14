@@ -5,13 +5,23 @@
  *
  * Own strict RFC 8259 parser — NOT JSON.parse, which silently keeps only the
  * last duplicate key and accepts nothing special but cannot report duplicates.
- * Never throws and never echoes input content in its result.
+ * Never throws for any INPUT and never echoes input content in its result; it
+ * throws a RangeError only for invalid OPTIONS (a programmer error: a cap that
+ * is NaN or not a positive safe integer would otherwise silently disable the cap).
  *
  * Rejects: payloads over maxPayloadBytes UTF-8 bytes, nesting over maxJsonDepth,
- * duplicate keys, `__proto__` / `constructor` / `prototype` keys, and
- * non-finite numbers. An already-parsed (non-string) input is deep-copied
- * exactly once into plain data before any check, so getters and proxies are
- * read exactly once and cannot change their answers mid-validation.
+ * duplicate keys, `__proto__` / `constructor` / `prototype` keys, non-finite
+ * numbers, and lone surrogates (they are not Unicode text and break UTF-8
+ * encoders and jsonb stores). Negative zero is normalized to 0.
+ *
+ * An already-parsed (non-string) input is deep-copied exactly once into plain
+ * data before any check, so getters and proxies are read exactly once and cannot
+ * change their answers mid-validation. The copy is charged against the SAME byte
+ * cap, measured as the compact JSON the value would serialize to, so a value is
+ * accepted exactly when its compact text would be. Only data survives: symbol
+ * keys, non-enumerable properties, array extras and holes are rejected, never
+ * silently dropped. Shared references are copied as separate subtrees; only a
+ * real cycle is rejected, and the byte cap bounds any expansion.
  */
 import type { JsonValue } from "@dap/contracts";
 
@@ -52,6 +62,7 @@ function isDigit(code: number): boolean {
   return code >= 0x30 && code <= 0x39;
 }
 
+/** UTF-8 bytes of `text`. Lone surrogates count 3 bytes, as an encoder emits U+FFFD. Callers bound `text.length` first. */
 function utf8ByteLength(text: string): number {
   let bytes = 0;
   for (let i = 0; i < text.length; i += 1) {
@@ -74,6 +85,17 @@ function utf8ByteLength(text: string): number {
   }
   return bytes;
 }
+
+function limitOption(value: unknown, fallback: number, name: string): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(`Invalid ${name}`);
+  }
+  return value;
+}
+
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff;
 
 function freeze(value: JsonValue): JsonValue {
   if (Array.isArray(value)) {
@@ -214,6 +236,21 @@ class Parser {
     }
   }
 
+  /** Four hex digits at `at` as a UTF-16 code unit, or undefined. No regex: nothing here can backtrack. */
+  private hex4(at: number): number | undefined {
+    let unit = 0;
+    for (let i = 0; i < 4; i += 1) {
+      const code = this.text.charCodeAt(at + i);
+      let digit: number;
+      if (code >= 0x30 && code <= 0x39) digit = code - 0x30;
+      else if (code >= 0x61 && code <= 0x66) digit = code - 0x57;
+      else if (code >= 0x41 && code <= 0x46) digit = code - 0x37;
+      else return undefined;
+      unit = unit * 16 + digit;
+    }
+    return unit;
+  }
+
   private parseString(): StrictJsonResult {
     const text = this.text;
     this.pos += 1; // consume opening quote
@@ -264,11 +301,18 @@ class Parser {
             this.pos += 1;
             break;
           case "u": {
-            const hex = text.slice(this.pos + 1, this.pos + 5);
-            if (hex.length !== 4 || !/^[0-9a-fA-F]{4}$/.test(hex)) {
-              return { ok: false, code: "syntax" };
+            const unit = this.hex4(this.pos + 1);
+            if (unit === undefined) return { ok: false, code: "syntax" };
+            if (isLowSurrogate(unit)) return { ok: false, code: "syntax" };
+            if (isHighSurrogate(unit)) {
+              // A high surrogate must be completed by an escaped low surrogate; anything else is a lone surrogate.
+              const next = text.startsWith("\\u", this.pos + 5) ? this.hex4(this.pos + 7) : undefined;
+              if (next === undefined || !isLowSurrogate(next)) return { ok: false, code: "syntax" };
+              out += String.fromCharCode(unit, next);
+              this.pos += 11;
+              break;
             }
-            out += String.fromCharCode(parseInt(hex, 16));
+            out += String.fromCharCode(unit);
             this.pos += 5;
             break;
           }
@@ -277,6 +321,14 @@ class Parser {
         }
       } else {
         if (code < 0x20) return { ok: false, code: "syntax" };
+        if (isLowSurrogate(code)) return { ok: false, code: "syntax" };
+        if (isHighSurrogate(code)) {
+          const next = text.charCodeAt(this.pos + 1);
+          if (!isLowSurrogate(next)) return { ok: false, code: "syntax" };
+          out += char + text.charAt(this.pos + 1);
+          this.pos += 2;
+          continue;
+        }
         out += char;
         this.pos += 1;
       }
@@ -323,159 +375,159 @@ class Parser {
     }
     const value = Number(text.slice(start, this.pos));
     if (!Number.isFinite(value)) return { ok: false, code: "not_finite" };
-    return { ok: true, value };
+    // -0 is a distinct double that JSON text cannot distinguish from 0 once canonicalized; return plain 0.
+    return { ok: true, value: value === 0 ? 0 : value };
   }
 }
 
-interface CopyState {
-  readonly maxDepth: number;
-  /** Cycle guard. Plain JSON data cannot contain a cycle. */
-  readonly seen: Set<object>;
-  /** A failed copy must not continue. */
-  failed: boolean;
-  code: StrictJsonCode;
+/** Internal control flow only: carries a closed code, never input content. */
+class Rejection {
+  constructor(readonly code: StrictJsonCode) {}
 }
 
-function copyScalar(value: unknown, state: CopyState): void {
-  const kind = typeof value;
-  if (kind === "string" || kind === "boolean" || value === null) {
-    return;
-  }
-  if (kind === "number") {
-    if (!Number.isFinite(value)) {
-      state.failed = true;
-      state.code = "not_finite";
-    }
-    return;
-  }
-  state.failed = true;
-  state.code = "not_plain";
-}
+const isForbiddenKey = (key: string): boolean => FORBIDDEN_KEYS.has(key);
 
-function copyObject(
-  value: object,
-  out: Record<string, JsonValue>,
-  depth: number,
-  state: CopyState,
-): Record<string, JsonValue> {
-  const depthIn = depth + 1;
-  if (depthIn > state.maxDepth) {
-    state.failed = true;
-    state.code = "too_deep";
-    return out;
+/** Deep-copies already-parsed data exactly once, enforcing every strict rule while it reads. */
+class Copier {
+  private used = 0;
+  /** The containers on the current path. A repeat inside this set is a cycle; a repeat elsewhere is just shared data. */
+  private readonly active = new Set<object>();
+
+  constructor(
+    private readonly maxDepth: number,
+    private readonly maxBytes: number,
+  ) {}
+
+  private charge(bytes: number): void {
+    this.used += bytes;
+    if (this.used > this.maxBytes) throw new Rejection("too_large");
   }
-  const proto = Object.getPrototypeOf(value);
-  if (proto !== Object.prototype && proto !== null) {
-    state.failed = true;
-    state.code = "not_plain";
-    return out;
-  }
-  if (state.seen.has(value)) {
-    state.failed = true;
-    state.code = "not_plain";
-    return out;
-  }
-  state.seen.add(value);
-  for (const key of Object.keys(value)) {
-    if (state.failed) break;
-    if (FORBIDDEN_KEYS.has(key)) {
-      state.failed = true;
-      state.code = "forbidden_key";
-      break;
-    }
-    const element = (value as Record<string, unknown>)[key];
-    if (element !== null && typeof element === "object") {
-      if (Array.isArray(element)) {
-        out[key] = copyArray(element, depthIn, state);
+
+  /** Charges the JSON string literal for `text` (quotes and escapes included) and rejects lone surrogates. */
+  private chargeString(text: string): void {
+    this.charge(2);
+    for (let i = 0; i < text.length; i += 1) {
+      const code = text.charCodeAt(i);
+      if (code < 0x80) {
+        const escaped = code === 0x22 || code === 0x5c || code === 0x08 || code === 0x0c || code === 0x0a || code === 0x0d || code === 0x09;
+        this.charge(escaped ? 2 : code < 0x20 ? 6 : 1);
+      } else if (code < 0x800) {
+        this.charge(2);
+      } else if (isHighSurrogate(code)) {
+        if (!isLowSurrogate(text.charCodeAt(i + 1))) throw new Rejection("not_plain");
+        this.charge(4);
+        i += 1;
+      } else if (isLowSurrogate(code)) {
+        throw new Rejection("not_plain");
       } else {
-        out[key] = copyObject(element, {}, depthIn, state);
+        this.charge(3);
       }
-    } else {
-      out[key] = element as JsonValue;
-      copyScalar(element, state);
     }
   }
-  return out;
-}
 
-function copyArray(
-  value: unknown[],
-  depth: number,
-  state: CopyState,
-): JsonValue[] {
-  const depthIn = depth + 1;
-  if (depthIn > state.maxDepth) {
-    state.failed = true;
-    state.code = "too_deep";
-    return [];
-  }
-  if (state.seen.has(value)) {
-    state.failed = true;
-    state.code = "not_plain";
-    return [];
-  }
-  state.seen.add(value);
-  const out: JsonValue[] = [];
-  for (const element of value) {
-    if (state.failed) break;
-    if (element !== null && typeof element === "object") {
-      if (Array.isArray(element)) {
-        out.push(copyArray(element, depthIn, state));
-      } else {
-        out.push(copyObject(element, {}, depthIn, state));
+  copy(value: unknown, depth: number): JsonValue {
+    if (value === null) { this.charge(4); return null; }
+    switch (typeof value) {
+      case "boolean": this.charge(value ? 4 : 5); return value;
+      case "string": this.chargeString(value); return value;
+      case "number": {
+        if (!Number.isFinite(value)) throw new Rejection("not_finite");
+        const normalized = value === 0 ? 0 : value;
+        this.charge(String(normalized).length);
+        return normalized;
       }
-    } else {
-      out.push(element as JsonValue);
-      copyScalar(element, state);
+      case "object": return Array.isArray(value) ? this.copyArray(value, depth + 1) : this.copyObject(value, depth + 1);
+      default: throw new Rejection("not_plain");
     }
   }
-  return out;
+
+  private enter(container: object, depth: number): void {
+    if (depth > this.maxDepth) throw new Rejection("too_deep");
+    if (this.active.has(container)) throw new Rejection("not_plain");
+    this.active.add(container);
+  }
+
+  private copyObject(source: object, depth: number): JsonValue {
+    this.enter(source, depth);
+    const prototype: unknown = Object.getPrototypeOf(source);
+    if (prototype !== Object.prototype && prototype !== null) throw new Rejection("not_plain");
+    const out: Record<string, JsonValue> = {};
+    this.charge(2);
+    let first = true;
+    for (const key of Reflect.ownKeys(source)) {
+      if (typeof key !== "string") throw new Rejection("not_plain");
+      if (isForbiddenKey(key)) throw new Rejection("forbidden_key");
+      // Only enumerable own data is data: a hidden property is evidence of something other than JSON.
+      if (Object.getOwnPropertyDescriptor(source, key)?.enumerable !== true) throw new Rejection("not_plain");
+      if (!first) this.charge(1);
+      first = false;
+      this.chargeString(key);
+      this.charge(1);
+      out[key] = this.copy(Reflect.get(source, key), depth);
+    }
+    this.active.delete(source);
+    return out;
+  }
+
+  private copyArray(source: unknown[], depth: number): JsonValue {
+    this.enter(source, depth);
+    const length: unknown = Reflect.get(source, "length");
+    if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) throw new Rejection("not_plain");
+    const out: JsonValue[] = [];
+    this.charge(2);
+    // Index by index, charging as we go: a huge or endless array stops at the byte cap, and a hole stops at once.
+    for (let index = 0; index < length; index += 1) {
+      const key = String(index);
+      if (Object.getOwnPropertyDescriptor(source, key)?.enumerable !== true) throw new Rejection("not_plain");
+      if (index > 0) this.charge(1);
+      out.push(this.copy(Reflect.get(source, key), depth));
+    }
+    // Anything besides the indices and `length` (named, symbol, or extra) is not array data.
+    const keys = Reflect.ownKeys(source);
+    if (keys.length !== length + 1 || !keys.includes("length")) throw new Rejection("not_plain");
+    this.active.delete(source);
+    return out;
+  }
 }
 
 /**
  * Strict intake of one untrusted value (T061).
  *
  * String input is parsed by the strict RFC 8259 parser below, under
- * `maxPayloadBytes` (UTF-8 bytes, default 16384) and `maxJsonDepth`
- * (default 8) caps. Non-string input is treated as already-parsed data and
- * is deep-copied exactly once: every property is read once, class instances,
- * functions, symbols, bigints, undefined, and cycles are rejected, and the
- * copy is what gets checked and returned.
+ * `maxPayloadBytes` (UTF-8 bytes of the raw text, default 16384) and
+ * `maxJsonDepth` (default 8) caps. Non-string input is treated as
+ * already-parsed data and is deep-copied exactly once (see the module notes);
+ * class instances, functions, symbols, bigints, undefined, hidden properties,
+ * holes and cycles are rejected, and the copy is what gets checked and returned.
  *
- * Never throws. Success returns the value deeply frozen; failure returns
- * `{ ok: false, code }` with no input content.
+ * Never throws for any input; throws RangeError for an invalid option. Success
+ * returns the value deeply frozen; failure returns `{ ok: false, code }` with no
+ * input content.
  */
 export function parseStrictJson(
   input: unknown,
   options: StrictJsonOptions = {},
 ): StrictJsonResult {
-  const maxPayloadBytes = options.maxPayloadBytes ?? 16384;
-  const maxDepth = options.maxJsonDepth ?? 8;
-  try {
-    if (typeof input === "string") {
-      if (utf8ByteLength(input) > maxPayloadBytes) {
+  const maxPayloadBytes = limitOption(options.maxPayloadBytes, 16384, "maxPayloadBytes");
+  const maxDepth = limitOption(options.maxJsonDepth, 8, "maxJsonDepth");
+  if (typeof input === "string") {
+    try {
+      // Every UTF-16 code unit is at least one UTF-8 byte, so a longer string is refused unscanned and the scan below is bounded by the cap.
+      if (input.length > maxPayloadBytes || utf8ByteLength(input) > maxPayloadBytes) {
         return { ok: false, code: "too_large" };
       }
       const result = new Parser(input, maxDepth).parseDocument();
       if (result.ok) return { ok: true, value: freeze(result.value) };
       return result;
+    } catch (error) {
+      // Only reachable with an absurd depth cap exhausting the stack. Fail closed, never echo.
+      return { ok: false, code: error instanceof RangeError ? "too_deep" : "syntax" };
     }
-    const state: CopyState = { maxDepth, seen: new Set(), failed: false, code: "not_plain" };
-    let root: JsonValue;
-    if (input !== null && typeof input === "object") {
-      if (Array.isArray(input)) {
-        root = copyArray(input, 0, state);
-      } else {
-        root = copyObject(input, {}, 0, state);
-      }
-    } else {
-      root = input as JsonValue;
-      copyScalar(input, state);
-    }
-    if (state.failed) return { ok: false, code: state.code };
-    return { ok: true, value: freeze(root) };
-  } catch {
-    // Defensive only: both paths above are total. Fail closed, never echo.
-    return { ok: false, code: "syntax" };
+  }
+  try {
+    return { ok: true, value: freeze(new Copier(maxDepth, maxPayloadBytes).copy(input, 0)) };
+  } catch (error) {
+    // A hostile proxy, accessor or exotic value throwing from inside the copy is simply not plain data.
+    return { ok: false, code: error instanceof Rejection ? error.code : error instanceof RangeError ? "too_deep" : "not_plain" };
   }
 }

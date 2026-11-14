@@ -73,7 +73,8 @@ describe("parseStrictJson: valid strict JSON", () => {
     expect(parseStrictJson("true")).toEqual({ ok: true, value: true });
     expect(parseStrictJson("null")).toEqual({ ok: true, value: null });
     expect(parseStrictJson("1e-999")).toEqual({ ok: true, value: 0 });
-    expect(parseStrictJson("-0")).toEqual({ ok: true, value: -0 });
+    // Negative zero is normalized: JSON text cannot tell it from 0 once canonicalized.
+    expect(parseStrictJson("-0")).toEqual({ ok: true, value: 0 });
   });
 
   it("allows exactly depth 8", () => {
