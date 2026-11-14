@@ -5,9 +5,15 @@ import type {
 } from "@dap/contracts";
 import { validateGatewayConfig } from "../limits/limit-config.js";
 import { snapshotAnswer } from "./answer-snapshot.js";
-import { createPipeline, type PipelineOptions, type StageMap } from "./pipeline.js";
+import { createPipeline, type DecisionAuditor, type PipelineOptions, type StageMap } from "./pipeline.js";
 import { createProposalGateway } from "./submitter.js";
 import { createIntakeStage } from "./stages/intake.js";
+import { createAuditEventFactory } from "../audit/event-factory.js";
+import { createAuditWriter } from "../audit/audit-writer.js";
+import { createDecisionAuditor } from "./decision-auditor.js";
+import type { GatewayTelemetry } from "./telemetry.js";
+import { createAuditStage } from "./stages/audit.js";
+import { createExecuteStage } from "./stages/execute.js";
 import { createAuthorizeStage } from "./stages/authorize.js";
 import { createValidateStage } from "./stages/validate.js";
 import { createContextStage } from "./stages/context.js";
@@ -80,30 +86,45 @@ function captureDependencies(source: GatewayDependencies): GatewayDependencies {
   } catch { throw new TypeError("Missing or invalid gateway dependency"); }
 }
 
+/** What the host may add on top of the dependencies: where decision counts go. */
+export interface GatewayExtras { readonly telemetry?: Partial<GatewayTelemetry> }
+
 /**
- * The D6 stages implemented so far, bound to the captured dependencies. Positions not listed stay absent, and the
- * pipeline denies fail-closed at the first absent one. Exported for tests only; not part of the package surface.
+ * The D6 stages implemented so far, bound to the captured dependencies, and the runner's auditor. Positions not listed stay absent
+ * (rate_limit, replay, risk, confirmation), and the pipeline denies fail-closed at the first absent one, so `ALLOWED` is not yet reachable
+ * through the real gateway. Exported for tests only; not part of the package surface.
  */
-export function composeStages(deps: GatewayDependencies): StageMap {
+export function assemble(deps: GatewayDependencies, extras: GatewayExtras = {}): { readonly stages: StageMap; readonly auditor: DecisionAuditor } {
   const options = { hookTimeoutMs: deps.config.hookTimeoutMs };
   const caps = { maxPayloadBytes: deps.config.maxPayloadBytes, maxJsonDepth: deps.config.maxJsonDepth };
-  return {
-    context: createContextStage(deps.clock, options),
-    intake: createIntakeStage(caps),
-    resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),
-    validate: createValidateStage(deps.registry, caps),
-    authorize: createAuthorizeStage({ registry: deps.registry, permissions: deps.hooks.permissions, resources: deps.hooks.resources, pages: deps.hooks.pages, clock: deps.clock }, options),
-  };
+  const host = extras.telemetry; // read once
+  const telemetry = host === undefined ? {} : { telemetry: host };
+  const writer = createAuditWriter({ sink: deps.audit, ...telemetry }, options);
+  const events = createAuditEventFactory({ clock: deps.clock }, options);
+  return Object.freeze({
+    stages: {
+      context: createContextStage(deps.clock, options),
+      intake: createIntakeStage(caps),
+      resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),
+      validate: createValidateStage(deps.registry, caps),
+      authorize: createAuthorizeStage({ registry: deps.registry, permissions: deps.hooks.permissions, resources: deps.hooks.resources, pages: deps.hooks.pages, clock: deps.clock }, options),
+      audit: createAuditStage({ registry: deps.registry, events, writer }),
+      execute: createExecuteStage({ registry: deps.registry, executors: deps.executors, events, writer, ...telemetry }),
+    },
+    auditor: createDecisionAuditor({ registry: deps.registry, events, writer, ...telemetry }),
+  });
 }
+export const composeStages = (deps: GatewayDependencies, extras: GatewayExtras = {}): StageMap => assemble(deps, extras).stages;
 
 /** The runner's options from the validated config: the per-call timeout and, when configured, the per-proposal budget. */
 export function pipelineOptions(config: GatewayConfig): PipelineOptions {
   return { hookTimeoutMs: config.hookTimeoutMs, ...(config.proposalBudgetMs === undefined ? {} : { proposalBudgetMs: config.proposalBudgetMs }) };
 }
 
-export function createPolicyGateway(source: GatewayDependencies): Readonly<{ proposals: PolicyGateway; confirmations: ConfirmationService }> {
+export function createPolicyGateway(source: GatewayDependencies, extras: GatewayExtras = {}): Readonly<{ proposals: PolicyGateway; confirmations: ConfirmationService }> {
   const deps = captureDependencies(source);
-  const pipeline = createPipeline(composeStages(deps), pipelineOptions(deps.config));
+  const { stages, auditor } = assemble(deps, extras);
+  const pipeline = createPipeline(stages, { ...pipelineOptions(deps.config), audit: auditor });
   const proposals = createProposalGateway({ pipeline, ids: deps.ids });
   const confirmations: ConfirmationService = Object.freeze({
     decide: Object.freeze(async () => Object.freeze({ status: "not_valid", category: "not_found" } as const)),

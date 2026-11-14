@@ -1,0 +1,48 @@
+import type { ActionRegistry } from "@dap/contracts";
+import { isMintedContext } from "@dap/contracts/mint";
+import type { AuditWriter } from "../../audit/audit-writer.js";
+import type { AuditEventFactory } from "../../audit/event-factory.js";
+import { projectParams } from "../../audit/projection.js";
+import { denyDecision } from "../decision.js";
+import type { PolicyStage } from "../pipeline.js";
+import { readAllowFacts } from "./allow-facts.js";
+import { provenDefinition } from "./registered.js";
+
+/**
+ * Stage 8, audit (T089, FR-040, research D13): the durable `AI_ACTION_ALLOWED` record, written BEFORE every execution, SAFE included.
+ *
+ * The event is built from the same trusted facts the later execute stage works from (resolve, validate, authorize, risk,
+ * confirmation), with the parameters projected through the capability's allowlist. It is committed with `recordAllowedDurably`:
+ * if that does not succeed (the sink throws, hangs, answers the wrong shape, or the clock cannot date the event) the proposal is
+ * `DENIED` with `audit_unavailable`, and nothing is executed. On success it publishes
+ * `facts.audit = { eventId, actionId, version, risk, paramsDigest, confirmationId }`: the binding it actually wrote, which the execute
+ * stage re-checks against every other fact. Facts that are missing or disagree are a `dependency_failure`.
+ */
+export function createAuditStage({ registry, events, writer }: { readonly registry: ActionRegistry; readonly events: AuditEventFactory; readonly writer: AuditWriter }): PolicyStage {
+  const get = registry.get.bind(registry);
+  return async (request) => {
+    const ids = { decisionId: request.decisionId, requestId: request.requestId, stage: "audit" } as const;
+    const name = typeof (request.facts.resolve as { id?: unknown } | undefined)?.id === "string" ? (request.facts.resolve as { id: string }).id : undefined;
+    const stop = (reason: "dependency_failure" | "audit_unavailable") => ({ kind: "stop" as const, decision: denyDecision({ ...ids, outcome: "DENIED", reason, ...(name === undefined ? {} : { attemptedAction: name }) }) });
+    const ctx = request.context;
+    const allow = readAllowFacts(request.facts);
+    if (!isMintedContext(ctx) || allow === undefined) return stop("dependency_failure");
+    const definition = provenDefinition(get, request.facts.resolve as Readonly<Record<string, unknown>>);
+    if (definition === undefined) return stop("dependency_failure");
+    // One read of the allowlist, before any await.
+    const rules = definition.audit.params;
+    let event;
+    try {
+      event = await events.make({
+        type: "AI_ACTION_ALLOWED", requestId: request.requestId, decisionId: request.decisionId, context: ctx, run: request.run,
+        action: { kind: "registered", id: allow.actionId, version: allow.version }, risk: allow.risk, outcome: "ALLOWED", reason: "allowed",
+        paramsView: projectParams(allow.params, rules),
+        ...(allow.confirmationId === null ? {} : { confirmation: { id: allow.confirmationId, state: "accepted" as const } }),
+        ...(allow.resource === null ? {} : { resource: { type: allow.resource.type, id: allow.resource.id } }),
+      });
+    } catch { return stop("audit_unavailable"); }
+    const committed = await writer.recordAllowedDurably(event, request.budget);
+    if (!committed.ok) return stop("audit_unavailable");
+    return { kind: "continue", data: { eventId: event.id, actionId: allow.actionId, version: allow.version, risk: allow.risk, paramsDigest: allow.paramsDigest, confirmationId: allow.confirmationId } };
+  };
+}

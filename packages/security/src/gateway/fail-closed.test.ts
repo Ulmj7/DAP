@@ -24,7 +24,8 @@ describe("pipeline fail-closed boundary (T058)", () => {
       }) as PolicyStage;
       stages[stage] = broken;
       const pending = createPipeline(stages, { hookTimeoutMs: 20, proposalBudgetMs: 20 }).run(input());
-      await vi.advanceTimersByTimeAsync(20);
+      // Execute gets what is left of the budget PLUS one hook timeout (the executor may use the budget; recording its result has its own time).
+      await vi.advanceTimersByTimeAsync(stage === "execute" ? 40 : 20);
       const decision = await pending;
       expect(decision).toMatchObject({ outcome: "DENIED", reason: ["throw", "reject"].includes(fault) ? "internal_error" : "dependency_failure", stage });
       expect(executions).toBe(0);

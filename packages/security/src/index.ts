@@ -14,6 +14,7 @@ export type { HookKind, HookOptions, HookResult, HookTimer } from "./gateway/hoo
 export { allowedDecision, confirmationDecision, denyDecision } from "./gateway/decision.js";
 export { toPlannerFeedback } from "./gateway/feedback.js";
 export { createPolicyGateway } from "./gateway/create-gateway.js";
+export type { GatewayExtras } from "./gateway/create-gateway.js";
 export { createSecurityContextFactory } from "./context/factory.js";
 export { validateParams, paramsDigest } from "./validation/params.js";
 export type { ParamsDigestInput, ParamsScope, ValidatedParams } from "./validation/params.js";
@@ -34,3 +35,5 @@ export type { AuditEventSource } from "./audit/audit-reader.js";
 export { InMemoryAuditStore } from "./state/memory/audit.js";
 export { noopTelemetry, safeTelemetry } from "./gateway/telemetry.js";
 export type { GatewayTelemetry, DecisionSample, AuditWriteKind, DependencyName, RateLimitScope } from "./gateway/telemetry.js";
+export { createAuditEventFactory } from "./audit/event-factory.js";
+export type { AuditEventFactory } from "./audit/event-factory.js";

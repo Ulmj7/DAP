@@ -68,9 +68,10 @@ describe("gateway composition and planner boundary", () => {
     }
     const gateway = createPolicyGateway(watch(deps) as GatewayDependencies);
     expect(await gateway.proposals.forSession(context(), run).submit({ callId: "call", raw: VALID })).toEqual({ outcome: "DENIED", category: "try_later" });
-    expect(clockCalls).toBe(1);
-    expect(receivers).toHaveLength(1);
-    expect(receivers[0]).toBe(copies.get(port));
+    // One reading for the context stage, one to date the PROPOSED record and one for the decision record.
+    expect(clockCalls).toBe(3);
+    expect(receivers).toHaveLength(3);
+    for (const receiver of receivers) expect(receiver).toBe(copies.get(port));
     expect(calls()).toBe(0);
   });
 
@@ -93,7 +94,7 @@ describe("gateway composition and planner boundary", () => {
     Object.assign(deps.clock, { now: () => { throw new Error("replacement"); } });
     Object.assign(deps.config, { hookTimeoutMs: -1 });
     expect(await gateway.proposals.forSession(context(), run).submit({ callId: "call", raw: VALID })).toEqual({ outcome: "DENIED", category: "try_later" });
-    expect(clocks).toBe(1);
+    expect(clocks).toBe(3); // context stage, PROPOSED record, decision record
     expect(calls()).toBe(0);
   });
 });
