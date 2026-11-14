@@ -388,17 +388,25 @@ describe("parseEnvelope: attemptedAction (audit only)", () => {
     expect(auditableName("\u001f")).toBe("\\u{1f}");
   });
 
+  it("redacts a secret-shaped name BEFORE it is cut, so no half of a secret is kept", () => {
+    const key = `sk-${"a1".repeat(40)}`;
+    expect(auditableName(`${"x".repeat(60)}${key}`)).toBe(`${"x".repeat(60)}[red`);
+    expect(auditableName(key)).toBe("[redacted]");
+    expect(auditableName(`AKIAABCDEFGHIJKLMNOP${"y".repeat(100)}`).startsWith("[redacted]yyyy")).toBe(true);
+    expect(attempted(JSON.stringify({ action: `0123456789abcdef0123456789abcdef`, params: {} }))).toBe("[redacted]");
+  });
+
   it("is bounded, and never cuts an escape in half", () => {
     expect(ATTEMPTED_ACTION_MAX).toBe(64); // the decision's own cap (decision.ts); the brief allows up to 128
-    expect(auditableName("a".repeat(ATTEMPTED_ACTION_MAX))).toBe("a".repeat(ATTEMPTED_ACTION_MAX));
-    expect(auditableName("a".repeat(ATTEMPTED_ACTION_MAX + 1))).toBe("a".repeat(ATTEMPTED_ACTION_MAX));
+    expect(auditableName("z".repeat(ATTEMPTED_ACTION_MAX))).toBe("z".repeat(ATTEMPTED_ACTION_MAX));
+    expect(auditableName("z".repeat(ATTEMPTED_ACTION_MAX + 1))).toBe("z".repeat(ATTEMPTED_ACTION_MAX));
     // Each newline is the 5-character token `\u{a}`; 13 fit in 64, a 14th would be cut mid-token and is dropped whole.
     const truncated = auditableName("\n".repeat(50));
     expect(truncated).toBe("\\u{a}".repeat(12));
     expect(truncated).toMatch(/^(?:\\u\{a\})+$/);
-    expect(auditableName("a".repeat(ATTEMPTED_ACTION_MAX - 2) + "\n")).toBe("a".repeat(ATTEMPTED_ACTION_MAX - 2));
+    expect(auditableName("z".repeat(ATTEMPTED_ACTION_MAX - 2) + "\n")).toBe("z".repeat(ATTEMPTED_ACTION_MAX - 2));
     // Once a token does not fit, nothing after it is kept either, however small: the name is a prefix, never a patchwork.
-    expect(auditableName("a".repeat(ATTEMPTED_ACTION_MAX - 2) + "\nbb")).toBe("a".repeat(ATTEMPTED_ACTION_MAX - 2));
+    expect(auditableName("z".repeat(ATTEMPTED_ACTION_MAX - 2) + "\nbb")).toBe("z".repeat(ATTEMPTED_ACTION_MAX - 2));
     expect(attempted(JSON.stringify({ action: "x".repeat(5000), params: {} }))).toBe("x".repeat(ATTEMPTED_ACTION_MAX));
   });
 });
