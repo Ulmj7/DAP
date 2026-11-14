@@ -87,7 +87,7 @@ describe("numbers (RFC 8259 section 6)", () => {
     for (const n of [Number.MAX_SAFE_INTEGER, -Number.MAX_SAFE_INTEGER, 0.1, 5e-324, Number.MIN_VALUE]) expect(outcome([n]), String(n)).toBe("ok");
   });
 
-  it.each(["-0", "-0.0", "-0e0", "-0e5", "-1e-999", "[-0]", '{"a":-0}'])("never returns negative zero from %s", (text) => {
+  it.each(["-0", "-0.0", "-0e0", "-0e5", "-0e-999", "[-0]", '{"a":-0}'])("never returns negative zero from %s", (text) => {
     const walk = (node: unknown): void => {
       if (typeof node === "number") expect(Object.is(node, -0)).toBe(false);
       else if (node && typeof node === "object") Object.values(node).forEach(walk);
@@ -246,6 +246,48 @@ describe("failures carry nothing from the input", () => {
     expect(result).toEqual({ ok: false, code });
     expect(Object.keys(result).sort()).toEqual(["code", "ok"]);
     expect(JSON.stringify(result)).not.toContain("CANARY");
+  });
+});
+
+describe("a structural fault outranks a numeric fault, wherever each sits", () => {
+  it.each([
+    ['{"n":1e999,"n":2}', "duplicate_key"], ['{"n":1e999,"__proto__":1}', "forbidden_key"], ['{"__proto__":1,"n":1e999}', "forbidden_key"], ['[1e999,', "syntax"], ['[1e999 1]', "syntax"],
+    ['[1e999,"\\ud800"]', "syntax"], ['{"a":1e999,"b":}', "syntax"], [`[1e999,${nestedArrays(9)}]`, "too_deep"], ['{"a":1e20,"a":1}', "duplicate_key"],
+    ['{"a":1e-400,"constructor":1}', "forbidden_key"],
+  ])("%s is %s", (text, code) => {
+    expect(outcome(text)).toBe(code);
+  });
+
+  it("reports the first numeric fault when that is the only kind", () => {
+    expect(outcome("[1e999,1e20]")).toBe("not_finite");
+    expect(outcome("[1e20,1e999]")).toBe("unsafe_number");
+    expect(outcome("[1e-400,1e999]")).toBe("unsafe_number");
+  });
+
+  it("holds for already-parsed data too", () => {
+    const hidden = Object.defineProperty({}, "x", { value: 1, enumerable: false });
+    expect(outcome({ a: NaN, b: 1n })).toBe("not_plain");
+    expect(outcome([Infinity, undefined])).toBe("not_plain");
+    expect(outcome({ a: 2 ** 60, b: Symbol("s") })).toBe("not_plain");
+    expect(outcome({ a: NaN, b: hidden, c: 1 })).toBe("not_plain");
+    expect(outcome({ a: NaN, b: "\ud800" })).toBe("not_plain");
+    expect(outcome({ a: NaN, ["__proto__"]: 1 })).toBe("forbidden_key");
+    expect(outcome([NaN, [[[[[[[[[1]]]]]]]]]])).toBe("too_deep");
+    expect(outcome({ a: NaN, b: [Infinity] })).toBe("not_finite");
+    expect(outcome({ a: 2 ** 60, b: NaN })).toBe("unsafe_number");
+  });
+
+  it("does not let a numeric fault hide an oversized payload", () => {
+    expect(outcome([NaN, ...Array.from({ length: 10_000 }, () => 1)])).toBe("too_large");
+  });
+});
+
+describe("a nonzero literal that underflows to zero is not silently zero", () => {
+  it.each(["1e-400", "-1e-400", "0.0000000001e-400", "5e-325", "[1e-999]", '{"amount":1e-999}', "1.5e-1000"])("rejects %s", (text) => {
+    expect(outcome(text)).toBe("unsafe_number");
+  });
+  it.each(["0", "0.0", "0e5", "0.000e-999", "-0", "-0.0e10", "5e-324", "1e-300", "2.2250738585072014e-308"])("accepts %s", (text) => {
+    expect(outcome(text)).toBe("ok");
   });
 });
 

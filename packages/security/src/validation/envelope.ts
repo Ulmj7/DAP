@@ -14,8 +14,8 @@
  *   value is never echoed back to the planner. Results are frozen.
  */
 import type { JsonValue, ReasonCode } from "@dap/contracts";
-import { parseStrictJson } from "./strict-json.js";
-import type { StrictJsonCode, StrictJsonOptions } from "./strict-json.js";
+import { parseStrictJsonDeferred } from "./strict-json.js";
+import type { NumberFault, StrictJsonCode, StrictJsonOptions } from "./strict-json.js";
 
 /** Exact action-id grammar (D3). 3-64 chars, starts with a lowercase letter. */
 const ACTION_ID_GRAMMAR = /^[a-z][A-Za-z0-9]{2,63}$/;
@@ -42,16 +42,15 @@ const failure = (outcome: EnvelopeFailure["outcome"], reason: ReasonCode): Envel
 const malformed = (): EnvelopeFailure => failure("INVALID_ACTION", "malformed_envelope");
 
 /**
- * Every strict-json failure maps to an existing outcome and ReasonCode. Only the size cap has its own
- * reason, and only an out-of-range number is a parameter fault; everything else is a malformed envelope.
+ * Every structural strict-json failure maps to an existing outcome and ReasonCode. Only the size cap has its
+ * own reason; everything else is a malformed envelope. A number fault is handled in `parseEnvelope`, after
+ * the envelope's own shape has been judged.
  */
-const STRICT_JSON_FAILURE: Record<StrictJsonCode, () => EnvelopeFailure> = {
+const STRICT_JSON_FAILURE: Record<Exclude<StrictJsonCode, NumberFault>, () => EnvelopeFailure> = {
   too_large: () => failure("INVALID_ACTION", "payload_too_large"),
   too_deep: malformed,
   duplicate_key: malformed,
   forbidden_key: malformed,
-  not_finite: () => failure("INVALID_PARAMETERS", "invalid_parameters"),
-  unsafe_number: () => failure("INVALID_PARAMETERS", "invalid_parameters"),
   not_plain: malformed,
   syntax: malformed,
 };
@@ -65,7 +64,9 @@ const STRICT_JSON_FAILURE: Record<StrictJsonCode, () => EnvelopeFailure> = {
  * failure result never contains the offending key or value.
  */
 export function parseEnvelope(value: unknown, options: StrictJsonOptions = {}): EnvelopeResult {
-  const parsed = parseStrictJson(value, options);
+  // Structure decides first: a number fault is deferred until the envelope is known to be well formed, so a
+  // planner cannot choose its own outcome by putting a number fault ahead of a structural one.
+  const parsed = parseStrictJsonDeferred(value, options);
   if (!parsed.ok) return STRICT_JSON_FAILURE[parsed.code]();
   const candidate = parsed.value;
   if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) return malformed();
@@ -75,5 +76,7 @@ export function parseEnvelope(value: unknown, options: StrictJsonOptions = {}): 
   const { action, params } = record;
   if (!isActionIdGrammar(action)) return malformed();
   if (params === null || typeof params !== "object" || Array.isArray(params)) return malformed();
+  // Only now is a deferred number fault a parameter fault; `params` holds placeholders in that case and is never returned.
+  if (parsed.numberFault) return failure("INVALID_PARAMETERS", "invalid_parameters");
   return Object.freeze({ ok: true, action, params: params as Readonly<Record<string, JsonValue>> });
 }

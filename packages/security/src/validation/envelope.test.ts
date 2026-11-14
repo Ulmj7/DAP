@@ -172,7 +172,7 @@ describe("parseEnvelope: malformed payloads", () => {
   it("maps every other strict-json failure to malformed_envelope", () => {
     for (const text of [
       '{"action":"sendEmail","params":{', // syntax
-      '{"a":' .repeat(20) + "1", // too_deep
+      '{"a":'.repeat(20) + "1" + "}".repeat(20), // too_deep, and a well-formed document otherwise
     ]) {
       const result = parseEnvelope(text);
       expect(result).toEqual({
@@ -217,6 +217,27 @@ describe("parseEnvelope: QA hardening", () => {
       const result = parseEnvelope(input);
       expect(result).toEqual({ ok: false, outcome: "INVALID_PARAMETERS", reason: "invalid_parameters" });
       assertNoLeak(result);
+    }
+  });
+
+  it("classifies by structure first: a numeric fault never decides the outcome of a structurally invalid envelope", () => {
+    for (const input of [
+      '{"action":"sendEmail","params":{},"callId":1e999}', '{"params":{"n":1e999},"params":{}}', '{"action":"sendEmail","params":{"n":1e999,"__proto__":1}}',
+      '[1e999]', '{"action":1e999,"params":{}}', '{"action":"sendEmail","params":1e999}', '{"action":"sendEmail","params":{"n":1e999},"userConfirmed":true}',
+      '{"action":"ab","params":{"n":1e999}}', '{"action":"sendEmail"}', '{"n":1e999}', "1e999", '{"action":"sendEmail","params":{"n":9007199254740993},"extra":1}',
+      '{"action":"sendEmail","params":{"n":1e999,"n":2}}', { action: "sendEmail", params: { n: NaN }, callId: "x" }, { action: "sendEmail", params: { n: NaN, bad: 1n } },
+    ]) {
+      expect(parseEnvelope(input), typeof input === "string" ? input : "an already-parsed envelope").toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+    }
+  });
+
+  it("is the same whichever order the keys and faults come in", () => {
+    const orders = [
+      '{"action":"sendEmail","params":{"n":1e999},"callId":"x"}', '{"callId":"x","params":{"n":1e999},"action":"sendEmail"}', '{"params":{"n":1e999},"callId":"x","action":"sendEmail"}',
+    ];
+    for (const text of orders) expect(parseEnvelope(text), text).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+    for (const text of ['{"action":"sendEmail","params":{"n":1e999}}', '{"params":{"n":1e999},"action":"sendEmail"}']) {
+      expect(parseEnvelope(text), text).toEqual({ ok: false, outcome: "INVALID_PARAMETERS", reason: "invalid_parameters" });
     }
   });
 

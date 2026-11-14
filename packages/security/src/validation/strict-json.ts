@@ -40,6 +40,9 @@ export type StrictJsonCode =
   | "not_plain"
   | "syntax";
 
+/** A number that is not a usable value. Reported only after the whole document has been judged structurally. */
+export type NumberFault = "not_finite" | "unsafe_number";
+
 /**
  * Success carries a deeply frozen plain JSON value; failure carries only the
  * code. There is no error string, so nothing from the input can leak out.
@@ -118,6 +121,8 @@ function freeze(value: JsonValue): JsonValue {
 
 class Parser {
   private pos = 0;
+  /** The first number fault. Parsing goes on (with 0 as a placeholder) so a structural fault anywhere outranks it. */
+  numberFault: NumberFault | undefined;
 
   constructor(
     private readonly text: string,
@@ -347,6 +352,7 @@ class Parser {
     if (this.pos >= text.length || !isDigit(text.charCodeAt(this.pos))) {
       return { ok: false, code: "syntax" };
     }
+    let nonZero = false;
     if (text[this.pos] === "0") {
       const next = text[this.pos + 1];
       if (next !== undefined && isDigit(next.charCodeAt(0))) {
@@ -354,6 +360,7 @@ class Parser {
       }
       this.pos += 1;
     } else {
+      nonZero = true;
       this.pos += 1;
       while (this.pos < text.length && isDigit(text.charCodeAt(this.pos))) {
         this.pos += 1;
@@ -365,6 +372,7 @@ class Parser {
         return { ok: false, code: "syntax" };
       }
       while (this.pos < text.length && isDigit(text.charCodeAt(this.pos))) {
+        if (text.charCodeAt(this.pos) !== 0x30) nonZero = true;
         this.pos += 1;
       }
     }
@@ -379,8 +387,10 @@ class Parser {
       }
     }
     const value = Number(text.slice(start, this.pos));
-    if (!Number.isFinite(value)) return { ok: false, code: "not_finite" };
-    if (Math.abs(value) > Number.MAX_SAFE_INTEGER) return { ok: false, code: "unsafe_number" };
+    // A fault is remembered, not returned: the document is still checked for everything that decides the outcome first.
+    if (!Number.isFinite(value)) { this.numberFault ??= "not_finite"; return { ok: true, value: 0 }; }
+    // Beyond 2^53-1 a double may name another id; a nonzero literal that underflows to 0 names a different amount.
+    if (Math.abs(value) > Number.MAX_SAFE_INTEGER || (value === 0 && nonZero)) { this.numberFault ??= "unsafe_number"; return { ok: true, value: 0 }; }
     // -0 is a distinct double that JSON text cannot distinguish from 0 once canonicalized; return plain 0.
     return { ok: true, value: value === 0 ? 0 : value };
   }
@@ -396,6 +406,8 @@ const isForbiddenKey = (key: string): boolean => FORBIDDEN_KEYS.has(key);
 /** Deep-copies already-parsed data exactly once, enforcing every strict rule while it reads. */
 class Copier {
   private used = 0;
+  /** The first number fault; the copy continues with 0 so that a structural fault anywhere outranks it. */
+  numberFault: NumberFault | undefined;
   /** The containers on the current path. A repeat inside this set is a cycle; a repeat elsewhere is just shared data. */
   private readonly active = new Set<object>();
 
@@ -437,8 +449,8 @@ class Copier {
       case "boolean": this.charge(value ? 4 : 5); return value;
       case "string": this.chargeString(value); return value;
       case "number": {
-        if (!Number.isFinite(value)) throw new Rejection("not_finite");
-        if (Math.abs(value) > Number.MAX_SAFE_INTEGER) throw new Rejection("unsafe_number");
+        const fault: NumberFault | undefined = !Number.isFinite(value) ? "not_finite" : Math.abs(value) > Number.MAX_SAFE_INTEGER ? "unsafe_number" : undefined;
+        if (fault) { this.numberFault ??= fault; this.charge(1); return 0; }
         const normalized = value === 0 ? 0 : value;
         this.charge(String(normalized).length);
         return normalized;
@@ -498,6 +510,51 @@ class Copier {
   }
 }
 
+/** Result of a strict parse that has not yet reported a number fault; see `parseStrictJsonDeferred`. */
+export type DeferredStrictJsonResult =
+  | { ok: true; readonly value: JsonValue; readonly numberFault?: NumberFault }
+  | { ok: false; readonly code: Exclude<StrictJsonCode, NumberFault> };
+
+/**
+ * Strict intake of one untrusted value (T061), with number faults deferred.
+ *
+ * A caller that must classify by STRUCTURE first (the envelope: a planner must not pick its own outcome by
+ * putting a number fault ahead of a structural one) gets `{ ok: true, value, numberFault }` when the document
+ * is structurally fine but holds an unusable number. In that case `value` has 0 in place of every faulty
+ * number and MUST NOT be used as data; it exists so the caller can judge the document's shape.
+ */
+export function parseStrictJsonDeferred(
+  input: unknown,
+  options: StrictJsonOptions = {},
+): DeferredStrictJsonResult {
+  const maxPayloadBytes = limitOption(options.maxPayloadBytes, 16384, "maxPayloadBytes");
+  const maxDepth = limitOption(options.maxJsonDepth, 8, "maxJsonDepth");
+  if (typeof input === "string") {
+    try {
+      // Every UTF-16 code unit is at least one UTF-8 byte, so a longer string is refused unscanned and the scan below is bounded by the cap.
+      if (input.length > maxPayloadBytes || utf8ByteLength(input) > maxPayloadBytes) {
+        return { ok: false, code: "too_large" };
+      }
+      const parser = new Parser(input, maxDepth);
+      const result = parser.parseDocument();
+      if (!result.ok) return result as { ok: false; code: Exclude<StrictJsonCode, NumberFault> };
+      return { ok: true, value: freeze(result.value), ...(parser.numberFault ? { numberFault: parser.numberFault } : {}) };
+    } catch (error) {
+      // Only reachable with an absurd depth cap exhausting the stack. Fail closed, never echo.
+      return { ok: false, code: error instanceof RangeError ? "too_deep" : "syntax" };
+    }
+  }
+  try {
+    const copier = new Copier(maxDepth, maxPayloadBytes);
+    const value = freeze(copier.copy(input, 0));
+    return { ok: true, value, ...(copier.numberFault ? { numberFault: copier.numberFault } : {}) };
+  } catch (error) {
+    // A hostile proxy, accessor or exotic value throwing from inside the copy is simply not plain data.
+    const code = error instanceof Rejection ? error.code : error instanceof RangeError ? "too_deep" : "not_plain";
+    return { ok: false, code: code as Exclude<StrictJsonCode, NumberFault> };
+  }
+}
+
 /**
  * Strict intake of one untrusted value (T061).
  *
@@ -510,32 +567,18 @@ class Copier {
  *
  * Never throws for any input; throws RangeError for an invalid option. Success
  * returns the value deeply frozen; failure returns `{ ok: false, code }` with no
- * input content.
+ * input content. A number fault is reported only if the document has no
+ * structural fault, so the code never depends on where in the document a fault sits.
+ *
+ * Known limit: the keys of an already-parsed OBJECT are enumerated before the byte cap can apply (JavaScript
+ * has no lazy key enumeration), so feed raw provider text, which the cap bounds before any scan.
  */
 export function parseStrictJson(
   input: unknown,
   options: StrictJsonOptions = {},
 ): StrictJsonResult {
-  const maxPayloadBytes = limitOption(options.maxPayloadBytes, 16384, "maxPayloadBytes");
-  const maxDepth = limitOption(options.maxJsonDepth, 8, "maxJsonDepth");
-  if (typeof input === "string") {
-    try {
-      // Every UTF-16 code unit is at least one UTF-8 byte, so a longer string is refused unscanned and the scan below is bounded by the cap.
-      if (input.length > maxPayloadBytes || utf8ByteLength(input) > maxPayloadBytes) {
-        return { ok: false, code: "too_large" };
-      }
-      const result = new Parser(input, maxDepth).parseDocument();
-      if (result.ok) return { ok: true, value: freeze(result.value) };
-      return result;
-    } catch (error) {
-      // Only reachable with an absurd depth cap exhausting the stack. Fail closed, never echo.
-      return { ok: false, code: error instanceof RangeError ? "too_deep" : "syntax" };
-    }
-  }
-  try {
-    return { ok: true, value: freeze(new Copier(maxDepth, maxPayloadBytes).copy(input, 0)) };
-  } catch (error) {
-    // A hostile proxy, accessor or exotic value throwing from inside the copy is simply not plain data.
-    return { ok: false, code: error instanceof Rejection ? error.code : error instanceof RangeError ? "too_deep" : "not_plain" };
-  }
+  const result = parseStrictJsonDeferred(input, options);
+  if (!result.ok) return result;
+  if (result.numberFault) return { ok: false, code: result.numberFault };
+  return { ok: true, value: result.value };
 }

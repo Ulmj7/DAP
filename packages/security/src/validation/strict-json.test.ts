@@ -72,7 +72,9 @@ describe("parseStrictJson: valid strict JSON", () => {
     expect(parseStrictJson('  "hi"  ')).toEqual({ ok: true, value: "hi" });
     expect(parseStrictJson("true")).toEqual({ ok: true, value: true });
     expect(parseStrictJson("null")).toEqual({ ok: true, value: null });
-    expect(parseStrictJson("1e-999")).toEqual({ ok: true, value: 0 });
+    // A nonzero literal that underflows to zero would silently name a different amount: rejected.
+    expect(parseStrictJson("1e-999")).toEqual({ ok: false, code: "unsafe_number" });
+    expect(parseStrictJson("0e-999")).toEqual({ ok: true, value: 0 });
     // Negative zero is normalized: JSON text cannot tell it from 0 once canonicalized.
     expect(parseStrictJson("-0")).toEqual({ ok: true, value: 0 });
   });
@@ -361,18 +363,30 @@ describe("parseStrictJson: already-parsed (non-string) input", () => {
 
 describe("parseStrictJson: fast-check property", () => {
   it("a successful result never contains a forbidden key or two colliding keys", () => {
+    // fc.json() is always valid JSON, so after setting aside what strict intake rejects ON PURPOSE (magnitudes beyond
+    // 2^53-1, underflow to zero, lone surrogates) every other text MUST be accepted: this cannot pass by rejecting everything.
+    const rejectedOnPurpose = (node: unknown): boolean => {
+      if (typeof node === "number") return Math.abs(node) > Number.MAX_SAFE_INTEGER;
+      if (typeof node === "string") return /[\ud800-\udfff]/.test(node.replace(/[\ud800-\udbff][\udc00-\udfff]/g, ""));
+      if (Array.isArray(node)) return node.some(rejectedOnPurpose);
+      if (node !== null && typeof node === "object") return Object.entries(node).some(([key, child]) => rejectedOnPurpose(key) || rejectedOnPurpose(child));
+      return false;
+    };
+    let accepted = 0;
     fc.assert(
       fc.property(fc.json(), (text) => {
+        fc.pre(!rejectedOnPurpose(JSON.parse(text)));
+        fc.pre(!/[eE]-\d{3,}/.test(text));
         const result = parseStrictJson(text);
-        // fc.json() can emit magnitudes beyond 2^53-1 and lone surrogates, which strict intake rejects on purpose.
-        if (!result.ok) {
-          expect(["unsafe_number", "syntax"]).toContain(result.code);
-          return;
+        expect(result.ok, text).toBe(true);
+        if (result.ok) {
+          accepted += 1;
+          assertNoForbiddenOrDuplicate(result.value);
         }
-        assertNoForbiddenOrDuplicate(result.value);
       }),
       { numRuns: 500 },
     );
+    expect(accepted).toBeGreaterThan(100);
   });
 
   it("never throws for arbitrary strings", () => {
