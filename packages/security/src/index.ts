@@ -14,4 +14,6 @@ export type { HookKind, HookOptions, HookResult, HookTimer } from "./gateway/hoo
 export { allowedDecision, confirmationDecision, denyDecision } from "./gateway/decision.js";
 export { toPlannerFeedback } from "./gateway/feedback.js";
 export { createPolicyGateway } from "./gateway/create-gateway.js";
+export { validateParams, paramsDigest } from "./validation/params.js";
+export type { ParamsDigestInput, ParamsScope, ValidatedParams } from "./validation/params.js";
 export { RESERVED_FORBIDDEN_ACTION_NAMES, RESERVED_PARAMETER_NAMES, normalizeForClassification } from "./registry/reserved-names.js";
