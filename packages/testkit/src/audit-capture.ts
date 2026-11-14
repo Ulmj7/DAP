@@ -7,30 +7,7 @@
  * (append rejects; the log is unchanged — "not recorded").
  */
 import type { AuditEvent, AuditSink } from "@dap/contracts";
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null) return value;
-  Object.freeze(value);
-  for (const key of Object.keys(value)) {
-    const child = (value as Record<string, unknown>)[key];
-    if (typeof child === "object" && child !== null) {
-      deepFreeze(child);
-    }
-  }
-  return value;
-}
-
-function deepCopy<T>(value: T): T {
-  if (typeof value !== "object" || value === null) return value;
-  if (Array.isArray(value)) {
-    return value.map((item) => deepCopy(item)) as unknown as T;
-  }
-  const clone: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) {
-    clone[key] = deepCopy(child);
-  }
-  return clone as T;
-}
+import { snapshotData } from "./snapshot.js";
 
 export class InMemoryAuditSink implements AuditSink {
   private readonly log: AuditEvent[] = [];
@@ -50,6 +27,6 @@ export class InMemoryAuditSink implements AuditSink {
     if (this.failing) {
       throw new Error("InMemoryAuditSink: audit append disabled (failAppend is on)");
     }
-    this.log.push(deepFreeze(deepCopy(event)));
+    this.log.push(snapshotData(event));
   }
 }

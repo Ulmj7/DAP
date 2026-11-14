@@ -30,6 +30,7 @@ export class IdGenerator implements IdGeneratorPort {
   private readonly next: () => number;
 
   constructor(seed: number) {
+    if (!Number.isInteger(seed) || seed < 0 || seed > 0xffff_ffff) throw new RangeError("IdGenerator requires a uint32 seed");
     this.next = mulberry32(seed);
   }
 

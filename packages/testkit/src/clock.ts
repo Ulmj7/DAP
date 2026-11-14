@@ -16,7 +16,7 @@ export class FakeClock implements Clock {
 
   constructor(startAt: string = DEFAULT_FAKE_EPOCH) {
     const parsed = Date.parse(startAt);
-    if (!Number.isFinite(parsed)) {
+    if (!Number.isFinite(parsed) || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(startAt)) {
       throw new RangeError(`FakeClock: invalid start instant: ${String(startAt)}`);
     }
     this.startMs = parsed;
@@ -37,6 +37,9 @@ export class FakeClock implements Clock {
         `FakeClock: advance() requires a finite, non-negative number of seconds, got: ${String(seconds)}`,
       );
     }
-    this.elapsedMs += seconds * 1000;
+    const elapsed = this.elapsedMs + seconds * 1000;
+    const next = this.startMs + elapsed;
+    if (!Number.isFinite(next) || Math.abs(next) > 8.64e15) throw new RangeError("FakeClock: advance exceeds the date range");
+    this.elapsedMs = elapsed;
   }
 }

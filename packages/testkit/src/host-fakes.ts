@@ -27,6 +27,7 @@ import type {
   UserId,
   AuthorizationContext,
 } from "@dap/contracts";
+import { portMembers, snapshotData } from "./snapshot.js";
 
 // ---------------------------------------------------------------------------
 // FakeAuthenticationPort
@@ -37,12 +38,12 @@ export class FakeAuthenticationPort implements AuthenticationPort<string> {
   private response: AuthenticatedPrincipal | null = null;
 
   constructor(principal: AuthenticatedPrincipal | null = null) {
-    this.response = principal;
+    this.response = snapshotData(principal);
   }
 
   /** Set the principal returned for every subsequent call (null = not authenticated). */
   setResponse(principal: AuthenticatedPrincipal | null): void {
-    this.response = principal;
+    this.response = snapshotData(principal);
   }
 
   async authenticate(evidence: string): Promise<AuthenticatedPrincipal | null> {
@@ -58,28 +59,27 @@ export class FakeAuthenticationPort implements AuthenticationPort<string> {
 
 export class FakePermissionChecker implements PermissionChecker {
   calls = 0;
-  private readonly granted = new Map<string, Set<string>>();
+  private readonly granted = new Map<TenantId, Map<UserId, Set<PermissionId>>>();
 
-  private key(userId: string, permission: string): string {
-    return `${userId}\u0000${permission}`;
-  }
-
-  grant(userId: UserId, permission: PermissionId): void {
-    let set = this.granted.get(userId);
+  grant(userId: UserId, permission: PermissionId, tenantId: TenantId): void {
+    if (typeof tenantId !== "string" || !tenantId) throw new TypeError("Permission grants require a tenant");
+    let tenant = this.granted.get(tenantId);
+    if (!tenant) { tenant = new Map(); this.granted.set(tenantId, tenant); }
+    let set = tenant.get(userId);
     if (set === undefined) {
-      set = new Set<string>();
-      this.granted.set(userId, set);
+      set = new Set<PermissionId>();
+      tenant.set(userId, set);
     }
     set.add(permission);
   }
 
-  revoke(userId: UserId, permission: PermissionId): void {
-    this.granted.get(userId)?.delete(permission);
+  revoke(userId: UserId, permission: PermissionId, tenantId: TenantId): void {
+    this.granted.get(tenantId)?.get(userId)?.delete(permission);
   }
 
   async has(ctx: AuthorizationContext, permission: PermissionId): Promise<boolean> {
     this.calls++;
-    return this.granted.get(ctx.userId)?.has(permission) ?? false;
+    return this.granted.get(ctx.tenantId)?.get(ctx.userId)?.has(permission) ?? false;
   }
 }
 
@@ -93,12 +93,16 @@ export class FakeResourceAuthorizer implements ResourceAuthorizer {
   private readonly byTenant = new Map<string, Map<string, ResolvedResource>>();
 
   registerResource(tenantId: TenantId, ref: ResourceRef, resource: ResolvedResource): void {
+    const captured = snapshotData({ ref, resource });
+    if (captured.resource.tenantId !== tenantId || captured.ref.type !== captured.resource.ref.type || captured.ref.id !== captured.resource.ref.id) {
+      throw new TypeError("Resource registration must match its tenant and reference");
+    }
     let tenant = this.byTenant.get(tenantId);
     if (tenant === undefined) {
       tenant = new Map<string, ResolvedResource>();
       this.byTenant.set(tenantId, tenant);
     }
-    tenant.set(`${ref.type}\u0000${ref.id}`, resource);
+    tenant.set(JSON.stringify([captured.ref.type, captured.ref.id]), captured.resource);
   }
 
   async resolve(
@@ -108,7 +112,7 @@ export class FakeResourceAuthorizer implements ResourceAuthorizer {
   ): Promise<ResolvedResource | null> {
     void permission; // the fake ignores the permission dimension
     this.calls++;
-    return this.byTenant.get(ctx.tenantId)?.get(`${ref.type}\u0000${ref.id}`) ?? null;
+    return this.byTenant.get(ctx.tenantId)?.get(JSON.stringify([ref.type, ref.id])) ?? null;
   }
 }
 
@@ -140,7 +144,8 @@ export class FakePageContextProvider implements PageContextProvider {
 export class FakeConfirmationChannel implements ConfirmationChannel {
   calls = 0;
   /** Every view delivered while the fake is healthy. */
-  readonly delivered: ConfirmationView[] = [];
+  private readonly deliveries: ConfirmationView[] = [];
+  get delivered(): readonly ConfirmationView[] { return [...this.deliveries]; }
   private failing = false;
 
   /** Make deliver() reject (simulates a broken delivery path). */
@@ -153,7 +158,7 @@ export class FakeConfirmationChannel implements ConfirmationChannel {
     if (this.failing) {
       throw new Error("faulty confirmation channel: delivery failed");
     }
-    this.delivered.push(view);
+    this.deliveries.push(snapshotData(view));
   }
 }
 
@@ -179,7 +184,10 @@ export class ServiceIdentityHook {
   }
 
   record(method: string, args: readonly unknown[]): void {
-    this.recorded.push({ method, args: [...args] });
+    let captured: readonly unknown[];
+    try { captured = snapshotData(args); }
+    catch { captured = snapshotData([{ kind: "unreadable-arguments" }]); }
+    this.recorded.push(Object.freeze({ method, args: captured }));
   }
 }
 
@@ -191,19 +199,23 @@ export function createServiceIdentityHook(): ServiceIdentityHook {
 /**
  * Wrap a host service-identity object (plain object of methods) so EVERY invocation is
  * recorded in the hook, then delegated to the original. Returns a plain object with the
- * same method names (no Proxy). Non-function properties are copied by reference.
+ * same method names (no Proxy), including class/symbol methods, with copied data properties.
  */
 export function withServiceIdentityRecording<T extends object>(service: T, hook: ServiceIdentityHook): T {
-  const wrapped: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(service)) {
+  const wrapped = {};
+  for (const [name, value] of portMembers(service)) {
     if (typeof value === "function") {
-      wrapped[name] = (...args: unknown[]) => {
-        hook.record(name, args);
+      const invoke = (...args: unknown[]) => {
+        hook.record(String(name), args);
         return (value as (...a: unknown[]) => unknown).apply(service, args);
       };
+      Object.defineProperty(wrapped, name, { value: invoke, enumerable: true });
     } else {
-      wrapped[name] = value;
+      // Class-private maps/clients are implementation state, not port data to expose.
+      if (value !== null && typeof value === "object" && !Array.isArray(value) &&
+        Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) continue;
+      Object.defineProperty(wrapped, name, { value: snapshotData(value), enumerable: true });
     }
   }
-  return wrapped as T;
+  return Object.freeze(wrapped) as T;
 }

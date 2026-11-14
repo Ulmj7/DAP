@@ -18,6 +18,7 @@ import type {
   RecordingExecutor as RecordingExecutorContract,
 } from "@dap/contracts";
 import { defineExecutor } from "@dap/contracts";
+import { snapshotData } from "./snapshot.js";
 
 export interface RecordingExecutorOptions<TValue> {
   /** Stable executor id, distinct from the actionId. */
@@ -36,13 +37,19 @@ export class RecordingExecutor<TParams = unknown, TValue = unknown>
   readonly executor: ActionExecutor<TParams, TValue>;
 
   constructor(options: RecordingExecutorOptions<TValue>) {
-    this.nextResult = options.result;
+    this.nextResult = snapshotData(options.result);
     const log = this.log;
     this.executor = defineExecutor<TParams, TValue>({
       id: options.id,
       run: async (call) => {
         // The guard already verified the grant and handed us a FROZEN snapshot.
-        log.push(call);
+        const index = log.length;
+        log.push(Object.freeze({ ...call, params: Object.freeze({ kind: "unreadable-arguments" }) as ExecutionCall<TParams>["params"], resource: null }));
+        let data: Pick<ExecutionCall<TParams>, "params" | "resource">;
+        try { data = snapshotData({ params: call.params, resource: call.resource }); }
+        catch { throw new TypeError("RecordingExecutor received unreadable arguments"); }
+        // Replace our immutable entry only after capture succeeds; entry evidence is never lost.
+        log[index] = Object.freeze({ ...call, ...data });
         return this.nextResult;
       },
     });
@@ -50,7 +57,7 @@ export class RecordingExecutor<TParams = unknown, TValue = unknown>
 
   /** Change the result returned by the next (and following) guarded calls. */
   setNextResult(result: ExecutionResult<TValue>): void {
-    this.nextResult = result;
+    this.nextResult = snapshotData(result);
   }
 
   /** Number of times the executor body actually ran. */
