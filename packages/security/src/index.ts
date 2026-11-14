@@ -36,3 +36,5 @@ export type { AuditEventSource } from "./audit/audit-reader.js";
 export { InMemoryAuditStore } from "./state/memory/audit.js";
 export { noopTelemetry, safeTelemetry } from "./gateway/telemetry.js";
 export type { GatewayTelemetry, DecisionSample, AuditWriteKind, DependencyName, RateLimitScope } from "./gateway/telemetry.js";
+export { purgeExpiredState } from "./state/postgres/purge.js";
+export type { PurgeOptions, PurgeResult } from "./state/postgres/purge.js";
