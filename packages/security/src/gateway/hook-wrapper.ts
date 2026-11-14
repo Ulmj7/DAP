@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
-import type { AuthenticatedPrincipal, PageId, ResolvedResource } from "@dap/contracts";
+import type { AuthenticatedPrincipal, IsoInstant, PageId, ResolvedResource } from "@dap/contracts";
 import { snapshotAnswer } from "./answer-snapshot.js";
 
 export type HookResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; reason: "denied" | "dependency_failure" }>;
@@ -15,6 +15,8 @@ interface HookAnswers {
   authentication: AuthenticatedPrincipal;
   resource: ResolvedResource;
   page: PageId;
+  /** A host clock reading: a timezone-qualified ISO instant. */
+  instant: IsoInstant;
   void: undefined;
   /** A policy store narrows access: true denies; only the literal false passes this hook. */
   tenantPolicy: false;
@@ -27,6 +29,7 @@ const schemas = {
   authentication: z.strictObject({ userId: text, tenantId: z.uuid(), sessionId: text, authenticatedAt: z.iso.datetime({ offset: true }), validUntil: z.iso.datetime({ offset: true }) }),
   resource: z.strictObject({ ref: z.strictObject({ type: text, id: text }), tenantId: z.uuid(), displayName: text }),
   page: text,
+  instant: z.iso.datetime({ offset: true }),
   void: z.undefined(),
   tenantPolicy: z.literal(false),
 };

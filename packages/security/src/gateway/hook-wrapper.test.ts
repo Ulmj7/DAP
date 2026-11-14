@@ -25,6 +25,7 @@ describe("host hook timeout and answer boundary", () => {
 
   it.each([
     ["authentication", principal()], ["resource", resource()], ["page", "documents"], ["void", undefined], ["tenantPolicy", false],
+    ["instant", "2026-01-01T00:00:00Z"], ["instant", "2026-01-01T02:00:00+01:00"],
   ] as const)("validates a positive %s answer", async (kind, answer) => {
     const result = await wrapHook(() => kind === "void" ? Promise.resolve(answer) : answer, kind)();
     expect(result).toEqual({ ok: true, value: answer });
@@ -45,11 +46,12 @@ describe("host hook timeout and answer boundary", () => {
     ["resource", { ...resource(), ref: { type: "document", id: "doc", owner: "alice" } }],
     ["resource", { ...resource(), tenantId: "bad" }], ["resource", { ...resource(), displayName: undefined }],
     ["page", {}], ["page", ""], ["void", null], ["void", true],
+    ["instant", null], ["instant", undefined], ["instant", 1], ["instant", ""], ["instant", "yesterday"], ["instant", "2026-01-01"], ["instant", "2026-01-01T00:00:00"], ["instant", {}],
   ] as const)("rejects malformed %s answers", async (kind, answer) => {
     expect(await wrapHook(() => answer, kind)()).toEqual({ ok: false, reason: "dependency_failure" });
   });
 
-  it.each(["boolean", "authentication", "resource", "page", "void", "tenantPolicy"] as HookKind[])("contains exceptions for %s without error text", async (kind) => {
+  it.each(["boolean", "authentication", "resource", "page", "void", "tenantPolicy", "instant"] as HookKind[])("contains exceptions for %s without error text", async (kind) => {
     const hook = wrapHook(() => { throw new Error("CANARY_SECRET: /private/stack"); }, kind);
     expect(await hook()).toEqual({ ok: false, reason: "dependency_failure" });
     expect(JSON.stringify(await hook())).not.toContain("CANARY");
