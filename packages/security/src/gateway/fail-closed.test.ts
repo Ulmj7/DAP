@@ -58,7 +58,8 @@ describe("pipeline fail-closed boundary (T058)", () => {
   });
 
   const missing = ["registry", "registry.get", "registry.list", "registry.isReservedForbidden", "registry.fingerprint", "executors", "executors.executorFor", "globalAllowlist", "hooks", "hooks.permissions", "hooks.permissions.has", "hooks.resources", "hooks.resources.resolve", "hooks.pages", "hooks.pages.currentPage", "state", "state.replay", "state.replay.claim", "state.rateLimiter", "state.rateLimiter.hit", "state.rateLimiter.isBlocked", "state.rateLimiter.block", "state.confirmations", "state.confirmations.create", "state.confirmations.get", "state.confirmations.listPending", "state.confirmations.tryAccept", "state.confirmations.tryReject", "state.confirmations.invalidate", "state.confirmations.recordExecution", "state.tenantPolicy", "state.tenantPolicy.isDisabled", "state.ping", "audit", "audit.append", "confirmationChannel", "confirmationChannel.deliver", "config", "clock", "clock.now", "ids", "ids.newDecisionId", "ids.newConfirmationId", "config.limits", "config.maxPayloadBytes", "config.maxJsonDepth", "config.replayRetentionSeconds", "config.confirmationDefaultTtlSeconds", "config.hookTimeoutMs", "config.limits.proposalsPerTurn", "config.limits.executionsPerTurn", "config.limits.maxChainDepth", "config.limits.turnBudgetMs", "config.limits.perUserPerMinute", "config.limits.perTenantPerMinute", "config.limits.perUserPerCapabilityPerMinute", "config.limits.highRiskPerUserPerHour", "config.limits.denialThrottle"];
-  it.each(missing)("gateway rejects missing dependency %s at construction", (path) => {
+  /** Copy only the path being edited, so the shared fixture stays intact. */
+  function edit(path: string, change: (parent: Record<string, unknown>, key: string) => void) {
     const { deps, calls } = dependencies();
     const keys = path.split(".");
     let parent = deps as unknown as Record<string, unknown>;
@@ -67,9 +68,47 @@ describe("pipeline fail-closed boundary (T058)", () => {
       parent[key] = child;
       parent = child;
     }
-    delete parent[keys.at(-1)!];
-    expect(() => createPolicyGateway(deps as GatewayDependencies)).toThrow();
+    change(parent, keys.at(-1)!);
+    return { deps: deps as GatewayDependencies, calls };
+  }
+  it.each(missing)("gateway rejects missing dependency %s at construction", (path) => {
+    const { deps, calls } = edit(path, (parent, key) => { delete parent[key]; });
+    expect(() => createPolicyGateway(deps)).toThrow();
     expect(calls()).toBe(0);
+  });
+
+  it.each(["registry.get", "registry.list", "registry.isReservedForbidden", "executors.executorFor", "hooks.permissions.has", "hooks.resources.resolve", "hooks.pages.currentPage", "state.ping", "state.replay.claim", "state.rateLimiter.hit", "state.confirmations.tryAccept", "state.tenantPolicy.isDisabled", "audit.append", "confirmationChannel.deliver", "clock.now", "ids.newDecisionId", "ids.newConfirmationId"])("gateway rejects a non-function %s", (path) => {
+    for (const value of ["method", null, 7, {}]) {
+      const { deps, calls } = edit(path, (parent, key) => { parent[key] = value; });
+      expect(() => createPolicyGateway(deps)).toThrow();
+      expect(calls()).toBe(0);
+    }
+  });
+
+  it.each(["registry", "executors", "hooks", "hooks.permissions", "state", "state.replay", "state.tenantPolicy", "audit", "confirmationChannel", "clock", "ids", "config", "config.limits", "globalAllowlist"])("gateway rejects a null or primitive %s", (path) => {
+    for (const value of [null, undefined, "port", 1]) {
+      const { deps, calls } = edit(path, (parent, key) => { parent[key] = value; });
+      expect(() => createPolicyGateway(deps)).toThrow();
+      expect(calls()).toBe(0);
+    }
+  });
+
+  it.each([undefined, null, "", "abc", "A".repeat(64), "a".repeat(63), 1])("gateway rejects registry fingerprint %j", (fingerprint) => {
+    const { deps } = edit("registry.fingerprint", (parent, key) => { parent[key] = fingerprint; });
+    expect(() => createPolicyGateway(deps)).toThrow();
+  });
+
+  it.each([0, -1, 1.5, "60", null])("gateway rejects invalid configuration value %j", (value) => {
+    for (const path of ["config.hookTimeoutMs", "config.maxPayloadBytes", "config.maxJsonDepth", "config.limits.proposalsPerTurn", "config.limits.perUserPerMinute.limit"]) {
+      const { deps } = edit(path, (parent, key) => { parent[key] = value; });
+      expect(() => createPolicyGateway(deps)).toThrow();
+    }
+  });
+
+  it("gateway rejects an allowlist naming an action the registry does not hold", () => {
+    const { deps, otherId } = (() => { const made = dependencies(); return { deps: made.deps, otherId: made.otherId }; })();
+    Object.assign(deps, { globalAllowlist: new Set([otherId]) });
+    expect(() => createPolicyGateway(deps)).toThrow();
   });
 
   it("preserves the first denial and never runs a later stage", async () => {

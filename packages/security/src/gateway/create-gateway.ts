@@ -1,5 +1,9 @@
 import { z } from "zod";
-import type { AuthorizationContext, ConfirmationService, GatewayConfig, GatewayDependencies, PlannerFeedback, PlannerRunMeta, PolicyGateway, ProposalCall, RequestId } from "@dap/contracts";
+import type {
+  ActionId, ActionRegistry, AuditSink, AuthorizationContext, Clock, ConfirmationChannel, ConfirmationService, ConfirmationStore, ExecutorTable, GatewayConfig, GatewayDependencies,
+  IdGenerator, PageContextProvider, PermissionChecker, PlannerFeedback, PlannerRunMeta, PolicyGateway, ProposalCall, RateLimiter, ReplayGuard, RequestId, ResourceAuthorizer,
+  SecurityStateStore, TenantActionPolicyStore,
+} from "@dap/contracts";
 import { snapshotAnswer } from "./answer-snapshot.js";
 import { toPlannerFeedback } from "./feedback.js";
 import { createPipeline } from "./pipeline.js";
@@ -14,6 +18,26 @@ const configSchema = z.strictObject({
 });
 const unavailable: PlannerFeedback = Object.freeze({ outcome: "DENIED", category: "try_later" });
 
+/**
+ * Compile-time exhaustive method lists: a method added to (or removed from) a contract port
+ * fails type-checking here instead of being silently dropped from the captured dependency.
+ */
+type Methods<T> = { readonly [K in keyof T]-?: true };
+const registryMethods: Methods<Omit<ActionRegistry, "fingerprint">> = { get: true, list: true, isReservedForbidden: true };
+const permissionMethods: Methods<PermissionChecker> = { has: true };
+const resourceMethods: Methods<ResourceAuthorizer> = { resolve: true };
+const pageMethods: Methods<PageContextProvider> = { currentPage: true };
+const replayMethods: Methods<ReplayGuard> = { claim: true };
+const rateLimiterMethods: Methods<RateLimiter> = { hit: true, isBlocked: true, block: true };
+const confirmationStoreMethods: Methods<ConfirmationStore> = { create: true, get: true, listPending: true, tryAccept: true, tryReject: true, invalidate: true, recordExecution: true };
+const tenantPolicyMethods: Methods<TenantActionPolicyStore> = { isDisabled: true };
+const stateMethods: Methods<Pick<SecurityStateStore, "ping">> = { ping: true };
+const executorMethods: Methods<ExecutorTable> = { executorFor: true };
+const auditMethods: Methods<AuditSink> = { append: true };
+const channelMethods: Methods<ConfirmationChannel> = { deliver: true };
+const clockMethods: Methods<Clock> = { now: true };
+const idMethods: Methods<IdGenerator> = { newDecisionId: true, newConfirmationId: true };
+
 /** Capture the dependency graph once; method receivers remain the host's own port objects. */
 function captureDependencies(source: GatewayDependencies): GatewayDependencies {
   const reads = new WeakMap<object, Map<string, unknown>>();
@@ -24,15 +48,15 @@ function captureDependencies(source: GatewayDependencies): GatewayDependencies {
     if (!cached.has(key)) cached.set(key, Reflect.get(parent, key));
     return cached.get(key);
   };
-  const port = (parent: unknown, key: string, methods: readonly string[]): object => {
+  const port = <T extends object>(parent: unknown, key: string, methods: Methods<T>): T => {
     const object = read(parent, key);
     const captured = Object.create(null) as Record<string, unknown>;
-    for (const method of methods) {
+    for (const method of Object.keys(methods)) {
       const fn = read(object, method);
       if (typeof fn !== "function") throw new TypeError("Missing gateway dependency");
       captured[method] = Object.freeze((...args: unknown[]) => Reflect.apply(fn, object, args));
     }
-    return Object.freeze(captured);
+    return Object.freeze(captured) as T;
   };
   try {
     const hooks = read(source, "hooks");
@@ -40,19 +64,24 @@ function captureDependencies(source: GatewayDependencies): GatewayDependencies {
     const registrySource = read(source, "registry");
     const fingerprint = read(registrySource, "fingerprint");
     if (typeof fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(fingerprint)) throw new TypeError("Invalid registry");
-    const registry = Object.freeze({ ...port(source, "registry", ["get", "list", "isReservedForbidden"]), fingerprint });
+    const registry: ActionRegistry = Object.freeze({ ...port<Omit<ActionRegistry, "fingerprint">>(source, "registry", registryMethods), fingerprint: fingerprint as ActionRegistry["fingerprint"] });
     const global = read(source, "globalAllowlist");
     if (!global || typeof global !== "object") throw new TypeError("Missing gateway dependency");
-    const globalAllowlist = new Set(global as GatewayDependencies["globalAllowlist"]);
+    const globalAllowlist: ReadonlySet<ActionId> = new Set(global as ReadonlySet<ActionId>);
     const config = snapshotAnswer(read(source, "config"));
     if (!configSchema.safeParse(config).success) throw new TypeError("Invalid gateway config");
     return Object.freeze({
       registry, globalAllowlist, config: config as GatewayConfig,
-      executors: port(source, "executors", ["executorFor"]),
-      hooks: Object.freeze({ permissions: port(hooks, "permissions", ["has"]), resources: port(hooks, "resources", ["resolve"]), pages: port(hooks, "pages", ["currentPage"]) }),
-      state: Object.freeze({ ...port(source, "state", ["ping"]), replay: port(state, "replay", ["claim"]), rateLimiter: port(state, "rateLimiter", ["hit", "isBlocked", "block"]), confirmations: port(state, "confirmations", ["create", "get", "listPending", "tryAccept", "tryReject", "invalidate", "recordExecution"]), tenantPolicy: port(state, "tenantPolicy", ["isDisabled"]) }),
-      audit: port(source, "audit", ["append"]), confirmationChannel: port(source, "confirmationChannel", ["deliver"]), clock: port(source, "clock", ["now"]), ids: port(source, "ids", ["newDecisionId", "newConfirmationId"]),
-    }) as unknown as GatewayDependencies;
+      executors: port<ExecutorTable>(source, "executors", executorMethods),
+      hooks: Object.freeze({ permissions: port<PermissionChecker>(hooks, "permissions", permissionMethods), resources: port<ResourceAuthorizer>(hooks, "resources", resourceMethods), pages: port<PageContextProvider>(hooks, "pages", pageMethods) }),
+      state: Object.freeze({
+        ...port<Pick<SecurityStateStore, "ping">>(source, "state", stateMethods),
+        replay: port<ReplayGuard>(state, "replay", replayMethods), rateLimiter: port<RateLimiter>(state, "rateLimiter", rateLimiterMethods),
+        confirmations: port<ConfirmationStore>(state, "confirmations", confirmationStoreMethods), tenantPolicy: port<TenantActionPolicyStore>(state, "tenantPolicy", tenantPolicyMethods),
+      }),
+      audit: port<AuditSink>(source, "audit", auditMethods), confirmationChannel: port<ConfirmationChannel>(source, "confirmationChannel", channelMethods),
+      clock: port<Clock>(source, "clock", clockMethods), ids: port<IdGenerator>(source, "ids", idMethods),
+    });
   } catch { throw new TypeError("Missing or invalid gateway dependency"); }
 }
 
