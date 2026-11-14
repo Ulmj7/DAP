@@ -16,7 +16,13 @@ export interface PipelineInput {
   /** Only intake reads the proposal; context denial must not even inspect its getters. */
   readonly readProposal: () => ProposalCall;
 }
+/**
+ * What is left of the proposal's overall deadline, read from the runner's own monotonic timer. A stage that makes
+ * several host calls in sequence (authorize) gives each one at most this much, and never more than `hookTimeoutMs`.
+ */
+export interface ProposalBudget { readonly remainingMs: () => number }
 export interface PipelineRecord extends Omit<PipelineInput, "context" | "run"> {
+  readonly budget: ProposalBudget;
   readonly context: AuthorizationContext | null;
   readonly run: PlannerRunMeta;
   /** Each stage owns one append-only slot. Values are detached, deeply frozen JSON data. */
@@ -87,9 +93,17 @@ function runStage(fn: PolicyStage, request: PipelineRecord, stage: PipelineStage
   return underDeadline<StageResult>(() => fn(request), (raw) => captureResult(raw, request, stage), (cause) => denied(cause === "thrown" || cause === "rejected" ? "internal_error" : "dependency_failure"), timeout, timer);
 }
 
+export interface PipelineOptions extends HookOptions {
+  /** Overall deadline for one proposal across every stage. Default 10 000 ms. */
+  readonly proposalBudgetMs?: number;
+}
+/** Stages that make several host calls in sequence: their deadline is the remaining proposal budget, each call is capped by `hookTimeoutMs` inside the stage. */
+const SEQUENTIAL_HOOK_STAGES: ReadonlySet<PipelineStage> = new Set(["authorize"]);
+
 /** D6 positions are fixed; adding an implementation never changes another stage's code. */
-export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer = nativeTimer }: HookOptions = {}) {
+export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer = nativeTimer, proposalBudgetMs = 10_000 }: PipelineOptions = {}) {
   assertTimeout(hookTimeoutMs, "pipeline");
+  assertTimeout(proposalBudgetMs, "proposal budget");
   const ordered = PIPELINE_STAGES.map((name) => Object.freeze({ name, fn: stages[name] }));
   return Object.freeze({
     async run(source: PipelineInput): Promise<PolicyDecision> {
@@ -99,16 +113,22 @@ export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer =
         const { context, run, decisionId, requestId, readProposal } = source;
         if (typeof decisionId !== "string" || !decisionId || typeof requestId !== "string" || !requestId) return failure(identifiers, current, "dependency_failure");
         identifiers = { decisionId, requestId };
+        // The runner owns the overall deadline: a stage cannot extend it, and a timer that cannot tell the time leaves none.
+        const started = timer.now();
+        const remaining = (): number => { const current = timer.now(); return Number.isFinite(started) && Number.isFinite(current) && current >= started ? proposalBudgetMs - (current - started) : 0; };
+        const budget: ProposalBudget = Object.freeze({ remainingMs: remaining });
         const capturedRun = snapshotAnswer(run);
         if (!runSchema.safeParse(capturedRun).success || typeof readProposal !== "function") return failure(identifiers, current, "dependency_failure");
-        let request: PipelineRecord = Object.freeze({ ...identifiers, context: isMintedContext(context) ? context : null, run: capturedRun as PlannerRunMeta, readProposal: proposalWithheld, facts: Object.freeze({}) });
+        let request: PipelineRecord = Object.freeze({ ...identifiers, context: isMintedContext(context) ? context : null, run: capturedRun as PlannerRunMeta, readProposal: proposalWithheld, facts: Object.freeze({}), budget });
         const proposal = onceProposal(readProposal);
         for (const { name, fn } of ordered) {
           current = name;
           // Absent guards must stop before any later hook or executor can run.
           if (typeof fn !== "function") return failure(request, name, "dependency_failure");
+          const left = remaining();
+          if (!(left > 0)) return failure(request, name, "dependency_failure");
           const view: PipelineRecord = name === "intake" ? Object.freeze({ ...request, readProposal: proposal }) : request;
-          const result = await runStage(fn, view, name, hookTimeoutMs, timer);
+          const result = await runStage(fn, view, name, SEQUENTIAL_HOOK_STAGES.has(name) ? left : Math.min(hookTimeoutMs, left), timer);
           if (result.kind === "stop") return result.decision;
           // Whatever the context stage is, nothing after it may run without a minted context.
           if (name === "context" && request.context === null) return failure(request, name, "dependency_failure");

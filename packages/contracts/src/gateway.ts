@@ -163,6 +163,8 @@ export interface GatewayConfig {
   readonly replayRetentionSeconds: number; // default 86400
   readonly confirmationDefaultTtlSeconds: number; // default 300; capped at 900
   readonly hookTimeoutMs: number; // default 2000
+  /** Overall deadline for ONE proposal, enforced by the pipeline runner across all stages; default 10000. */
+  readonly proposalBudgetMs?: number;
 }
 
 export interface GatewayDependencies {

@@ -1,7 +1,8 @@
-import type { ActionRegistry, AnyActionDefinition } from "@dap/contracts";
+import type { ActionRegistry } from "@dap/contracts";
 import { validateParams } from "../../validation/params.js";
 import type { StrictJsonOptions } from "../../validation/strict-json.js";
 import { denyDecision } from "../decision.js";
+import { provenDefinition } from "./registered.js";
 import type { PolicyStage } from "../pipeline.js";
 
 const record = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
@@ -28,18 +29,9 @@ export function createValidateStage(registry: ActionRegistry, options: StrictJso
     const resolved = record(request.facts.resolve);
     const context = request.context;
     if (!intake || !resolved || !context || intake.action !== resolved.id || record(intake.params) === undefined) return failed();
-    const entry = get(resolved.id as string);
-    if (!entry || typeof entry !== "object") return failed();
-    // One read per field, before any await: the proof below and the validation see the same definition.
-    const definition: unknown = Reflect.get(entry, "definition");
-    const definitionHash: unknown = Reflect.get(entry, "definitionHash");
-    if (!definition || typeof definition !== "object") return failed();
-    const id: unknown = Reflect.get(definition, "id");
-    const version: unknown = Reflect.get(definition, "version");
-    if (id !== resolved.id || version !== resolved.version || definitionHash !== resolved.definitionHash) return failed();
-    // Do not hand the live definition back to a validator that would read id/version again.
-    const captured = { id, version, inputSchema: Reflect.get(definition, "inputSchema"), resource: Reflect.get(definition, "resource") };
-    const checked = validateParams(captured as AnyActionDefinition, intake.params, { tenantId: context.tenantId, userId: context.userId }, caps);
+    const definition = provenDefinition(get, resolved);
+    if (!definition) return failed();
+    const checked = validateParams(definition, intake.params, { tenantId: context.tenantId, userId: context.userId }, caps);
     if (!checked.ok) return { kind: "stop", decision: denyDecision({ ...ids, outcome: "INVALID_PARAMETERS", reason: "invalid_parameters", attemptedAction: resolved.id as string, issues: checked.issues }) };
     return { kind: "continue", data: { params: checked.normalized, paramsDigest: checked.paramsDigest, resource: checked.resource === null ? null : { type: checked.resource.type, id: checked.resource.id } } };
   };

@@ -88,7 +88,7 @@ describe("ordered immutable request pipeline", () => {
     ["empty turn", { ...run, turnId: "" }], ["extra key", { ...run, userId: "mallory" }], ["bad instant", { ...run, turnStartedAt: "yesterday" }],
   ])("denies before any stage when run metadata is %s", async (_label, metadata) => {
     let calls = 0;
-    const stages = stageMap(() => { calls++; return allow({ ...input(), run, context: null, facts: {} }); });
+    const stages = stageMap(() => { calls++; return allow({ ...input(), run, context: null, facts: {}, budget: { remainingMs: () => 1 } }); });
     for (const name of PIPELINE_STAGES) { const original = stages[name]!; stages[name] = (request) => { calls++; return original(request); }; }
     expect(await createPipeline(stages).run({ ...input(), run: metadata })).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "context" });
     expect(calls).toBe(0);
@@ -190,7 +190,7 @@ describe("ordered immutable request pipeline", () => {
   });
 
   it("rejects a decision bound to a different request", async () => {
-    const stages = stageMap(() => allow({ ...input("other"), run, context: null, facts: {} }));
+    const stages = stageMap(() => allow({ ...input("other"), run, context: null, facts: {}, budget: { remainingMs: () => 1 } }));
     expect(await createPipeline(stages).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
   });
 

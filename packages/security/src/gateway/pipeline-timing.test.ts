@@ -73,7 +73,8 @@ describe("stage deadline and timer boundary", () => {
   it("rejects an answer that was captured in time but whose capture itself overran", async () => {
     const timer = new ManualTimer();
     let readings = 0;
-    timer.now = () => (++readings >= 3 ? 2001 : 0);
+    // The runner reads the timer twice before the first stage (its start and the budget check); the stage's own deadline reads it at start, on arrival and on capture.
+    timer.now = () => (++readings >= 5 ? 2001 : 0);
     const test = harness(() => ({ kind: "continue", data: {} }), timer);
     expect(await test.run()).toMatchObject(timeout);
     expect(test.executions()).toBe(0);
