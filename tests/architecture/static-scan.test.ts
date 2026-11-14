@@ -375,6 +375,90 @@ describe("bypass attempts: reaching the network through the global object", () =
 
 afterEach(() => { vi.doUnmock("typescript"); });
 
+describe("bypass attempts: loader indirection, dynamic code, remote specifiers, shadowing by declarations that emit nothing", () => {
+  it.each([
+    ["destructuring getBuiltinModule", 'const { getBuiltinModule } = process;\nexport const vm = getBuiltinModule("vm");\n'],
+    ["aliasing getBuiltinModule", 'const load = process.getBuiltinModule;\nexport const vm = load("vm");\n'],
+    ["getBuiltinModule.call", 'export const vm = process.getBuiltinModule.call(process, "vm");\n'],
+    ["getBuiltinModule.bind", 'export const load = process.getBuiltinModule.bind(process);\n'],
+    ["a renamed destructuring", 'const { getBuiltinModule: g } = process;\nexport const vm = g("child_process");\n'],
+    ["a string-keyed destructuring", 'const { "getBuiltinModule": g } = process;\nexport const vm = g("vm");\n'],
+    ["process.mainModule.require", 'export const cp = process.mainModule!.require("child_process");\n'],
+    ["module.require", 'export const cp = module.require("child_process");\n'],
+    ["process.binding", 'export const spawn = process.binding("spawn_sync");\n'],
+    ["a computed process.binding", 'export const spawn = process["binding"]("spawn_sync");\n'],
+    ["process.dlopen", "export const load = process.dlopen;\n"],
+    ["destructuring binding from process", "const { binding } = process;\nexport const b = binding;\n"],
+    ["an alias of process", 'const p = process;\nexport const spawn = p.binding("spawn_sync");\n'],
+    ["a computed key on process", 'export const x = (k: string) => (process as unknown as Record<string, unknown>)[k];\n'],
+  ])("flags %s", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code).length, code).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["a parenthesized callee", 'export const vm = (process.getBuiltinModule)("vm");\n', "vm"],
+    ["a template-literal key", 'export const vm = process[`getBuiltinModule`]("vm");\n', "vm"],
+    ["a non-null callee", 'export const vm = process.getBuiltinModule!("node:vm");\n', "node:vm"],
+  ])("still names the module through %s", (_label, code, module) => {
+    expect(scanSource("packages/ai/src/probe.ts", code).map((finding) => [finding.kind, finding.module])).toEqual([["forbidden-import", module]]);
+  });
+
+  it.each([
+    ["eval", 'export const run = (s: string) => eval(s);\n'], ["an indirect eval", 'export const run = (s: string) => (0, eval)(s);\n'],
+    ["new Function", 'export const make = (s: string) => new Function(s);\n'], ["Function called", 'export const make = (s: string) => Function(s);\n'],
+    ["an aliased eval", "const e = eval;\nexport const run = e;\n"], ["Function reached through the global object", 'export const make = (s: string) => globalThis.Function(s);\n'],
+    ["a constructor call", 'export const make = (s: string) => (() => 1).constructor(s)();\n'], ["a constructor construct", 'export const make = (s: string) => new (class {}).constructor(s);\n'],
+    ["a computed constructor call", 'export const make = (s: string) => (() => 1)["constructor"](s);\n'],
+  ])("flags dynamic code through %s", (_label, code) => {
+    expect(kinds(code), code).toEqual(expect.arrayContaining([expect.stringMatching(/dynamic-code|global-object/)]));
+  });
+
+  it.each([
+    ["a method that is merely named eval", "export const run = (o: { eval(s: string): string }) => o.eval('x');\n"],
+    ["words that contain eval or Function", 'export const evaluate = (s: string) => s; export const functionName = "Function eval";\n'],
+    ["a local Function binding", "export const make = (Function: (s: string) => string) => Function('x');\n"],
+    ["Function as a type", "export type Callback = Function;\nexport const f = (c: Callback) => c;\n"],
+    ["reading constructor.name", "export const name = (o: object) => o.constructor.name;\n"],
+    ["a safe process member", 'export const v = () => process.version;\n'],
+    ["a safe computed process member", 'export const v = () => process["env"];\n'],
+    ["a local named module", "export const read = () => { const module = { n: 1 }; return module.n; };\n"],
+  ])("does not flag %s", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code), code).toEqual([]);
+  });
+
+  it.each(["worker_threads", "node:worker_threads", "cluster", "execa", "node-fetch", "ws", "got", "ky", "superagent", "cross-spawn", "shelljs", "vm2", "isolated-vm", "node-pty", "needle"])(
+    "flags %s", (module) => {
+      expect(scanSource("packages/ai/src/probe.ts", `import x from "${module}";\nexport const go = x;\n`).map((finding) => [finding.kind, finding.module])).toEqual([["forbidden-import", module]]);
+    });
+
+  it.each([
+    'import "data:text/javascript,import(\'node:vm\')";\n', 'import x from "https://cdn.example.test/x.js";\nexport const go = x;\n', 'import x from "http://localhost/x.js";\nexport const go = x;\n',
+    'import x from "file:///etc/x.js";\nexport const go = x;\n', 'export const load = () => import("data:text/javascript,export default 1");\n', 'import x from "blob:https://x/y";\nexport const go = x;\n',
+    'import x from "../../../node_modules/undici/index.js";\nexport const go = x;\n', 'import x from "./node_modules/axios/index.js";\nexport const go = x;\n',
+    'import x from "../../node_modules/pg/lib/index.js";\nexport const go = x;\n',
+  ])("flags the remote or out-of-tree specifier in %s", (code) => {
+    expect(kinds(code), code).toEqual(["forbidden-import"]);
+  });
+
+  it("allows ordinary relative, node: and package specifiers", () => {
+    for (const specifier of ["./local.js", "../registry/build-registry.js", "node:crypto", "node:perf_hooks", "node:path", "zod", "@dap/contracts", "@dap/contracts/mint", "fast-check"]) {
+      expect(scanSource("packages/security/src/probe.ts", `import x from "${specifier}";\nexport const go = x;\n`), specifier).toEqual([]);
+    }
+  });
+
+  it.each([
+    ["an ambient const", "declare const fetch: (u: string) => Promise<unknown>;\nexport const go = (u: string) => fetch(u);\n"],
+    ["an ambient function", "declare function fetch(u: string): Promise<unknown>;\nexport const go = (u: string) => fetch(u);\n"],
+    ["a type-only import", 'import type { fetch } from "./x.js";\nexport const go = (u: string) => fetch(u);\n'],
+    ["an inline type-only import", 'import { type fetch } from "./x.js";\nexport const go = (u: string) => fetch(u);\n'],
+    ["a type-only namespace import", 'import type * as fetch from "./x.js";\nexport const go = (u: string) => fetch(u);\n'],
+    ["a type-only default import", 'import type fetch from "./x.js";\nexport const go = (u: string) => fetch(u);\n'],
+    ["an ambient self", "declare const self: { fetch(u: string): Promise<unknown> };\nexport const go = (u: string) => self.fetch(u);\n"],
+  ])("is not fooled into treating %s as a local binding", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code).length, code).toBeGreaterThan(0);
+  });
+});
+
 describe("failing loudly", () => {
   it("reports a file the compiler cannot parse instead of silently scanning half of it", () => {
     const findings = scanSource("packages/ai/src/broken.ts", 'import { exec } from "node:child_process";\nexport const = ;\nexport function (\n');

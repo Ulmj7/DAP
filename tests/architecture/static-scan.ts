@@ -13,10 +13,13 @@
  *   packages/security/src/state/postgres. Static `import type` / `export type` are NOT findings: they
  *   emit nothing, which the repository guarantees with `verbatimModuleSyntax` (a test pins that),
  *   whereas an inline `import { type X }` still emits a side-effect import and IS a finding.
- * - dynamic-module: a module load whose specifier is not a literal, or a bare reference to `require`,
- *   because the scan cannot see what it loads (fail closed).
+ * - dynamic-module: a module load whose specifier is not a literal, a bare reference to `require`, `module`
+ *   or `process`, an alias of `process.getBuiltinModule`, or `process.binding` / `dlopen` / `mainModule`,
+ *   because the scan cannot see what they load (fail closed). `process.<member>` for any other member is fine.
  * - global-fetch / global-network: a reference to the global `fetch`, `WebSocket`, `XMLHttpRequest` or
  *   `EventSource` that does not resolve to a local binding, including `globalThis.fetch`.
+ * - dynamic-code: `eval`, the `Function` constructor, or a `.constructor(...)` call, none of which a
+ *   production capability needs and each of which reaches every other capability.
  * - global-object: any reference to `globalThis`, `global`, `window` or `self` that is not a local
  *   binding. No production code needs the global object, and every alias of it (`const g = globalThis`,
  *   `const { fetch } = globalThis`, `const fetch = globalThis.fetch`) passes through such a reference.
@@ -29,7 +32,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, posix } from "node:path";
 import ts from "typescript";
 
-export type StaticScanKind = "forbidden-import" | "dynamic-module" | "global-fetch" | "global-network" | "global-object" | "unparseable";
+export type StaticScanKind = "forbidden-import" | "dynamic-module" | "dynamic-code" | "global-fetch" | "global-network" | "global-object" | "unparseable";
 
 export interface StaticScanFinding {
   /** The path as given to the scan (relative to the repository root for a tree scan). */
@@ -52,8 +55,9 @@ export const REQUIRED_COMPILER_API = {
     "isVariableDeclaration", "isBindingElement", "isFunctionDeclaration", "isFunctionExpression", "isArrowFunction", "isParameter", "isCatchClause",
     "isClassDeclaration", "isClassExpression", "isEnumDeclaration", "isTypeAliasDeclaration", "isInterfaceDeclaration", "isModuleDeclaration",
     "isQualifiedName", "isConstructorDeclaration", "isBlock", "isSourceFile", "isVariableStatement", "isNamedImports", "isNamespaceImport",
+    "isTypeReferenceNode", "isNewExpression",
   ],
-  syntaxKinds: ["ImportKeyword", "ExternalModuleReference"],
+  syntaxKinds: ["ImportKeyword", "ExternalModuleReference", "DeclareKeyword"],
 } as const;
 
 /** Throws, naming the missing entry, unless `api` provides everything the scan depends on. */
@@ -72,8 +76,16 @@ assertCompilerApi(ts);
 
 /** Bare module names (after dropping `node:` and any subpath) that grant a network, shell or script capability. */
 const FORBIDDEN_MODULES: ReadonlySet<string> = new Set([
-  "child_process", "vm", "http", "https", "http2", "net", "tls", "dgram", "dns", "inspector", "repl", "module", "undici", "axios",
+  "child_process", "vm", "http", "https", "http2", "net", "tls", "dgram", "dns", "inspector", "repl", "module", "worker_threads", "cluster",
+  // The usual third-party routes to the same capabilities. A denylist is never complete: a new dependency is reviewed by a human.
+  "undici", "axios", "node-fetch", "ws", "got", "ky", "superagent", "needle", "execa", "cross-spawn", "shelljs", "vm2", "isolated-vm", "node-pty",
 ]);
+/** A specifier that is not a package at all: a URL (data: carries code inline), or an absolute or node_modules path that escapes the tree. */
+const REMOTE_SCHEME = /^(?:data|http|https|file|ftp|ws|wss|blob):/i;
+const isOutOfTree = (specifier: string): boolean => REMOTE_SCHEME.test(specifier) || specifier.startsWith("/") || (specifier.startsWith(".") && specifier.split("/").includes("node_modules"));
+
+/** Loader entry points reachable as members: `process.binding(...)`, `process.dlopen`, `process.mainModule`, `process.getBuiltinModule`. */
+const LOADER_MEMBERS: ReadonlySet<string> = new Set(["getBuiltinModule", "binding", "dlopen", "mainModule", "_linkedBinding"]);
 /** The PostgreSQL driver family: allowed ONLY under the postgres state implementation. */
 const PG_MODULES: ReadonlySet<string> = new Set(["pg", "pg-pool", "pg-native"]);
 const PG_ALLOWED_DIR = "packages/security/src/state/postgres/";
@@ -146,9 +158,18 @@ function bindsName(binding: ts.BindingName, name: string): boolean {
   return false;
 }
 
+/** `declare const x` / `declare function x` describe a binding that exists elsewhere (here: the global) and emit nothing. */
+function isAmbient(statement: ts.VariableStatement | ts.FunctionDeclaration | ts.ClassDeclaration): boolean {
+  return statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) ?? false;
+}
+
 function declaresVariable(statement: ts.Statement, name: string): boolean {
-  if (!ts.isVariableStatement(statement)) return false;
+  if (!ts.isVariableStatement(statement) || isAmbient(statement)) return false;
   return statement.declarationList.declarations.some((declaration) => bindsName(declaration.name, name));
+}
+
+function declaresFunctionOrClass(statement: ts.Statement, name: string): boolean {
+  return (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && !isAmbient(statement) && statement.name?.text === name;
 }
 
 /** Does `scope` declare a local binding called `name` directly in it? */
@@ -158,9 +179,7 @@ function declaresName(scope: ts.Node, name: string): boolean {
     return scope.parameters.some((parameter) => bindsName(parameter.name, name));
   }
   if (ts.isBlock(scope)) {
-    return scope.statements.some((statement) =>
-      declaresVariable(statement, name) ||
-      ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name?.text === name));
+    return scope.statements.some((statement) => declaresVariable(statement, name) || declaresFunctionOrClass(statement, name));
   }
   if (ts.isCatchClause(scope)) {
     return scope.variableDeclaration !== undefined && bindsName(scope.variableDeclaration.name, name);
@@ -168,15 +187,15 @@ function declaresName(scope: ts.Node, name: string): boolean {
   if (ts.isSourceFile(scope)) {
     for (const statement of scope.statements) {
       if (declaresVariable(statement, name)) return true;
-      if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name?.text === name) return true;
+      if (declaresFunctionOrClass(statement, name)) return true;
       if (ts.isImportDeclaration(statement)) {
-        // TS 6: default and namespace bindings both live on the import clause.
+        // TS 6: default and namespace bindings both live on the import clause. A type-only import binds no value.
         const clause = statement.importClause;
-        if (!clause) continue;
+        if (!clause || clause.isTypeOnly) continue;
         if (clause.name?.text === name) return true;
         const named = clause.namedBindings;
         if (!named) continue;
-        if (ts.isNamedImports(named) && named.elements.some((specifier) => specifier.name.text === name)) return true;
+        if (ts.isNamedImports(named) && named.elements.some((specifier) => !specifier.isTypeOnly && specifier.name.text === name)) return true;
         if (ts.isNamespaceImport(named) && named.name.text === name) return true;
       }
     }
@@ -191,6 +210,11 @@ function resolvesLocally(node: ts.Node, name: string): boolean {
   }
   return false;
 }
+
+const stringKey = (expression: ts.Expression): string | undefined =>
+  ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression) ? expression.text : undefined;
+const memberName = (access: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | undefined =>
+  ts.isPropertyAccessExpression(access) ? access.name.text : stringKey(access.argumentExpression);
 
 /** Look through parentheses, `as`, `!`, `<T>x` and `satisfies`, which change nothing at runtime. */
 function unwrap(expression: ts.Expression): ts.Expression {
@@ -232,15 +256,24 @@ export function scanSource(file: string, text: string, repoRoot?: string): Stati
 
   const checkModule = (specifier: ts.StringLiteral | ts.NoSubstitutionTemplateLiteral): void => {
     const name = packageOf(specifier.text);
-    if (FORBIDDEN_MODULES.has(name) || (PG_MODULES.has(name) && !isPgAllowed(file, repoRoot))) report(specifier, "forbidden-import", specifier.text);
+    if (isOutOfTree(specifier.text) || FORBIDDEN_MODULES.has(name) || (PG_MODULES.has(name) && !isPgAllowed(file, repoRoot))) report(specifier, "forbidden-import", specifier.text);
   };
 
   const isLoaderCall = (node: ts.CallExpression): boolean => {
-    const callee = node.expression;
+    const callee = unwrap(node.expression);
     if (callee.kind === ts.SyntaxKind.ImportKeyword) return true;
     if (ts.isIdentifier(callee) && callee.text === "require") return true;
-    if (ts.isPropertyAccessExpression(callee)) return callee.name.text === "getBuiltinModule";
-    return ts.isElementAccessExpression(callee) && ts.isStringLiteral(callee.argumentExpression) && callee.argumentExpression.text === "getBuiltinModule";
+    return (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) && memberName(callee) === "getBuiltinModule";
+  };
+
+  /** Is `node` (a member access) the callee of a call whose first argument is a literal specifier? Then the call path already judged it. */
+  const isDirectLiteralCall = (node: ts.Node): boolean => {
+    let top: ts.Node = node;
+    while (top.parent && (ts.isParenthesizedExpression(top.parent) || ts.isNonNullExpression(top.parent) || ts.isAsExpression(top.parent))) top = top.parent;
+    const call = top.parent;
+    if (!call || !ts.isCallExpression(call) || call.expression !== top) return false;
+    const first = call.arguments[0];
+    return first !== undefined && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first));
   };
 
   const checkNode = (node: ts.Node): void => {
@@ -262,12 +295,18 @@ export function scanSource(file: string, text: string, repoRoot?: string): Stati
       else report(node, "dynamic-module");
     }
 
-    // `globalThis.fetch`, `window["fetch"]`, `(globalThis as X).WebSocket`: name what is being reached.
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const target = unwrap(node.expression);
-      const member = ts.isPropertyAccessExpression(node) ? node.name.text : ts.isStringLiteral(node.argumentExpression) ? node.argumentExpression.text : undefined;
+      const member = memberName(node);
+      const global = ts.isIdentifier(target) && !resolvesLocally(target, target.text) ? target.text : undefined;
+      // `globalThis.fetch`, `window["fetch"]`, `(globalThis as X).WebSocket`: name what is being reached.
       const kind = member === undefined ? undefined : NETWORK_GLOBALS.get(member);
-      if (kind && ts.isIdentifier(target) && GLOBAL_OBJECTS.has(target.text) && !resolvesLocally(target, target.text)) report(node, kind);
+      if (kind && global !== undefined && GLOBAL_OBJECTS.has(global)) report(node, kind);
+      // A loader reached through a member: only a direct call with a literal specifier is visible to this scan.
+      if (member === "getBuiltinModule" && !isDirectLiteralCall(node)) report(node, "dynamic-module");
+      else if (member !== undefined && member !== "getBuiltinModule" && LOADER_MEMBERS.has(member) && global === "process") report(node, "dynamic-module");
+      // `x.constructor(...)` is the Function constructor by another name.
+      if (member === "constructor" && node.parent && (ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) && unwrap(node.parent.expression) === node) report(node, "dynamic-code");
     }
 
     if (ts.isIdentifier(node)) {
@@ -279,6 +318,12 @@ export function scanSource(file: string, text: string, repoRoot?: string): Stati
       else if (GLOBAL_OBJECTS.has(name)) report(node, "global-object");
       // A bare `require` (not a call this scan already judged) can be aliased and called later: fail closed.
       else if (name === "require" && !(parent && ts.isCallExpression(parent) && parent.expression === node)) report(node, "dynamic-module");
+      else if (name === "module") report(node, "dynamic-module");
+      // `process` may only be used as `process.<member>`; an alias, a destructuring or a computed key can reach any loader.
+      else if (name === "process") {
+        const member = parent && ts.isPropertyAccessExpression(parent) && parent.expression === node ? parent : parent && ts.isElementAccessExpression(parent) && parent.expression === node && stringKey(parent.argumentExpression) !== undefined ? parent : undefined;
+        if (!member) report(node, "dynamic-module");
+      } else if ((name === "eval" || name === "Function") && !(parent && ts.isTypeReferenceNode(parent))) report(node, "dynamic-code");
     }
   };
 
