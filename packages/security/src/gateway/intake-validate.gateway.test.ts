@@ -129,8 +129,8 @@ describe("the proposal door with intake and validate wired in", () => {
 describe("the composed stages", () => {
   const record = (facts: object): PipelineRecord => ({ decisionId: "d", requestId: "r", run: {}, context: context(), readProposal: () => { throw new Error("withheld"); }, facts }) as unknown as PipelineRecord;
 
-  it("are exactly context, intake, resolve, validate and authorize: every later position is absent and so denies fail-closed", () => {
-    expect(Object.keys(composeStages(dependencies().deps)).sort()).toEqual(["authorize", "context", "intake", "resolve", "validate"]);
+  it("are exactly context, intake, resolve, validate, authorize, audit and execute: every later position is absent and so denies fail-closed", () => {
+    expect(Object.keys(composeStages(dependencies().deps)).sort()).toEqual(["audit", "authorize", "context", "execute", "intake", "resolve", "validate"]);
   });
 
   it("bind intake to the gateway's configured caps", async () => {

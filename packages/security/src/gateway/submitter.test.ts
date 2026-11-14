@@ -11,9 +11,11 @@ function harness(answer: (input: PipelineInput) => unknown = denied) {
   let next = 0;
   const idCalls: string[] = [];
   const ids: IdGenerator = { newDecisionId: () => { const id = `decision-${++next}`; idCalls.push(id); return id; }, newConfirmationId: () => { throw new Error("unused"); } };
-  const pipeline: DecisionPipeline = { run: async (input) => { inputs.push(input); return answer(input) as PolicyDecision; } };
+  const pipeline: DecisionPipeline = { evaluate: evaluating((input) => { inputs.push(input); return answer(input); }) };
   return { gateway: createProposalGateway({ pipeline, ids }), inputs, idCalls };
 }
+/** The tests below describe decisions; the door now asks the runner for an evaluation. */
+const evaluating = (decide: (input: PipelineInput) => unknown) => async (input: PipelineInput) => ({ decision: await decide(input) as PolicyDecision });
 const call: ProposalCall = { callId: "call", raw: { action: "viewProject", params: {} } };
 
 describe("proposal door", () => {
@@ -86,14 +88,14 @@ describe("proposal door", () => {
   });
 
   it("a synchronously throwing pipeline is contained", async () => {
-    const pipeline = { run: () => { throw new Error("CANARY_SECRET"); } } as unknown as DecisionPipeline;
+    const pipeline = { evaluate: () => { throw new Error("CANARY_SECRET"); } } as unknown as DecisionPipeline;
     const gateway = createProposalGateway({ pipeline, ids: { newDecisionId: () => "decision" } });
     expect(await gateway.forSession(context(), run).submit(call)).toEqual({ outcome: "DENIED", category: "try_later" });
   });
 
   it.each([undefined, null, 42, "", {}, Promise.resolve("id")])("an unusable decision id %j denies without calling the pipeline", async (id) => {
     let runs = 0;
-    const pipeline: DecisionPipeline = { run: async () => { runs++; throw new Error("unreachable"); } };
+    const pipeline: DecisionPipeline = { evaluate: async () => { runs++; throw new Error("unreachable"); } };
     const gateway = createProposalGateway({ pipeline, ids: { newDecisionId: () => id as string } });
     expect(await gateway.forSession(context(), run).submit(call)).toEqual({ outcome: "DENIED", category: "try_later" });
     expect(runs).toBe(0);
@@ -104,7 +106,7 @@ describe("proposal door", () => {
     const listener = (reason: unknown): void => { unhandled.push(reason); };
     process.on("unhandledRejection", listener);
     try {
-      const pipeline: DecisionPipeline = { run: async () => { throw new Error("unreachable"); } };
+      const pipeline: DecisionPipeline = { evaluate: async () => { throw new Error("unreachable"); } };
       const gateway = createProposalGateway({ pipeline, ids: { newDecisionId: () => Promise.reject(new Error("CANARY")) as never } });
       expect(await gateway.forSession(context(), run).submit(call)).toEqual({ outcome: "DENIED", category: "try_later" });
       for (let turn = 0; turn < 3; turn++) await new Promise((resolve) => setImmediate(resolve));
@@ -114,7 +116,7 @@ describe("proposal door", () => {
 
   it("an id generator that throws is contained and reveals nothing", async () => {
     let runs = 0;
-    const pipeline: DecisionPipeline = { run: async () => { runs++; throw new Error("unreachable"); } };
+    const pipeline: DecisionPipeline = { evaluate: async () => { runs++; throw new Error("unreachable"); } };
     const gateway = createProposalGateway({ pipeline, ids: { newDecisionId: () => { throw new Error("CANARY"); } } });
     const feedback = await gateway.forSession(context(), run).submit(call);
     expect(feedback).toEqual({ outcome: "DENIED", category: "try_later" });
@@ -135,11 +137,11 @@ describe("proposal door", () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const inputs: PipelineInput[] = [];
     let next = 0;
-    const pipeline: DecisionPipeline = { run: async (input) => {
+    const pipeline: DecisionPipeline = { evaluate: evaluating(async (input) => {
       inputs.push(input);
       if (input.decisionId === "decision-1") await gate;
       return input.decisionId === "decision-1" ? denied(input) : allowedDecision({ decisionId: input.decisionId, requestId: input.requestId, actionId: "viewProject" as never, risk: "SAFE", paramsDigest: "a".repeat(64) as never });
-    } };
+    }) };
     const gateway = createProposalGateway({ pipeline, ids: { newDecisionId: () => `decision-${++next}` } });
     const submitter = gateway.forSession(context(), run);
     const first = submitter.submit(call);
