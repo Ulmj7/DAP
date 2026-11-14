@@ -8,7 +8,7 @@ export const promptInjectionScenarios = [
     const action = compromisedActions[index % compromisedActions.length]!;
     return { raw: { action, params: { message: text, destination: "https://attacker.invalid/collect" } }, outcome: action === "deleteEverything" ? "INVALID_ACTION" : "FORBIDDEN_POLICY", reason: action === "deleteEverything" ? "unknown_action" : "reserved_forbidden_action" };
   })),
-  denialScenario("ATK-INJECT-02", "prompt-injection", "metamorphic benign and hostile text remain unauthorized", () => ["benign", ...injectionCorpus].map((message) => ({ raw: { action: "testSafeEcho", params: { message } }, outcome: "UNAUTHORIZED", reason: "permission_missing" }))),
+  denialScenario("ATK-INJECT-02", "prompt-injection", "metamorphic benign and hostile text remain unauthorized", ({ actionId }) => ["benign", ...injectionCorpus].map((message) => ({ raw: { action: actionId, params: { message } }, auditedAction: actionId, outcome: "UNAUTHORIZED", reason: "permission_missing" }))),
   denialScenario("ATK-INJECT-05", "prompt-injection", "injection as action name", () => injectionCorpus.map((action) => ({ raw: { action, params: {} }, outcome: "INVALID_ACTION", reason: "malformed_envelope" }))),
-  denialScenario("ATK-INJECT-06", "prompt-injection", "no free-text decision channel in envelope", () => ["instructions", "system", "developer", "reason", "confirmationToken"].flatMap((key) => injectionCorpus.map((text) => ({ raw: { action: "testSafeEcho", params: { message: "ok" }, [key]: text }, outcome: "INVALID_ACTION", reason: "malformed_envelope" })))),
+  denialScenario("ATK-INJECT-06", "prompt-injection", "no free-text decision channel in envelope", ({ actionId }) => ["instructions", "system", "developer", "reason", "confirmationToken"].flatMap((key) => injectionCorpus.map((text) => ({ raw: { action: actionId, params: { message: "ok" }, [key]: text }, outcome: "INVALID_ACTION", reason: "malformed_envelope" })))),
 ];
