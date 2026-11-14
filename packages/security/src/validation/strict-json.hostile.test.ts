@@ -5,7 +5,7 @@
  * already-parsed value can lie. Complements strict-json.test.ts.
  */
 import fc from "fast-check";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseStrictJson, parseStrictJsonDeferred, type StrictJsonCode } from "./strict-json.js";
 
 type Outcome = "ok" | StrictJsonCode;
@@ -20,6 +20,21 @@ const value = (input: unknown, options?: Parameters<typeof parseStrictJson>[1]):
 };
 const utf8 = (text: string): number => new TextEncoder().encode(text).length;
 const parsedAsJson = (text: string): unknown => JSON.parse(text, (_key, node: unknown) => (Object.is(node, -0) ? 0 : node));
+/**
+ * Counts calls to `target[method]` while `run` executes, and throws as soon as the count passes `limit`, so a guard that stops
+ * bounding work fails fast and cleanly instead of grinding through (or exhausting memory on) an unbounded scan.
+ */
+function boundedCalls<T extends object>(target: T, method: keyof T & string, limit: number, run: () => void): number {
+  const original = target[method] as unknown as (...args: unknown[]) => unknown;
+  let calls = 0;
+  (target as Record<string, unknown>)[method] = function counted(this: unknown, ...args: unknown[]): unknown {
+    calls += 1;
+    if (calls > limit) throw new RangeError(`${method} called more than ${limit} times: the work is not bounded`);
+    return original.apply(this, args);
+  };
+  try { run(); } finally { (target as Record<string, unknown>)[method] = original; }
+  return calls;
+}
 const nestedArrays = (depth: number): string => "[".repeat(depth) + "]".repeat(depth);
 const nestedObjects = (depth: number): string => `{"a":`.repeat(depth) + "1" + "}".repeat(depth);
 
@@ -202,20 +217,12 @@ describe("the byte cap is measured on the raw UTF-8 text", () => {
   it("rejects an enormous string immediately, before scanning a single character of it", () => {
     const huge = "x".repeat(2 ** 26);
     // Counted work, not wall-clock time: a scan of 64M characters would call charCodeAt 64M times.
-    const spy = vi.spyOn(String.prototype, "charCodeAt");
-    try {
-      expect(outcome(huge)).toBe("too_large");
-      expect(spy.mock.calls.length).toBe(0);
-    } finally { spy.mockRestore(); }
+    expect(boundedCalls(String.prototype, "charCodeAt", 0, () => { expect(outcome(huge)).toBe("too_large"); })).toBe(0);
   });
 
   it("bounds the scan of a multi-byte string that fits the length bound but not the byte cap by the cap itself", () => {
     const text = `"${"\u20ac".repeat(16_383)}"`;
-    const spy = vi.spyOn(String.prototype, "charCodeAt");
-    try {
-      expect(outcome(text)).toBe("too_large");
-      expect(spy.mock.calls.length).toBeLessThanOrEqual(text.length);
-    } finally { spy.mockRestore(); }
+    boundedCalls(String.prototype, "charCodeAt", text.length, () => { expect(outcome(text)).toBe("too_large"); });
   });
 });
 
@@ -393,18 +400,18 @@ describe("already-parsed input: it is copied once, and only what is really data 
     ["an array with a symbol property", () => Object.assign([1], { [Symbol("s")]: 2 })],
     ["an array with a hidden property", () => Object.defineProperty([1], "hidden", { value: 2, enumerable: false })],
     ["an array hole", () => [1, , 3]],
+    ["an array element that is not enumerable", () => Object.defineProperty([], "0", { value: 1, enumerable: false, configurable: true, writable: true })],
+    ["an array whose later element is not enumerable", () => Object.defineProperty([1, 2], "1", { value: 2, enumerable: false, configurable: true, writable: true })],
     ["a nested sparse array", () => ({ a: [, ,] })],
   ])("rejects %s instead of silently dropping it", (_label, make) => {
     expect(outcome(make())).toBe("not_plain");
   });
 
   it("rejects a sparse array of absurd length at the first hole, without visiting the rest", () => {
-    const spy = vi.spyOn(Object, "getOwnPropertyDescriptor");
-    try {
+    boundedCalls(Object, "getOwnPropertyDescriptor", 10, () => {
       expect(outcome(new Array(2 ** 32 - 1))).not.toBe("ok");
       expect(outcome({ a: new Array(2 ** 31) })).not.toBe("ok");
-      expect(spy.mock.calls.length).toBeLessThan(10);
-    } finally { spy.mockRestore(); }
+    });
   });
 
   it.each([
@@ -497,12 +504,10 @@ describe("already-parsed input: shared references are data, cycles are not, and 
     for (let level = 0; level < 7; level += 1) { const next: Record<string, unknown> = {}; for (let i = 0; i < 100; i += 1) next[`k${i}`] = objects; objects = next; }
     // Counted work: every element charges at least a byte, so the 16 KiB cap allows at most ~16k descriptor reads per bomb,
     // where an unbounded copy would perform 100^7 of them.
-    const spy = vi.spyOn(Object, "getOwnPropertyDescriptor");
-    try {
+    boundedCalls(Object, "getOwnPropertyDescriptor", 40_000, () => {
       expect(outcome(node)).toBe("too_large");
       expect(outcome(objects)).toBe("too_large");
-      expect(spy.mock.calls.length).toBeLessThan(40_000);
-    } finally { spy.mockRestore(); }
+    });
   });
 
   it("applies the payload cap to already-parsed data, not just to text", () => {
