@@ -442,7 +442,7 @@ describe("bypass attempts: loader indirection, dynamic code, remote specifiers, 
 
   it("allows ordinary relative, node: and package specifiers", () => {
     for (const specifier of ["./local.js", "../registry/build-registry.js", "node:crypto", "node:perf_hooks", "node:path", "zod", "@dap/contracts", "@dap/contracts/mint", "fast-check"]) {
-      expect(scanSource("packages/security/src/probe.ts", `import x from "${specifier}";\nexport const go = x;\n`), specifier).toEqual([]);
+      expect(scanSource("packages/security/src/gateway/probe.ts", `import x from "${specifier}";\nexport const go = x;\n`), specifier).toEqual([]);
     }
   });
 
@@ -456,6 +456,69 @@ describe("bypass attempts: loader indirection, dynamic code, remote specifiers, 
     ["an ambient self", "declare const self: { fetch(u: string): Promise<unknown> };\nexport const go = (u: string) => self.fetch(u);\n"],
   ])("is not fooled into treating %s as a local binding", (_label, code) => {
     expect(scanSource("packages/ai/src/probe.ts", code).length, code).toBeGreaterThan(0);
+  });
+});
+
+describe("false positives on realistic production code, and the next layer of bypasses", () => {
+  it.each([
+    ["a for-of variable named module", "export function run(modules: string[]): number {\n  let n = 0;\n  for (const module of modules) { n += module.length; }\n  return n;\n}\n"],
+    ["a for-of variable named self", "export function run(xs: number[]): number {\n  let n = 0;\n  for (const self of xs) { n += self; }\n  return n;\n}\n"],
+    ["a for loop variable named window", "export function run(): number {\n  let n = 0;\n  for (let window = 0; window < 3; window += 1) { n += window; }\n  return n;\n}\n"],
+    ["a for-in variable named global", "export function run(o: object): string[] {\n  const out: string[] = [];\n  for (const global in o) { out.push(global); }\n  return out;\n}\n"],
+    ["a switch case declaration", "export function run(x: number): number {\n  switch (x) {\n    case 1: { const window = 1; return window; }\n    default: { const self = 2; return self; }\n  }\n}\n"],
+    ["an unbraced switch case declaration", "export function run(x: number): number {\n  switch (x) {\n    case 1:\n      const window = 1;\n      return window;\n    default:\n      return 0;\n  }\n}\n"],
+    ["a getter named self", "export class A {\n  get self(): number { return 1; }\n  set value(self: number) { void self; }\n}\n"],
+    ["enum members named like globals", "export enum E { self, global, window }\nexport const e = E.self;\n"],
+    ["a label named self", "export function run(): number {\n  self: for (;;) { break self; }\n  return 1;\n}\n"],
+    ["a class declared in a block", "export function run(): number {\n  class fetch { n = 1; }\n  return new fetch().n;\n}\n"],
+    ["a namespace named like a global", "export namespace self { export const x = 1; }\nexport const y = self.x;\n"],
+    ["a declaration inside a namespace body", "export namespace Box {\n  const window = 1;\n  export const w = window;\n}\n"],
+    ["typeof fetch in a type", "export type FetchLike = typeof fetch;\n"],
+    ["a WebSocket annotation", "export const socket: WebSocket | null = null;\nexport let events: EventSource | undefined;\n"],
+    ["a qualified typeof", "export type G = typeof globalThis.fetch;\n"],
+    ["instanceof Function", "export const isFn = (v: unknown): boolean => v instanceof Function;\n"],
+    ["Function.prototype", "export const call = Function.prototype.call;\n"],
+    ["a Function type predicate", "export const isFn = (v: unknown): v is Function => typeof v === 'function';\n"],
+    ["reading constructor.name", "export const name = (o: object): string => o.constructor.name;\n"],
+    ["an overload with an implementation", "export function pick(a: string): string;\nexport function pick(a: number): number;\nexport function pick(a: string | number): string | number { return a; }\n"],
+  ])("does not flag %s", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code), code).toEqual([]);
+  });
+
+  it.each([
+    ["an aliased constructor", "export const F = (async () => {}).constructor;\n"], ["a tagged-template constructor", "export const f = (() => 1).constructor`return 1`;\n"],
+    ["a destructured constructor", "export const { constructor: F } = (() => 1);\n"], ["a computed constructor read", 'export const F = (() => 1)["constructor"];\n'],
+    ["a constructor passed on", "export const run = (use: (f: unknown) => void) => use((() => 1).constructor);\n"], ["a class extending Function", "export class Callable extends Function {}\n"],
+    ["Function aliased", "export const F = Function;\n"], ["Function passed on", "export const run = (use: (f: unknown) => void) => use(Function);\n"],
+  ])("flags dynamic code through %s", (_label, code) => {
+    expect(kinds(code), code).toContain("dynamic-code");
+  });
+
+  it.each([
+    ["a bodiless function declaration", "function fetch(u: string): Promise<unknown>;\nexport const go = (u: string) => fetch(u);\n"],
+    ["an overload list with no implementation", "function fetch(u: string): Promise<unknown>;\nfunction fetch(u: number): Promise<unknown>;\nexport const go = (u: string) => fetch(u);\n"],
+  ])("is not fooled into treating %s as a local binding", (_label, code) => {
+    expect(kinds(code), code).toContain("global-fetch");
+  });
+
+  it.each([
+    "../../../apps/server/http-client.js", "../../testkit/src/net.js", "../../../packages/security/src/x.js", "../../../../outside/x.js", "./../../actions/src/x.js",
+    "../.././../apps/x.js",
+  ])("flags the relative specifier %s, which leaves the scanned package tree", (specifier) => {
+    expect(scanSource("packages/ai/src/gateway/probe.ts", `import x from "${specifier}";\nexport const go = x;\n`).map((finding) => [finding.kind, finding.module])).toEqual([["forbidden-import", specifier]]);
+  });
+
+  it.each([
+    ["packages/ai/src/probe.ts", "./local.js"], ["packages/ai/src/gateway/probe.ts", "../planner-port.js"], ["packages/ai/src/gateway/deep/probe.ts", "../../tool-call.js"],
+    ["packages/security/src/gateway/probe.ts", "../registry/build-registry.js"], ["packages/ai/src/probe.ts", "./a/b/../c.js"],
+  ])("allows %s importing %s, which stays inside its own package", (file, specifier) => {
+    expect(scanSource(file, `import x from "${specifier}";\nexport const go = x;\n`)).toEqual([]);
+  });
+
+  it("applies the escape rule to dynamic and re-exported specifiers too", () => {
+    expect(kinds('export const load = () => import("../../../apps/x.js");\n').sort()).toEqual(["forbidden-import"]);
+    expect(kinds('export * from "../../../apps/x.js";\n')).toEqual(["forbidden-import"]);
+    expect(kinds('export const x = require("../../../apps/x.js");\n')).toEqual(["forbidden-import"]);
   });
 });
 
@@ -518,10 +581,12 @@ describe("walking the tree", () => {
   const vm = 'import { runInNewContext } from "node:vm";\nexport const run = runInNewContext;\n';
 
   it.each(["x.ts", "x.mts", "x.cts", "x.tsx", "x.js", "x.mjs", "x.cjs", "x.jsx", "x.test-support.ts", "deep/er/x.ts"])("scans %s as production code", (name) => {
-    withTree((root) => put(root, `packages/ai/src/${name}`, name.endsWith("x") ? "export const x = <div/>;\n" : vm), (root) => {
+    const jsx = /\.[tj]sx$/.test(name);
+    withTree((root) => put(root, `packages/ai/src/${name}`, jsx ? `${vm}export const view = <div>{run.name}</div>;\n` : vm), (root) => {
       const { files, findings } = scanTree(root, "packages/ai/src");
       expect(files).toEqual([`packages/ai/src/${name}`]);
-      if (name !== "x.tsx" && name !== "x.jsx") expect(findings.map((finding) => finding.kind)).toEqual(["forbidden-import"]);
+      // The forbidden import is reported, and a JSX file is neither flagged as unparseable nor skipped.
+      expect(findings.map((finding) => finding.kind)).toEqual(["forbidden-import"]);
     });
   });
 

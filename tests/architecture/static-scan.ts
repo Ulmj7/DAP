@@ -55,9 +55,11 @@ export const REQUIRED_COMPILER_API = {
     "isVariableDeclaration", "isBindingElement", "isFunctionDeclaration", "isFunctionExpression", "isArrowFunction", "isParameter", "isCatchClause",
     "isClassDeclaration", "isClassExpression", "isEnumDeclaration", "isTypeAliasDeclaration", "isInterfaceDeclaration", "isModuleDeclaration",
     "isQualifiedName", "isConstructorDeclaration", "isBlock", "isSourceFile", "isVariableStatement", "isNamedImports", "isNamespaceImport",
-    "isTypeReferenceNode", "isNewExpression",
+    "isTypeReferenceNode", "isTypeQueryNode", "isNewExpression", "isBinaryExpression", "isObjectBindingPattern", "isForStatement", "isForInStatement", "isForOfStatement",
+    "isVariableDeclarationList", "isCaseClause", "isDefaultClause", "isModuleBlock", "isGetAccessorDeclaration", "isSetAccessorDeclaration", "isEnumMember", "isLabeledStatement",
+    "isBreakStatement", "isContinueStatement",
   ],
-  syntaxKinds: ["ImportKeyword", "ExternalModuleReference", "DeclareKeyword"],
+  syntaxKinds: ["ImportKeyword", "ExternalModuleReference", "DeclareKeyword", "InstanceOfKeyword"],
 } as const;
 
 /** Throws, naming the missing entry, unless `api` provides everything the scan depends on. */
@@ -132,6 +134,9 @@ function isNamePosition(node: ts.Identifier, parent: ts.Node | undefined): boole
   if (ts.isMethodSignature(parent) && parent.name === node) return true;
   if (ts.isPropertyDeclaration(parent) && parent.name === node) return true;
   if (ts.isPropertySignature(parent) && parent.name === node) return true;
+  if ((ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent)) && parent.name === node) return true;
+  if (ts.isEnumMember(parent) && parent.name === node) return true;
+  if ((ts.isLabeledStatement(parent) || ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === node) return true;
   if (ts.isImportSpecifier(parent) && (parent.name === node || parent.propertyName === node)) return true;
   if (ts.isExportSpecifier(parent) && (parent.name === node || parent.propertyName === node)) return true;
   if (ts.isImportClause(parent) && parent.name && parent.name === node) return true;
@@ -159,47 +164,48 @@ function bindsName(binding: ts.BindingName, name: string): boolean {
 }
 
 /** `declare const x` / `declare function x` describe a binding that exists elsewhere (here: the global) and emit nothing. */
-function isAmbient(statement: ts.VariableStatement | ts.FunctionDeclaration | ts.ClassDeclaration): boolean {
+function isAmbient(statement: ts.VariableStatement | ts.FunctionDeclaration | ts.ClassDeclaration | ts.EnumDeclaration | ts.ModuleDeclaration): boolean {
   return statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) ?? false;
 }
 
-function declaresVariable(statement: ts.Statement, name: string): boolean {
-  if (!ts.isVariableStatement(statement) || isAmbient(statement)) return false;
-  return statement.declarationList.declarations.some((declaration) => bindsName(declaration.name, name));
+function declaresInList(list: ts.VariableDeclarationList, name: string): boolean {
+  return list.declarations.some((declaration) => bindsName(declaration.name, name));
 }
 
-function declaresFunctionOrClass(statement: ts.Statement, name: string): boolean {
-  return (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && !isAmbient(statement) && statement.name?.text === name;
+/** Does this statement introduce a value binding called `name` into the scope that holds it? */
+function declaresStatement(statement: ts.Statement, name: string): boolean {
+  if (ts.isVariableStatement(statement)) return !isAmbient(statement) && declaresInList(statement.declarationList, name);
+  // A function without a body is an overload signature: it emits nothing, and its implementation declares the name.
+  if (ts.isFunctionDeclaration(statement)) return !isAmbient(statement) && statement.body !== undefined && statement.name?.text === name;
+  if (ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) return !isAmbient(statement) && statement.name?.text === name;
+  if (ts.isModuleDeclaration(statement)) return !isAmbient(statement) && ts.isIdentifier(statement.name) && statement.name.text === name;
+  if (ts.isImportDeclaration(statement)) {
+    // TS 6: default and namespace bindings both live on the import clause. A type-only import binds no value.
+    const clause = statement.importClause;
+    if (!clause || clause.isTypeOnly) return false;
+    if (clause.name?.text === name) return true;
+    const named = clause.namedBindings;
+    if (!named) return false;
+    if (ts.isNamedImports(named)) return named.elements.some((specifier) => !specifier.isTypeOnly && specifier.name.text === name);
+    return ts.isNamespaceImport(named) && named.name.text === name;
+  }
+  return false;
 }
 
 /** Does `scope` declare a local binding called `name` directly in it? */
 function declaresName(scope: ts.Node, name: string): boolean {
-  if (ts.isFunctionDeclaration(scope) || ts.isFunctionExpression(scope) || ts.isArrowFunction(scope) || ts.isMethodDeclaration(scope) || ts.isConstructorDeclaration(scope)) {
+  if (ts.isFunctionDeclaration(scope) || ts.isFunctionExpression(scope) || ts.isArrowFunction(scope) || ts.isMethodDeclaration(scope) || ts.isConstructorDeclaration(scope) ||
+    ts.isGetAccessorDeclaration(scope) || ts.isSetAccessorDeclaration(scope)) {
     if ((ts.isFunctionDeclaration(scope) || ts.isFunctionExpression(scope)) && scope.name?.text === name) return true;
     return scope.parameters.some((parameter) => bindsName(parameter.name, name));
   }
-  if (ts.isBlock(scope)) {
-    return scope.statements.some((statement) => declaresVariable(statement, name) || declaresFunctionOrClass(statement, name));
+  if (ts.isBlock(scope) || ts.isSourceFile(scope) || ts.isModuleBlock(scope)) return scope.statements.some((statement) => declaresStatement(statement, name));
+  // `case 1: const x = ...` with no braces declares in the whole switch block.
+  if (ts.isCaseClause(scope) || ts.isDefaultClause(scope)) return scope.statements.some((statement) => declaresStatement(statement, name));
+  if (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) {
+    return scope.initializer !== undefined && ts.isVariableDeclarationList(scope.initializer) && declaresInList(scope.initializer, name);
   }
-  if (ts.isCatchClause(scope)) {
-    return scope.variableDeclaration !== undefined && bindsName(scope.variableDeclaration.name, name);
-  }
-  if (ts.isSourceFile(scope)) {
-    for (const statement of scope.statements) {
-      if (declaresVariable(statement, name)) return true;
-      if (declaresFunctionOrClass(statement, name)) return true;
-      if (ts.isImportDeclaration(statement)) {
-        // TS 6: default and namespace bindings both live on the import clause. A type-only import binds no value.
-        const clause = statement.importClause;
-        if (!clause || clause.isTypeOnly) continue;
-        if (clause.name?.text === name) return true;
-        const named = clause.namedBindings;
-        if (!named) continue;
-        if (ts.isNamedImports(named) && named.elements.some((specifier) => !specifier.isTypeOnly && specifier.name.text === name)) return true;
-        if (ts.isNamespaceImport(named) && named.name.text === name) return true;
-      }
-    }
-  }
+  if (ts.isCatchClause(scope)) return scope.variableDeclaration !== undefined && bindsName(scope.variableDeclaration.name, name);
   return false;
 }
 
@@ -215,6 +221,13 @@ const stringKey = (expression: ts.Expression): string | undefined =>
   ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression) ? expression.text : undefined;
 const memberName = (access: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | undefined =>
   ts.isPropertyAccessExpression(access) ? access.name.text : stringKey(access.argumentExpression);
+
+/** A name used only as a type (`x: WebSocket`, `typeof fetch`, `typeof globalThis.fetch`) emits nothing. */
+function inTypePosition(node: ts.Node): boolean {
+  let parent = node.parent;
+  while (parent && ts.isQualifiedName(parent)) parent = parent.parent;
+  return parent !== undefined && (ts.isTypeReferenceNode(parent) || ts.isTypeQueryNode(parent));
+}
 
 /** Look through parentheses, `as`, `!`, `<T>x` and `satisfies`, which change nothing at runtime. */
 function unwrap(expression: ts.Expression): ts.Expression {
@@ -254,9 +267,17 @@ export function scanSource(file: string, text: string, repoRoot?: string): Stati
     findings.push({ file, line, kind: "unparseable" });
   }
 
+  // A relative import must stay inside the package's own src tree: anything outside is code this scan never reads.
+  const packageSrc = /^(packages\/[^/]+\/src)\//.exec(relativeToRoot(file, repoRoot) ?? "")?.[1];
+  const escapesPackage = (specifier: string): boolean => {
+    if (!specifier.startsWith(".") || packageSrc === undefined) return false;
+    const resolved = posix.normalize(posix.join(posix.dirname(relativeToRoot(file, repoRoot) ?? ""), specifier));
+    return resolved !== packageSrc && !resolved.startsWith(`${packageSrc}/`);
+  };
+
   const checkModule = (specifier: ts.StringLiteral | ts.NoSubstitutionTemplateLiteral): void => {
     const name = packageOf(specifier.text);
-    if (isOutOfTree(specifier.text) || FORBIDDEN_MODULES.has(name) || (PG_MODULES.has(name) && !isPgAllowed(file, repoRoot))) report(specifier, "forbidden-import", specifier.text);
+    if (isOutOfTree(specifier.text) || escapesPackage(specifier.text) || FORBIDDEN_MODULES.has(name) || (PG_MODULES.has(name) && !isPgAllowed(file, repoRoot))) report(specifier, "forbidden-import", specifier.text);
   };
 
   const isLoaderCall = (node: ts.CallExpression): boolean => {
@@ -305,14 +326,23 @@ export function scanSource(file: string, text: string, repoRoot?: string): Stati
       // A loader reached through a member: only a direct call with a literal specifier is visible to this scan.
       if (member === "getBuiltinModule" && !isDirectLiteralCall(node)) report(node, "dynamic-module");
       else if (member !== undefined && member !== "getBuiltinModule" && LOADER_MEMBERS.has(member) && global === "process") report(node, "dynamic-module");
-      // `x.constructor(...)` is the Function constructor by another name.
-      if (member === "constructor" && node.parent && (ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) && unwrap(node.parent.expression) === node) report(node, "dynamic-code");
+      // `x.constructor` is how a function's Function constructor is reached; only `x.constructor.name` is a read that grants nothing.
+      if (member === "constructor") {
+        const reads = node.parent && ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node && node.parent.name.text === "name";
+        if (!reads) report(node, "dynamic-code");
+      }
+    }
+
+    // `const { constructor: F } = fn` reaches it without a member access.
+    if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+      const key = node.propertyName ?? node.name;
+      if ((ts.isIdentifier(key) || ts.isStringLiteral(key)) && key.text === "constructor") report(node, "dynamic-code");
     }
 
     if (ts.isIdentifier(node)) {
       const parent = node.parent;
       const name = node.text;
-      if (isNamePosition(node, parent) || resolvesLocally(node, name)) return;
+      if (isNamePosition(node, parent) || inTypePosition(node) || resolvesLocally(node, name)) return;
       const network = NETWORK_GLOBALS.get(name);
       if (network) report(node, network);
       else if (GLOBAL_OBJECTS.has(name)) report(node, "global-object");
@@ -323,7 +353,13 @@ export function scanSource(file: string, text: string, repoRoot?: string): Stati
       else if (name === "process") {
         const member = parent && ts.isPropertyAccessExpression(parent) && parent.expression === node ? parent : parent && ts.isElementAccessExpression(parent) && parent.expression === node && stringKey(parent.argumentExpression) !== undefined ? parent : undefined;
         if (!member) report(node, "dynamic-module");
-      } else if ((name === "eval" || name === "Function") && !(parent && ts.isTypeReferenceNode(parent))) report(node, "dynamic-code");
+      } else if (name === "eval") report(node, "dynamic-code");
+      // `Function` is the code-from-text constructor. Testing against it (`x instanceof Function`) or reading `Function.prototype` is not a use of it.
+      else if (name === "Function") {
+        const testsAgainst = parent && ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword;
+        const readsPrototype = parent && ts.isPropertyAccessExpression(parent) && parent.expression === node && parent.name.text === "prototype";
+        if (!testsAgainst && !readsPrototype) report(node, "dynamic-code");
+      }
     }
   };
 
