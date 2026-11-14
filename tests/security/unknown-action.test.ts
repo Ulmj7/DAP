@@ -31,6 +31,8 @@ describe("T052 unknown actions", () => {
     expect(await policy.isEnabled(ctx(TENANT_A, ALICE), testSafeEcho.id)).toBe(false);
     expect(await policy.isEnabled(ctx(TENANT_B, ALICE), testSafeEcho.id)).toBe(true);
   });
+  // 07 (FORBIDDEN allowlist startup) and 08 (property writes/no mutator) already have registry unit tests.
+  it.todo("ATK-UNKNOWN-08 submit 'register tool X' text through the real gateway: fingerprint/definitions unchanged, no executor (pending complete proposal/audit/execution path)");
   it("ATK-UNKNOWN-01 oracle accepts complete evidence and detects corrupted decisions, audit linkage and leaks", () => {
     // Synthetic observations test the oracle itself; no gateway is simulated.
     const proposed: AuditEvent = {

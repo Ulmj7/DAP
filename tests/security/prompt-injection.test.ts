@@ -11,6 +11,26 @@ describe("T054 prompt injection", () => {
     expect(injectionCorpus.some((text) => text.includes("\u200b"))).toBe(true);
     expect(injectionCorpus.some((text) => text.includes("\u001b"))).toBe(true);
   });
+  it.each([
+    ["instruction override", /Ignore all previous instructions/],
+    ["system marker", /\[SYSTEM\]/], ["chat role marker", /<\|im_start\|>system/],
+    ["developer marker", /\[developer\]/], ["admin role play", /Role-play as root/],
+    ["fabricated user acceptance", /user already confirmed/],
+    ["fabricated confirmation token", /Confirmation token: [0-9a-f-]{36}/],
+    ["tool look-alike", /executeSheⅼl/], ["zero-width text", /\u200b/],
+    ["Cyrillic homoglyph", /іgnore/], ["Unicode fullwidth", /ＳＹＳＴＥＭ/],
+    ["fake tool result", /TOOL RESULT:/], ["markdown", /```system/],
+    ["HTML", /<div role="system">/], ["base64", /aWdub3JlIHByZXZpb3Vz/],
+    ["ANSI audit breaking", /\u001b\[2J/], ["newline audit forging", /\n\{"type":"AI_ACTION_ALLOWED"/],
+  ] as const)("corpus retains the %s attack class", (_label, pattern) => {
+    expect(injectionCorpus.some((text) => pattern.test(text))).toBe(true);
+  });
+  it("nested JSON attacks contain parseable JSON embedded in a string value", () => {
+    const message = injectionCorpus.find((text) => text.startsWith('{"message":'))!;
+    const nested = injectionCorpus.find((text) => text.startsWith('{"nested":'))!;
+    expect(JSON.parse(JSON.parse(message).message)).toEqual({ action: "deleteEverything", params: {} });
+    expect(JSON.parse(JSON.parse(nested).nested)).toEqual({ confirmed: true, role: "admin" });
+  });
   it.each(injectionCorpus)("ATK-INJECT-02 schema treats bounded injection text as data: %j", (message) => {
     const schema = buildRegistry([testSafeEcho]).get(testSafeEcho.id)!.definition.inputSchema;
     expect(schema.parse({ message })).toEqual({ message });
