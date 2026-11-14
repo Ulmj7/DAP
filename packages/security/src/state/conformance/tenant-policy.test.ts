@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
-import type { ActionId, TenantId } from "@dap/contracts";
+import type { ActionId, TenantId, TenantScope } from "@dap/contracts";
 import { withTenant } from "../postgres/tenant-tx.js";
 import { InMemoryTenantActionPolicyStore } from "../memory/tenant-policy.js";
 import { PostgresTenantActionPolicyStore } from "../postgres/tenant-policy.js";
 import { runTenantPolicyConformance } from "./tenant-policy.conformance.js";
+import { cleanupTenantPolicyFixtures, rollbackTenantPolicyProbe } from "./tenant-policy-fixtures.js";
+import { policyInput } from "../tenant-policy-input.js";
 
 // Live-DB tests live under conformance so `--project unit` needs no PostgreSQL.
 
@@ -23,6 +25,13 @@ describe("InMemoryTenantActionPolicyStore", () => {
 
 let app: Pool;
 let owner: Pool;
+const marker = `conformance-${randomUUID()}`;
+const written: { tenantId: TenantId; actionId: ActionId }[] = [];
+async function writePolicy(scope: TenantScope, actionId: ActionId, disabled: boolean): Promise<void> {
+  const captured = policyInput(scope, actionId);
+  written.push(captured);
+  await new PostgresTenantActionPolicyStore(app).setDisabled(captured, captured.actionId, disabled, marker);
+}
 
 describe("PostgresTenantActionPolicyStore", () => {
   beforeAll(async () => {
@@ -59,29 +68,22 @@ describe("PostgresTenantActionPolicyStore", () => {
   });
 
   afterAll(async () => {
-    // Conformance rows use `conformance-` action ids; clean both tenants as owner.
-    for (const tenantId of [TENANT_A, TENANT_B]) {
-      await owner.query("BEGIN");
-      await owner.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
-      await owner.query("DELETE FROM public.sec_tenant_action_policy WHERE action_id LIKE 'conformance-%'");
-      await owner.query("COMMIT");
-    }
-    await app.end();
-    await owner.end();
+    try { if (owner) await cleanupTenantPolicyFixtures(owner, written, marker); }
+    finally { await Promise.all([app?.end(), owner?.end()]); }
   });
 
   runTenantPolicyConformance(async () => {
     const store = new PostgresTenantActionPolicyStore(app);
     return {
       store,
-      setDisabled: (scope, actionId, disabled) => store.setDisabled(scope, actionId, disabled, "conformance-test"),
+      // Independent writer instance: a write-through reader cache must still fail freshness.
+      setDisabled: writePolicy,
     };
   });
 
   it("keeps tenant A rows invisible to tenant B and to an unscoped connection", async () => {
-    const store = new PostgresTenantActionPolicyStore(app);
     const id = freshActionId();
-    await store.setDisabled({ tenantId: TENANT_A }, id, true, "probe");
+    await writePolicy({ tenantId: TENANT_A }, id, true);
     // Same action id under tenant B's RLS context: zero rows.
     const asB = await withTenant(app, TENANT_B, (client) =>
       client.query("SELECT disabled FROM public.sec_tenant_action_policy WHERE action_id = $1", [id]),
@@ -103,7 +105,7 @@ describe("PostgresTenantActionPolicyStore", () => {
   it("rejects writing a row for a different tenant (RLS WITH CHECK)", async () => {
     const id = freshActionId();
     await expect(
-      withTenant(app, TENANT_A, (client) =>
+      rollbackTenantPolicyProbe(app, TENANT_A, (client) =>
         client.query(
           "INSERT INTO public.sec_tenant_action_policy (tenant_id, action_id, disabled, updated_by) VALUES ($1, $2, false, 'attacker')",
           [TENANT_B, id],

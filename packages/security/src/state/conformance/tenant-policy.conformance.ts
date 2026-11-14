@@ -13,22 +13,38 @@ import type { ActionId, TenantActionPolicyStore, TenantScope, TenantId } from "@
  * same implementation under test.
  */
 
-const TENANT_A = "11111111-1111-4111-8111-111111111111" as TenantId;
-const TENANT_B = "22222222-2222-4222-8222-222222222222" as TenantId;
-const scopeA: TenantScope = { tenantId: TENANT_A };
-const scopeB: TenantScope = { tenantId: TENANT_B };
+const freshScope = (): TenantScope => Object.freeze({ tenantId: randomUUID() as TenantId });
 
 /** Fresh action id per test so no run observes another run's rows. */
-const freshActionId = (): ActionId => `conformance-${randomUUID()}` as ActionId;
+const freshActionId = (): ActionId => `conformance${randomUUID().replaceAll("-", "")}` as ActionId;
 
 export interface TenantPolicyTestContext {
   readonly store: TenantActionPolicyStore;
   readonly setDisabled: (scope: TenantScope, actionId: ActionId, disabled: boolean) => Promise<void>;
 }
 
+/** Reused verbatim by the suite and its mutation tests. */
+export async function assertTenantPolicyIsolation(ctx: TenantPolicyTestContext): Promise<void> {
+  const scopeA = freshScope(); const scopeB = freshScope(); const id = freshActionId();
+  await ctx.setDisabled(scopeA, id, true);
+  expect(await ctx.store.isDisabled(scopeA, id)).toBe(true);
+  expect(await ctx.store.isDisabled(scopeB, id)).toBe(false);
+}
+
+export async function assertTenantPolicyFreshness(ctx: TenantPolicyTestContext): Promise<void> {
+  const scope = freshScope(); const id = freshActionId();
+  const seen = [await ctx.store.isDisabled(scope, id)];
+  await ctx.setDisabled(scope, id, true);
+  seen.push(await ctx.store.isDisabled(scope, id));
+  await ctx.setDisabled(scope, id, false);
+  seen.push(await ctx.store.isDisabled(scope, id));
+  expect(seen).toEqual([false, true, false]);
+}
+
 export function runTenantPolicyConformance(makeStore: () => Promise<TenantPolicyTestContext>): void {
   describe("TenantActionPolicyStore conformance", () => {
     let ctx: TenantPolicyTestContext;
+    const scopeA = freshScope(); const scopeB = freshScope();
 
     beforeAll(async () => {
       ctx = await makeStore();
@@ -41,10 +57,7 @@ export function runTenantPolicyConformance(makeStore: () => Promise<TenantPolicy
     });
 
     it("disabled = true affects only the named tenant", async () => {
-      const id = freshActionId();
-      await ctx.setDisabled(scopeA, id, true);
-      expect(await ctx.store.isDisabled(scopeA, id)).toBe(true);
-      expect(await ctx.store.isDisabled(scopeB, id)).toBe(false);
+      await assertTenantPolicyIsolation(ctx);
     });
 
     it("keeps the same action id independent across two tenants", async () => {
@@ -62,14 +75,7 @@ export function runTenantPolicyConformance(makeStore: () => Promise<TenantPolicy
     });
 
     it("reads the value on every call (no caching): flips between consecutive reads are observed", async () => {
-      const id = freshActionId();
-      const seen: boolean[] = [];
-      seen.push(await ctx.store.isDisabled(scopeA, id));
-      await ctx.setDisabled(scopeA, id, true);
-      seen.push(await ctx.store.isDisabled(scopeA, id));
-      await ctx.setDisabled(scopeA, id, false);
-      seen.push(await ctx.store.isDisabled(scopeA, id));
-      expect(seen).toEqual([false, true, false]);
+      await assertTenantPolicyFreshness(ctx);
     });
   });
 }
