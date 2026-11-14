@@ -22,20 +22,20 @@ export function createValidateStage(registry: ActionRegistry, options: StrictJso
   const get = registry.get.bind(registry);
   const caps: StrictJsonOptions = Object.freeze({ ...options });
   return (request) => {
-    const stop = (outcome: "DENIED" | "INVALID_PARAMETERS", reason: "dependency_failure" | "invalid_parameters", extra: { attemptedAction?: string; issues?: readonly FeedbackIssue[] } = {}) =>
-      ({ kind: "stop" as const, decision: denyDecision({ decisionId: request.decisionId, requestId: request.requestId, stage: "validate", outcome, reason, ...extra } as Parameters<typeof denyDecision>[0]) });
+    const ids = { decisionId: request.decisionId, requestId: request.requestId, stage: "validate" } as const;
+    const failed = () => ({ kind: "stop" as const, decision: denyDecision({ ...ids, outcome: "DENIED", reason: "dependency_failure" }) });
     const intake = record(request.facts.intake);
     const resolved = record(request.facts.resolve);
     const context = request.context;
-    if (!intake || !resolved || !context || intake.action !== resolved.id || record(intake.params) === undefined) return stop("DENIED", "dependency_failure");
+    if (!intake || !resolved || !context || intake.action !== resolved.id || record(intake.params) === undefined) return failed();
     const entry = get(resolved.id as string);
-    if (!entry || typeof entry !== "object") return stop("DENIED", "dependency_failure");
+    if (!entry || typeof entry !== "object") return failed();
     // One read per field, before any await: the proof below and the validation see the same definition.
     const definition: unknown = Reflect.get(entry, "definition");
     const definitionHash: unknown = Reflect.get(entry, "definitionHash");
-    if (!definition || typeof definition !== "object" || Reflect.get(definition, "id") !== resolved.id || Reflect.get(definition, "version") !== resolved.version || definitionHash !== resolved.definitionHash) return stop("DENIED", "dependency_failure");
+    if (!definition || typeof definition !== "object" || Reflect.get(definition, "id") !== resolved.id || Reflect.get(definition, "version") !== resolved.version || definitionHash !== resolved.definitionHash) return failed();
     const checked = validateParams(definition as AnyActionDefinition, intake.params, { tenantId: context.tenantId, userId: context.userId }, caps);
-    if (!checked.ok) return stop("INVALID_PARAMETERS", "invalid_parameters", { attemptedAction: resolved.id as string, issues: checked.issues });
-    return { kind: "continue", data: { params: checked.normalized, paramsDigest: checked.paramsDigest, resource: checked.resource } };
+    if (!checked.ok) return { kind: "stop", decision: denyDecision({ ...ids, outcome: "INVALID_PARAMETERS", reason: "invalid_parameters", attemptedAction: resolved.id as string, issues: checked.issues }) };
+    return { kind: "continue", data: { params: checked.normalized, paramsDigest: checked.paramsDigest, resource: checked.resource === null ? null : { type: checked.resource.type, id: checked.resource.id } } };
   };
 }
