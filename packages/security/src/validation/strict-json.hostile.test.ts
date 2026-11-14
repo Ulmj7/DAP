@@ -5,7 +5,7 @@
  * already-parsed value can lie. Complements strict-json.test.ts.
  */
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseStrictJson, parseStrictJsonDeferred, type StrictJsonCode } from "./strict-json.js";
 
 type Outcome = "ok" | StrictJsonCode;
@@ -199,11 +199,23 @@ describe("the byte cap is measured on the raw UTF-8 text", () => {
     expect(outcome(`"${"\u20ac".repeat(5461)}"`)).toBe("too_large");
   });
 
-  it("rejects an enormous string immediately, before scanning it", () => {
+  it("rejects an enormous string immediately, before scanning a single character of it", () => {
     const huge = "x".repeat(2 ** 26);
-    const started = performance.now();
-    expect(outcome(huge)).toBe("too_large");
-    expect(performance.now() - started).toBeLessThan(250);
+    // Counted work, not wall-clock time: a scan of 64M characters would call charCodeAt 64M times.
+    const spy = vi.spyOn(String.prototype, "charCodeAt");
+    try {
+      expect(outcome(huge)).toBe("too_large");
+      expect(spy.mock.calls.length).toBe(0);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("bounds the scan of a multi-byte string that fits the length bound but not the byte cap by the cap itself", () => {
+    const text = `"${"\u20ac".repeat(16_383)}"`;
+    const spy = vi.spyOn(String.prototype, "charCodeAt");
+    try {
+      expect(outcome(text)).toBe("too_large");
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(text.length);
+    } finally { spy.mockRestore(); }
   });
 });
 
@@ -386,11 +398,13 @@ describe("already-parsed input: it is copied once, and only what is really data 
     expect(outcome(make())).toBe("not_plain");
   });
 
-  it("rejects a sparse array of absurd length quickly", () => {
-    const started = performance.now();
-    expect(outcome(new Array(2 ** 32 - 1))).not.toBe("ok");
-    expect(outcome({ a: new Array(2 ** 31) })).not.toBe("ok");
-    expect(performance.now() - started).toBeLessThan(500);
+  it("rejects a sparse array of absurd length at the first hole, without visiting the rest", () => {
+    const spy = vi.spyOn(Object, "getOwnPropertyDescriptor");
+    try {
+      expect(outcome(new Array(2 ** 32 - 1))).not.toBe("ok");
+      expect(outcome({ a: new Array(2 ** 31) })).not.toBe("ok");
+      expect(spy.mock.calls.length).toBeLessThan(10);
+    } finally { spy.mockRestore(); }
   });
 
   it.each([
@@ -481,10 +495,14 @@ describe("already-parsed input: shared references are data, cycles are not, and 
     for (let level = 0; level < 7; level += 1) node = Array.from({ length: 100 }, () => node);
     let objects: unknown = { v: 1 };
     for (let level = 0; level < 7; level += 1) { const next: Record<string, unknown> = {}; for (let i = 0; i < 100; i += 1) next[`k${i}`] = objects; objects = next; }
-    const started = performance.now();
-    expect(outcome(node)).toBe("too_large");
-    expect(outcome(objects)).toBe("too_large");
-    expect(performance.now() - started).toBeLessThan(1000);
+    // Counted work: every element charges at least a byte, so the 16 KiB cap allows at most ~16k descriptor reads per bomb,
+    // where an unbounded copy would perform 100^7 of them.
+    const spy = vi.spyOn(Object, "getOwnPropertyDescriptor");
+    try {
+      expect(outcome(node)).toBe("too_large");
+      expect(outcome(objects)).toBe("too_large");
+      expect(spy.mock.calls.length).toBeLessThan(40_000);
+    } finally { spy.mockRestore(); }
   });
 
   it("applies the payload cap to already-parsed data, not just to text", () => {

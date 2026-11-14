@@ -644,6 +644,28 @@ describe("fourth round: namespaces, assignment destructuring, process casts, thi
   });
 });
 
+describe("fifth round: process.process and a local require", () => {
+  it.each([
+    ["process.process.binding", 'export const b = process.process.binding("spawn_sync");\n'], ['a string-keyed process.process', 'export const b = process["process"].dlopen;\n'],
+    ["a cast process.process", 'export const b = (process as NodeJS.Process).process.mainModule;\n'], ["a bare process.process", "export const p = process.process;\n"],
+  ])("flags %s", (_label, code) => {
+    expect(kinds(code), code).toContain("dynamic-module");
+  });
+
+  it.each([
+    ["a function named require", "export function require(condition: unknown, message: string): asserts condition {\n  if (!condition) throw new Error(message);\n}\nexport const check = (x: unknown): void => require(x !== undefined, 'missing');\n"],
+    ["a parameter named require", "export const run = (require: (ok: boolean) => void, x: unknown): void => require(x !== undefined);\n"],
+    ["a const named require", "const require = (ok: boolean): boolean => ok;\nexport const run = (x: unknown): boolean => require(x !== undefined);\n"],
+  ])("does not mistake %s for a module load", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code), code).toEqual([]);
+  });
+
+  it("still flags the real require, and one with a literal forbidden specifier even next to a local helper", () => {
+    expect(kinds("export const x = (n: string) => require(n);\n")).toContain("dynamic-module");
+    expect(scanSource("packages/ai/src/probe.ts", 'export const vm = require("vm");\n').map((finding) => finding.module)).toEqual(["vm"]);
+  });
+});
+
 describe("failing loudly", () => {
   it("reports a file the compiler cannot parse instead of silently scanning half of it", () => {
     const findings = scanSource("packages/ai/src/broken.ts", 'import { exec } from "node:child_process";\nexport const = ;\nexport function (\n');

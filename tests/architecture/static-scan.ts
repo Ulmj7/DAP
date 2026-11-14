@@ -115,8 +115,8 @@ const FORBIDDEN_MODULES: ReadonlySet<string> = new Set([
 const REMOTE_SCHEME = /^(?:data|http|https|file|ftp|ws|wss|blob):/i;
 const isOutOfTree = (specifier: string): boolean => REMOTE_SCHEME.test(specifier) || specifier.startsWith("/") || (specifier.startsWith(".") && specifier.split("/").includes("node_modules"));
 
-/** Loader entry points reachable as members: `process.binding(...)`, `process.dlopen`, `process.mainModule`, `process.getBuiltinModule`. */
-const LOADER_MEMBERS: ReadonlySet<string> = new Set(["getBuiltinModule", "binding", "dlopen", "mainModule", "_linkedBinding"]);
+/** Loader entry points reachable as members: `process.binding(...)`, `process.dlopen`, `process.mainModule`, `process.getBuiltinModule`, and `process.process` (which is `process` again, one step removed). */
+const LOADER_MEMBERS: ReadonlySet<string> = new Set(["getBuiltinModule", "binding", "dlopen", "mainModule", "_linkedBinding", "process"]);
 /** The PostgreSQL driver family: allowed ONLY under the postgres state implementation. */
 const PG_MODULES: ReadonlySet<string> = new Set(["pg", "pg-pool", "pg-native"]);
 const PG_ALLOWED_DIR = "packages/security/src/state/postgres/";
@@ -358,7 +358,8 @@ export function scanSource(file: string, text: string, repoRoot?: string): Stati
   const isLoaderCall = (node: ts.CallExpression): boolean => {
     const callee = unwrap(node.expression);
     if (callee.kind === ts.SyntaxKind.ImportKeyword) return true;
-    if (ts.isIdentifier(callee) && callee.text === "require") return true;
+    // A user-defined `require` (a parameter, a helper function) is not the module loader.
+    if (ts.isIdentifier(callee) && callee.text === "require") return !resolvesLocally(callee, "require");
     return (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) && memberName(callee) === "getBuiltinModule";
   };
 
