@@ -4,7 +4,7 @@ import type { GatewayDependencies, PolicyDecision } from "@dap/contracts";
 import { mintExecutionGrant } from "@dap/contracts/mint";
 import { createPipeline, type PolicyStage } from "./pipeline.js";
 import { createPolicyGateway } from "./create-gateway.js";
-import { allowedDecision, denyDecision } from "./decision.js";
+import { allowedDecision, confirmationDecision, denyDecision } from "./decision.js";
 import { context, dependencies, input, stageMap } from "./fixtures.test-support.js";
 
 afterEach(() => { vi.useRealTimers(); });
@@ -109,6 +109,47 @@ describe("pipeline fail-closed boundary (T058)", () => {
     const { deps, otherId } = (() => { const made = dependencies(); return { deps: made.deps, otherId: made.otherId }; })();
     Object.assign(deps, { globalAllowlist: new Set([otherId]) });
     expect(() => createPolicyGateway(deps)).toThrow();
+  });
+
+  it("a stage cannot report a denial attributed to a different stage", async () => {
+    let executions = 0;
+    const stages = stageMap(() => { executions++; throw new Error("unreachable"); });
+    stages.authorize = (request) => ({ kind: "stop", decision: denyDecision({ decisionId: request.decisionId, requestId: request.requestId, outcome: "UNAUTHORIZED", reason: "permission_missing", stage: "intake" }) });
+    expect(await createPipeline(stages).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "authorize" });
+    expect(executions).toBe(0);
+  });
+
+  it("a denial can never carry the success reason", async () => {
+    let executions = 0;
+    const stages = stageMap(() => { executions++; throw new Error("unreachable"); });
+    stages.authorize = (request) => ({ kind: "stop", decision: denyDecision({ decisionId: request.decisionId, requestId: request.requestId, reason: "allowed", stage: "authorize" }) });
+    expect(await createPipeline(stages).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "authorize" });
+    expect(executions).toBe(0);
+  });
+
+  it.each(["decisionId", "requestId"] as const)("a stage cannot answer for a different %s", async (field) => {
+    let executions = 0;
+    const stages = stageMap(() => { executions++; throw new Error("unreachable"); });
+    stages.authorize = (request) => ({ kind: "stop", decision: denyDecision({ decisionId: request.decisionId, requestId: request.requestId, reason: "permission_missing", stage: "authorize", outcome: "UNAUTHORIZED", ...{ [field]: "someone-else" } }) });
+    expect(await createPipeline(stages).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "authorize" });
+    expect(executions).toBe(0);
+  });
+
+  it.each([["ALLOWED", "risk"], ["REQUIRES_CONFIRMATION", "authorize"], ["REQUIRES_CONFIRMATION", "execute"]] as const)("%s from the %s stage is premature", async (outcome, stage) => {
+    let executions = 0;
+    const stages = stageMap(() => { executions++; throw new Error("unreachable"); });
+    const base = { decisionId: "decision-request", requestId: "request" as never, actionId: "viewProject" as never, risk: "SAFE" as const };
+    stages[stage] = () => ({ kind: "stop", decision: outcome === "ALLOWED" ? allowedDecision({ ...base, paramsDigest: "a".repeat(64) as never }) : confirmationDecision({ ...base, confirmationId: "00000000-0000-4000-8000-000000000009" as never }) });
+    expect(await createPipeline(stages).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage });
+    expect(executions).toBe(0);
+  });
+
+  it.each(["risk", "confirmation"] as const)("REQUIRES_CONFIRMATION from %s is accepted and stops the pipeline", async (stage) => {
+    let executions = 0;
+    const stages = stageMap(() => { executions++; throw new Error("unreachable"); });
+    stages[stage] = () => ({ kind: "stop", decision: confirmationDecision({ decisionId: "decision-request", requestId: "request" as never, actionId: "viewProject" as never, risk: "HIGH", confirmationId: "00000000-0000-4000-8000-000000000009" as never }) });
+    expect(await createPipeline(stages).run(input())).toMatchObject({ outcome: "REQUIRES_CONFIRMATION" });
+    expect(executions).toBe(0);
   });
 
   it("preserves the first denial and never runs a later stage", async () => {
