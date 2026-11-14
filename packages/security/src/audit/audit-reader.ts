@@ -46,16 +46,16 @@ export function createAuditReader(source: AuditEventSource): AuditReader {
       const tenantId = ctx.tenantId;
       let candidates: readonly AuditEvent[];
       try { candidates = await Reflect.apply(listForTenant, source, [tenantId]) as readonly AuditEvent[]; } catch { throw new TypeError("Audit source unavailable"); }
-      if (!Array.isArray(candidates)) throw new TypeError("Audit source unavailable");
       const types = query.types === undefined ? undefined : new Set<string>(query.types);
       let matching: { readonly event: AuditEvent }[];
       try {
         matching = candidates
-        .map((event, order) => ({ event, order, at: Date.parse(event.occurredAt) }))
+        .map((event) => ({ event, at: Date.parse(event.occurredAt) }))
         .filter(({ event, at }) => event.tenantId === tenantId && Number.isFinite(at)
           && (query.requestId === undefined || event.requestId === query.requestId) && (query.userId === undefined || event.userId === query.userId)
           && (types === undefined || types.has(event.type)) && (from === undefined || at >= from) && (to === undefined || at <= to))
-        .sort((a, b) => a.at - b.at || a.order - b.order);
+        // Array.prototype.sort is stable: events with the same instant keep the order they were committed in.
+        .sort((a, b) => a.at - b.at);
       } catch { throw new TypeError("Audit source unavailable"); }
       return Object.freeze(matching.slice(0, query.limit).map(({ event }) => event));
     }),

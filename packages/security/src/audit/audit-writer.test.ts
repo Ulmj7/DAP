@@ -233,6 +233,14 @@ describe("retries never duplicate rows", () => {
 
 describe("the proposal budget bounds the append", () => {
   const budgetOf = (timer: ManualTimer, total: number) => ({ remainingMs: () => total - timer.time });
+  it("a budget that cannot be read fails closed instead of throwing", async () => {
+    let calls = 0;
+    const budget = { remainingMs: () => { throw new Error("CANARY"); } };
+    const result = await createAuditWriter({ sink: sinkOf(() => { calls++; return Promise.resolve(); }) }).recordAllowedDurably(allowed(), budget);
+    expect(result).toEqual({ ok: false, reason: "audit_unavailable" });
+    expect(calls).toBe(0);
+  });
+
   it.each([0, 0.5, -1, Number.NaN])("a remaining budget of %s fails without calling the sink", async (left) => {
     let calls = 0;
     const result = await createAuditWriter({ sink: sinkOf(() => { calls++; return Promise.resolve(); }) }).recordAllowedDurably(allowed(), { remainingMs: () => left });

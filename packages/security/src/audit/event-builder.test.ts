@@ -114,6 +114,12 @@ describe("the action: registered, or the one sanitized attempted name", () => {
     for (const bad of [undefined, null, 5, {}, ["x"]]) expect(() => nameOf(bad)).toThrow(new TypeError("Invalid audit event: action"));
   });
 
+  it("bounds an already-printable name at exactly 64, and keeps a printable name with spaces and backslashes as it is", () => {
+    expect(nameOf("x".repeat(64))).toBe("x".repeat(64));
+    expect(nameOf("x".repeat(65))).toBe("x".repeat(64));
+    expect(nameOf("EXECUTE \\u{a}rm")).toBe("EXECUTE \\u{a}rm");
+    expect(nameOf(" \\u{a}")).toBe(" \\u{a}");
+  });
   it("escapes control characters and look-alikes, and bounds the name at 64", () => {
     expect(nameOf("EXECUTE_SHELL\n{\"outcome\":\"ALLOWED\"}")).toBe("EXECUTE_SHELL\\u{a}{\"outcome\":\"ALLOWED\"}");
     expect(nameOf("vіew")).toBe("v\\u{456}ew");
@@ -203,7 +209,33 @@ describe("each type has a fixed shape", () => {
   });
 });
 
+describe("limits of identifiers and states", () => {
+  it("refuses a paragraph separator and the empty string in an identifier, and accepts 256 characters", () => {
+    throwsField(base({ requestId: `a${String.fromCharCode(0x2029)}b` }), "requestId");
+    throwsField(base({ requestId: "" }), "requestId");
+    expect(buildAuditEvent(base({ requestId: "r".repeat(256) })).requestId).toHaveLength(256);
+  });
+  it("refuses an unknown confirmation state wherever a confirmation is optional", () => {
+    throwsField({ ...VALID.AI_ACTION_DENIED, reason: "confirmation_expired", confirmation: { id: CONFIRMATION, state: "limbo" } } as never, "confirmation");
+    throwsField({ ...VALID.AI_ACTION_ALLOWED, confirmation: { id: CONFIRMATION, state: "limbo" } } as never, "confirmation");
+  });
+  it("refuses a confirmation on a rate-limit event", () => {
+    throwsField({ ...VALID.AI_RATE_LIMITED, confirmation: { id: CONFIRMATION, state: "invalidated" } }, "confirmation");
+  });
+  it("refuses an outcome or reason that is missing, or that is not a known code, for every type that carries one", () => {
+    for (const type of AUDIT_EVENT_TYPES.filter((t) => t !== "AI_ACTION_PROPOSED")) {
+      throwsField({ ...VALID[type], outcome: undefined } as never, "outcome");
+      throwsField({ ...VALID[type], outcome: "NOPE" as never }, "outcome");
+      throwsField({ ...VALID[type], reason: undefined } as never, "reason");
+      throwsField({ ...VALID[type], reason: "nope" as never }, "reason");
+    }
+  });
+});
+
 describe("the resource", () => {
+  it("scrubs the type as well as the id", () => {
+    expect(buildAuditEvent({ ...VALID.AI_ACTION_ALLOWED, resource: { type: "sk-abcdefghijklmnopqrstuvwx", id: "p1" } }).resource).toEqual({ type: "[redacted]", id: "p1" });
+  });
   it("is recorded scrubbed, and bounded identifiers only", () => {
     expect(buildAuditEvent({ ...VALID.AI_ACTION_ALLOWED, resource: { type: "project", id: "sk-abcdefghijklmnopqrstuvwx" } }).resource).toEqual({ type: "project", id: "[redacted]" });
     for (const bad of [{ type: "", id: "x" }, { type: "t", id: "" }, { type: "t", id: "a\nb" }, { type: 1, id: "x" }, { type: "t", id: "x".repeat(257) }]) throwsField({ ...VALID.AI_ACTION_ALLOWED, resource: bad as never }, "resource");

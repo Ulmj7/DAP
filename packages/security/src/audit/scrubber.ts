@@ -25,16 +25,17 @@ export const SCRUB_LIMITS = Object.freeze({ maxDepth: 6, maxString: 1024, maxEnt
 const RE_JWT_EYJ = /eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g;
 // Any other header (leading whitespace, another key order) is recognised by decoding the first segment.
 const RE_JWT_LIKE = /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{4,})\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?![A-Za-z0-9_-])/g;
-const RE_SK_KEY = /sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{16,}/g;
+const RE_SK_KEY = /sk-[A-Za-z0-9_-]{16,}/g;
 const RE_AKIA_KEY = /AKIA[A-Z0-9]{16}/g;
 const RE_HEX_RUN = /[0-9a-fA-F]{32,}/g;
 // Zero-width and soft-hyphen characters, byte-order mark, and bidi/word-joiner controls: invisible, so a secret can hide in them.
-const RE_INVISIBLE = /[­​-‏‪-‮⁠-⁤﻿]/gu;
+const RE_INVISIBLE = /[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/gu;
 
 function isJwtHeader(segment: string): boolean {
   try {
-    const header: unknown = JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
-    return header !== null && typeof header === "object" && !Array.isArray(header) && (typeof Reflect.get(header, "alg") === "string" || Reflect.get(header, "typ") === "JWT");
+    // Anything that is not an object (a number, null, a string) makes Reflect.get throw: not a JWT header.
+    const header = JSON.parse(Buffer.from(segment, "base64url").toString("utf8")) as object;
+    return typeof Reflect.get(header, "alg") === "string" || Reflect.get(header, "typ") === "JWT";
   } catch { return false; }
 }
 
@@ -92,5 +93,5 @@ export function scrubJson(value: unknown): JsonValue {
       return Object.freeze(out);
     } catch { return UNSERIALIZABLE; } finally { active.delete(node); }
   };
-  try { return walk(value, 0); } catch { return UNSERIALIZABLE; }
+  return walk(value, 0);
 }

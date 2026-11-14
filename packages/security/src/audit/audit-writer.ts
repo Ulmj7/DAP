@@ -64,6 +64,7 @@ export function createAuditWriter(
       if (!isBuiltAuditEvent(event) || !KINDS[kind].includes(event.type)) return false;
       for (let attempt = 0; attempt < attempts; attempt++) {
         const left = budget === undefined ? Number.POSITIVE_INFINITY : Math.floor(budget.remainingMs());
+        // (A spent budget would also fail inside wrapHook, whose timeout must be at least 1; the check just avoids the call.)
         if (!(left >= 1)) return false;
         const committed = await wrapHook((candidate: AuditEvent) => Reflect.apply(append, sink, [candidate]), "void", { hookTimeoutMs: Math.min(hookTimeoutMs, left), ...(timer === undefined ? {} : { timer }) })(event);
         if (committed.ok) return true;

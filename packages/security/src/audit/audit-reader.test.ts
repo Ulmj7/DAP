@@ -73,6 +73,20 @@ describe("the query", () => {
     await expect(refusal).rejects.toThrow(new TypeError("Invalid audit query"));
   });
 
+  it("pins the maximum limit at 500: 500 is accepted, 501 refused", async () => {
+    expect(MAX_AUDIT_QUERY_LIMIT).toBe(500);
+    const { reader } = await world([event()]);
+    expect(await reader.query(reviewerA(), limit({ limit: 500 }))).toHaveLength(1);
+    await expect(reader.query(reviewerA(), limit({ limit: 501 }))).rejects.toThrow("Invalid audit query");
+  });
+
+  it("bounds the text filters at 256 characters", async () => {
+    const { reader } = await world([event()]);
+    expect(await reader.query(reviewerA(), limit({ requestId: "r".repeat(256) as never }))).toEqual([]);
+    await expect(reader.query(reviewerA(), limit({ requestId: "r".repeat(257) as never }))).rejects.toThrow("Invalid audit query");
+    await expect(reader.query(reviewerA(), limit({ userId: "u".repeat(257) as never }))).rejects.toThrow("Invalid audit query");
+  });
+
   it("accepts the largest limit and every event type", async () => {
     const { reader } = await world([event()]);
     expect(await reader.query(reviewerA(), limit({ limit: MAX_AUDIT_QUERY_LIMIT, types: AUDIT_EVENT_TYPES }))).toHaveLength(1);
