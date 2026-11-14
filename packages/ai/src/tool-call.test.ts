@@ -134,11 +134,14 @@ describe("@dap/ai export surface", () => {
 });
 
 describe("@dap/ai depends on @dap/contracts only, and takes nothing but the planner seam from it", () => {
-  const sources = readdirSync(join(PACKAGE_ROOT, "src")).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts")).map((name) => join(PACKAGE_ROOT, "src", name));
+  // Recursive and every JS/TS flavour: a file in a subdirectory or a .mts must not escape the import allow-list.
+  const sources = (readdirSync(join(PACKAGE_ROOT, "src"), { recursive: true }) as string[])
+    .filter((name) => /\.(?:ts|mts|cts|tsx|js|mjs|cjs|jsx)$/.test(name) && !/\.test\.[a-z]+$/.test(name))
+    .map((name) => join(PACKAGE_ROOT, "src", name));
   const ALLOWED_CONTRACT_NAMES = new Set(["PlannerFeedback", "ProposalCall"]);
 
   it("finds the production sources it is about to check", () => {
-    expect(sources.map((file) => file.split("/").at(-1)).sort()).toEqual(["index.ts", "planner-port.ts", "tool-call.ts"]);
+    expect(sources.map((file) => file.slice(PACKAGE_ROOT.length)).sort()).toEqual(["src/index.ts", "src/planner-port.ts", "src/tool-call.ts"]);
   });
 
   it("imports only relative modules and @dap/contracts, and only the two allowlisted contract types", () => {
