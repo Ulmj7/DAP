@@ -1,1 +1,13 @@
-export {};
+/**
+ * @dap/testkit — package barrel.
+ *
+ * Test infrastructure for attacking the Policy Gateway (FR-045..FR-049). Production code
+ * never imports this package (enforced by dependency-cruiser).
+ */
+export * from "./clock.js";
+export * from "./ids.js";
+export * from "./recording-executor.js";
+export * from "./leak-scanner.js";
+export * from "./host-fakes.js";
+export * from "./fault-injection.js";
+export * from "./audit-capture.js";
