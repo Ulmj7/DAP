@@ -137,7 +137,7 @@ function captureResource(answer: unknown): ResourceRef | null {
  * produces something that is not JSON data), never for a hostile input: those are `{ ok: false, issues }`.
  */
 export function validateParams(
-  definition: AnyActionDefinition,
+  definition: Pick<AnyActionDefinition, "id" | "version" | "inputSchema" | "resource">,
   params: unknown,
   scope: ParamsScope,
   options: StrictJsonOptions = {},
