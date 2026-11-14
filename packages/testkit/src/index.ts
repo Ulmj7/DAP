@@ -14,3 +14,4 @@ export * from "./audit-capture.js";
 export * from "./test-capabilities/index.js";
 export * from "./world.js";
 export * from "./scenario-runner.js";
+export * from "./attacks/unknown-action.js";
