@@ -105,14 +105,25 @@ export const testMediumDraft: ActionDefinition<TestMediumDraftParams> = defineAc
   risk: "MEDIUM",
   requiredPermission: "perm.test.medium-draft" as PermissionId,
   allowedPages: "any",
-  confirmation: {
-    kind: "not-required",
-    justification: "Draft revisions are reversible while the document is open and are not published.",
-  },
+  confirmation: { kind: "required" },
   changesState: true,
   audit: { params: [{ path: "/documentId", mode: "plain" }, { path: "/draft", mode: "masked" }] },
   resource: (params): ResourceRef | null => ({ type: "document", id: params.documentId }),
+  describeConsequence: ({ resource }) => ({
+    title: resource ? `Save a draft of "${resource.displayName}"` : "Save a document draft",
+    effects: ["A draft revision is stored for review."],
+    irreversible: false,
+  }),
   executorId: "ex.test-medium-draft" as ExecutorId,
+});
+
+/** Separate R5 opt-out fixture; the per-risk catalogue retains the confirming default. */
+export const testMediumOptOut: ActionDefinition<TestMediumDraftParams> = defineAction({
+  ...testMediumDraft,
+  id: "testMediumOptOut" as ActionId,
+  description: "Stores a reversible, private document draft without confirmation.",
+  confirmation: { kind: "not-required", justification: "Private drafts are reversible and never published." },
+  executorId: "ex.test-medium-opt-out" as ExecutorId,
 });
 
 /** HIGH: publishes a document to a bounded audience. Confirmation required. */
