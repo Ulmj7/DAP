@@ -27,7 +27,7 @@ describe("T052 unknown actions", () => {
     const tenantPolicy = new InMemoryTenantActionPolicyStore();
     const policy = createEnablementPolicy({ registry, tenantPolicy, globalAllowlist: new Set([testSafeEcho.id]) });
     expect(await policy.isEnabled(ctx(TENANT_A, ALICE), testSafeEcho.id)).toBe(true);
-    await tenantPolicy.setDisabled(ctx(TENANT_A, ALICE), testSafeEcho.id, true);
+    await tenantPolicy.setDisabled(ctx(TENANT_A, ALICE), testSafeEcho.id, true, "operator");
     expect(await policy.isEnabled(ctx(TENANT_A, ALICE), testSafeEcho.id)).toBe(false);
     expect(await policy.isEnabled(ctx(TENANT_B, ALICE), testSafeEcho.id)).toBe(true);
   });
