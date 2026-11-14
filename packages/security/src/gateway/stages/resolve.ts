@@ -1,6 +1,6 @@
 import { RISK_LEVELS } from "@dap/contracts";
 import type { ActionId, ActionRegistry, RiskLevel, TenantActionPolicyStore } from "@dap/contracts";
-import { createEnablementPolicy } from "../../registry/enablement.js";
+import { assertAllowlistValid } from "../../registry/enablement.js";
 import { denyDecision } from "../decision.js";
 import { wrapHook, type HookOptions } from "../hook-wrapper.js";
 import type { PolicyStage } from "../pipeline.js";
@@ -26,8 +26,8 @@ export function createResolveStage({ registry, globalAllowlist, tenantPolicy }: 
   readonly tenantPolicy: TenantActionPolicyStore;
 }, options: HookOptions = {}): PolicyStage {
   const allowlist = new Set(globalAllowlist);
-  // Reuse R7 / unknown-id startup validation; live policy reads below retain their denial reason.
-  createEnablementPolicy({ registry, globalAllowlist: allowlist, tenantPolicy });
+  // Same R1/R7 startup validation as the enablement policy; the live reads below keep their richer denial reasons.
+  assertAllowlistValid(registry, allowlist);
   const get = registry.get.bind(registry);
   const reserved = registry.isReservedForbidden.bind(registry);
   const disabled = wrapHook(tenantPolicy.isDisabled.bind(tenantPolicy), "tenantPolicy", options);

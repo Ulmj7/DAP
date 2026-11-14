@@ -122,6 +122,13 @@ describe("exact resolution and live default-deny enablement", () => {
     expect(facts).toEqual({ id: definition.id, version: 1, risk: "SAFE", definitionHash: deps.registry.get(definition.id)!.definitionHash });
   });
 
+  it("refuses at construction an allowlist naming an unknown action, like the enablement policy", () => {
+    const { deps } = dependencies();
+    const unknown = new Set(["noSuchAction" as ActionId]);
+    expect(() => createResolveStage({ registry: deps.registry, globalAllowlist: unknown, tenantPolicy: { isDisabled: async () => false } })).toThrow(/unknown action id/);
+    expect(() => createEnablementPolicy({ registry: deps.registry, globalAllowlist: unknown, tenantPolicy: { isDisabled: async () => false } })).toThrow(/unknown action id/);
+  });
+
   it("snapshots the global allowlist at construction", async () => {
     const { deps, definition } = dependencies();
     const allowlist = new Set([definition.id]);
