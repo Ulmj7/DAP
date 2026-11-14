@@ -40,6 +40,16 @@ describe("immutable startup registry", () => {
     expect(registry.isReservedForbidden("viewProject")).toBe(false);
   });
 
+  it.each([
+    "executeShell", "runShell", "executeJavaScript", "queryDatabase", "fetchAnyUrl", "clickAnySelector",
+    "typeAnySelector", "getPassword", "disableAudit", "changeOwnPermissions",
+  ])("classifies catalogue power %s and separator variants as forbidden", (name) => {
+    const registry = buildRegistry([]);
+    expect(registry.isReservedForbidden(name)).toBe(true);
+    expect(registry.isReservedForbidden([...name.toUpperCase()].join("_-"))).toBe(true);
+    expect(registry.get(name)).toBeUndefined();
+  });
+
   it("snapshots the input array, definitions and all policy objects without freezing inputs", () => {
     const pages = ["projects" as PageId];
     const confirmation = { kind: "not-required" as const, justification: "Read only" };
@@ -130,6 +140,91 @@ describe("immutable startup registry", () => {
     expect(reads).toBe(1);
   });
 
+  it.each([
+    ["refine", z.string().max(20).refine((value) => value === "allowed")],
+    ["superRefine", z.string().max(20).superRefine((value, context) => {
+      if (value !== "allowed") context.addIssue({ code: "custom", message: "not allowed" });
+    })],
+    ["check function", z.string().max(20).check((context) => {
+      if (context.value !== "allowed") context.issues.push({ code: "custom", message: "not allowed", input: context.value });
+    })],
+    ["regular expression", z.string().max(20).regex(/^allowed$/g)],
+  ])("preserves %s validation in its frozen schema", (_name, field) => {
+    const captured = buildRegistry([definition({ inputSchema: z.strictObject({ name: field }) })]).get("viewProject")!.definition.inputSchema;
+    expect(captured.safeParse({ name: "allowed" }).success).toBe(true);
+    expect(captured.safeParse({ name: "denied" }).success).toBe(false);
+    expect(captured.safeParse({ name: "allowed" }).success).toBe(true);
+    expect(Object.isFrozen(captured.def)).toBe(true);
+  });
+
+  it("captures a lazy resolver once and preserves recursive schemas", () => {
+    let resolutions = 0;
+    const child = z.strictObject({ name: z.string().max(10) });
+    const lazy = z.lazy(() => { resolutions += 1; return resolutions === 1 ? child : z.object({}); });
+    const captured = buildRegistry([definition({ inputSchema: z.strictObject({ child: lazy }) })]).get("viewProject")!.definition.inputSchema;
+    expect(captured.safeParse({ child: { name: "ok" } }).success).toBe(true);
+    expect(captured.safeParse({ child: { name: "ok", extra: true } }).success).toBe(false);
+    expect(resolutions).toBe(1);
+
+    const recursive = z.strictObject({
+      name: z.string().max(10),
+      get children() { return z.array(recursive).max(2).optional(); },
+    });
+    const recursiveCaptured = buildRegistry([definition({ inputSchema: recursive })]).get("viewProject")!.definition.inputSchema;
+    expect(recursiveCaptured.safeParse({ name: "root", children: [{ name: "leaf" }] }).success).toBe(true);
+    expect(recursiveCaptured.safeParse({ name: "root", children: [{ name: "leaf", extra: true }] }).success).toBe(false);
+  });
+
+  it("does not hand out mutable schemas through schema authoring methods", () => {
+    const captured = buildRegistry([definition()]).get("viewProject")!.definition.inputSchema;
+    for (const schema of [captured.brand(), captured.optional(), captured.clone()]) {
+      expect(Object.isFrozen(schema)).toBe(true);
+      expect(Object.isFrozen(schema.def)).toBe(true);
+      expect(Reflect.set(schema.def, "type", "any")).toBe(false);
+    }
+    expect(captured.safeParse({ projectId: "id", name: "ok", extra: true }).success).toBe(false);
+  });
+
+  it("does not expose its working parser through callbacks or raw Zod issue instances", () => {
+    const captured = buildRegistry([definition()]).get("viewProject")!.definition.inputSchema;
+    const bypass = (schema: z.core.$ZodType): void => {
+      Reflect.set(schema._zod, "run", (payload: z.core.ParsePayload) => payload);
+    };
+    captured.apply((schema) => { bypass(schema); });
+    expect(captured.safeParse({ extra: true }).success).toBe(false);
+    captured.safeParse({ extra: true }, { error: (issue) => { if (issue.inst instanceof z.core.$ZodType) bypass(issue.inst); } });
+    expect(captured.safeParse({ extra: true }).success).toBe(false);
+    const payload = captured._zod.run({ value: { extra: true }, issues: [] }, {});
+    expect(payload).not.toBeInstanceOf(Promise);
+    if (!(payload instanceof Promise)) {
+      for (const issue of payload.issues) if (issue.inst instanceof z.core.$ZodType) bypass(issue.inst);
+    }
+    expect(captured.safeParse({ extra: true }).success).toBe(false);
+  });
+
+  it("captures schema annotations and hashes them without retaining live metadata", () => {
+    const metadata = { description: "Original description" };
+    const inputSchema = z.strictObject({ name: z.string().max(10).describe("A name") }).meta(metadata);
+    const registered = buildRegistry([definition({ inputSchema })]).get("viewProject")!;
+    const captured = registered.definition.inputSchema;
+    metadata.description = "Mutated description";
+    expect(captured.description).toBe("Original description");
+    expect(z.toJSONSchema(captured, { io: "input" }).properties?.name).toHaveProperty("description", "A name");
+    const changed = buildRegistry([definition({ inputSchema: inputSchema.describe("Other description") })]).get("viewProject")!;
+    expect(changed.definitionHash).not.toBe(registered.definitionHash);
+  });
+
+  it("does not allow RegExp.compile to mutate a registered validator", () => {
+    const inputSchema = z.strictObject({ name: z.string().max(20).regex(/^allowed$/) });
+    const captured = buildRegistry([definition({ inputSchema })]).get("viewProject")!.definition.inputSchema as typeof inputSchema;
+    const check = captured.def.shape.name.def.checks![1]!;
+    const pattern = Reflect.get(check._zod.def, "pattern") as RegExp;
+    expect(captured.safeParse({ name: "denied" }).success).toBe(false);
+    expect(() => pattern.compile(".*")).toThrow(TypeError);
+    expect(captured.safeParse({ name: "denied" }).success).toBe(false);
+    expect(captured.safeParse({ name: "allowed" }).success).toBe(true);
+  });
+
   it("fingerprint is independent of definition order and changes with content", () => {
     const first = definition();
     const second = definition({ id: "viewOther" as ActionId });
@@ -147,6 +242,7 @@ describe("immutable startup registry", () => {
     ["confirmation", { confirmation: { kind: "required" as const } }],
     ["changesState", { changesState: true }],
     ["inputSchemaJson", { inputSchema: z.strictObject({ projectId: z.string().max(63) }) }],
+    ["inputSchemaJson annotations", { inputSchema: definition().inputSchema.describe("A schema description") }],
   ])("definitionHash binds the %s field", (_field, changes) => {
     const before = definition();
     const after = { ...before, ...changes };
@@ -168,5 +264,24 @@ describe("immutable startup registry", () => {
     for (const id of ["__proto__", "constructor", "toString", "hasOwnProperty", "ViewProjectExecutor", "viewProjectExecutor "]) {
       expect(table.executorFor(id as ExecutorId)).toBeUndefined();
     }
+  });
+
+  it("reads executor getters once and retains the defineExecutor grant guard", async () => {
+    const original = executor();
+    const counts = new Map<PropertyKey, number>();
+    const hostile = new Proxy(original, {
+      get(target, key, receiver) {
+        const count = (counts.get(key) ?? 0) + 1;
+        counts.set(key, count);
+        if (count > 1) throw new Error("repeat");
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const table = bindExecutors(buildRegistry([definition()]), [hostile]);
+    const captured = table.executorFor("viewProjectExecutor" as ExecutorId)!;
+    expect(captured.id).toBe("viewProjectExecutor");
+    await expect(captured.execute(undefined as unknown as Parameters<typeof captured.execute>[0])).rejects.toThrow();
+    expect(counts.get("id")).toBe(1);
+    expect(counts.get("execute")).toBe(1);
   });
 });

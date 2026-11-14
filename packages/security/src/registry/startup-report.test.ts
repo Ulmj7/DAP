@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { ActionId, RegistrationIssue } from "@dap/contracts";
+import type { ActionId, ExecutorId, RegistrationIssue } from "@dap/contracts";
 import { z } from "zod";
 import { buildRegistry } from "./build-registry.js";
+import { bindExecutors } from "./bind-executors.js";
 import { RegistrationError } from "./registration-error.js";
-import { definition, malformed } from "./fixtures.test-support.js";
+import { definition, executor, malformed } from "./fixtures.test-support.js";
 
 describe("actionable startup failure report", () => {
   it("collects every independent issue across and within definitions", () => {
@@ -77,5 +78,21 @@ describe("actionable startup failure report", () => {
     expect(error.issues).toEqual([{ actionId: "viewProject", rule: "R1", detail: "Invalid version" }]);
     expect(Object.isFrozen(error.issues)).toBe(true);
     expect(Object.isFrozen(error.issues[0])).toBe(true);
+  });
+
+  it("collects all executor binding issues across the registry", () => {
+    const registry = buildRegistry([
+      definition(),
+      definition({ id: "forbiddenAction" as ActionId, risk: "FORBIDDEN", executorId: "forbiddenExecutor" as ExecutorId }),
+    ]);
+    let caught: unknown;
+    try { bindExecutors(registry, [executor("unused"), executor("forbiddenExecutor"), executor("unused")]); } catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(RegistrationError);
+    expect((caught as RegistrationError).issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ actionId: "viewProject", rule: "R10", detail: "no executor is bound" }),
+      expect.objectContaining({ actionId: "forbiddenAction", rule: "R7" }),
+      expect.objectContaining({ actionId: "unused", rule: "R10", detail: "executor is unused" }),
+      expect.objectContaining({ actionId: "unused", rule: "R10", detail: "duplicate executor id" }),
+    ]));
   });
 });

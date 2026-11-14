@@ -76,6 +76,14 @@ describe("startup registration rules R1–R12", () => {
     ["array object", z.strictObject({ children: z.array(z.object({})).max(2) })],
     ["union branch", z.strictObject({ child: z.union([z.strictObject({}), z.object({})]) })],
     ["unrepresentable", z.strictObject({ date: z.date() })],
+    ["unconstrained root", z.any()],
+    ["unconstrained property", z.strictObject({ value: z.unknown() })],
+    ["unconstrained union branch", z.union([z.strictObject({}), z.unknown()])],
+    ["metadata spoofing strictness", z.object({}).meta({ additionalProperties: false })],
+    ["root catch fallback", z.strictObject({ name: z.string().max(3) }).catch({ name: "ok" })],
+    ["nested catch fallback", z.strictObject({ name: z.string().max(3).catch("ok") })],
+    ["literal without the required explicit maxLength", z.strictObject({ name: z.literal("open") })],
+    ["enum without the required explicit maxLength", z.strictObject({ name: z.enum(["open", "closed"]) })],
     ["fake schema", { parse: () => ({}), safeParse: () => ({ success: true }) }],
   ])("R3 rejects %s", (_name, inputSchema) => {
     rejects("R3", () => buildRegistry([malformed({ inputSchema })]));
@@ -161,7 +169,7 @@ describe("startup registration rules R1–R12", () => {
     }
     rejects("R11", () => buildRegistry([definition({ confirmationTtlSeconds: 61 })], { confirmationDefaultTtlSeconds: 60 }));
     expect(buildRegistry([definition({ confirmationTtlSeconds: 60 })], { confirmationDefaultTtlSeconds: 60 }).list()).toHaveLength(1);
-    for (const confirmationDefaultTtlSeconds of [0, 901, NaN, 1.5]) {
+    for (const confirmationDefaultTtlSeconds of [0, 901, NaN, 1.5, null as unknown as number]) {
       rejects("R11", () => buildRegistry([], { confirmationDefaultTtlSeconds }));
     }
   });
