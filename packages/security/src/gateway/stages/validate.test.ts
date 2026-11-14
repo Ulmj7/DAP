@@ -101,6 +101,8 @@ describe("validate: only the definition resolve authorized is used", () => {
     ["resolve facts for another version", { resolve: { ...resolved, version: 4 } }], ["resolve facts for another definition hash", { resolve: { ...resolved, definitionHash: "b".repeat(64) } }],
     ["a registry that no longer knows the action", { registry: registryReturning(undefined) }], ["a registry answer that is not an object", { registry: registryReturning("x") }], ["a registry answer that is null", { registry: registryReturning(null) }],
     ["a registry entry without a definition", { registry: registryReturning({ definitionHash: entry.definitionHash }) }],
+    ["a scalar definition", { registry: registryReturning({ definition: "bad", definitionHash: entry.definitionHash }) }],
+    ["a callable masquerading as a definition", { registry: registryReturning({ definition: Object.assign(() => {}, definition), definitionHash: entry.definitionHash }) }],
     ["a registry that returns another action's definition", { registry: registryReturning({ definition: { ...definition, id: "otherAction" }, definitionHash: entry.definitionHash }) }],
     ["a registry that returns another version", { registry: registryReturning({ definition: { ...definition, version: 9 }, definitionHash: entry.definitionHash }) }],
     ["a registry that returns another hash", { registry: registryReturning({ definition, definitionHash: "c".repeat(64) }) }],
@@ -129,6 +131,21 @@ describe("validate: only the definition resolve authorized is used", () => {
     const test = harness({ registry: counting });
     expect((await test.run()).outcome).toBe("ALLOWED");
     expect({ gets, ...reads }).toEqual({ gets: 1, definition: 1, definitionHash: 1 });
+  });
+
+  it("uses the same first id/version snapshot for the resolve proof and digest", async () => {
+    let idReads = 0;
+    let versionReads = 0;
+    const changing = { ...definition,
+      get id() { return ++idReads === 1 ? "openProject" : "otherAction"; },
+      get version() { return ++versionReads === 1 ? 3 : 99; },
+    };
+    const test = harness({ registry: registryReturning({ definition: changing, definitionHash: entry.definitionHash }) });
+    expect((await test.run()).outcome).toBe("ALLOWED");
+    const facts = test.seen[0]!.facts.validate as { paramsDigest: string };
+    const ctx = context();
+    expect(facts.paramsDigest).toBe(paramsDigest({ actionId: "openProject", version: 3, params: { projectId: "p1", limit: 10 }, resource: { type: "project", id: "p1" }, tenantId: ctx.tenantId, userId: ctx.userId }));
+    expect({ idReads, versionReads }).toEqual({ idReads: 1, versionReads: 1 });
   });
 
   it("looks the action up by the id resolve published, never by a name the planner typed", async () => {
