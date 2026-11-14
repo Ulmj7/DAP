@@ -96,6 +96,12 @@ describe("Postgres tenant policy trust boundary", () => {
     expect(fake.connects).toBe(0);
   });
 
+  it.each([undefined, null, "", 7, {}, "operator\u0000id"])("rejects the operator id %j before connecting, as the memory store does", async (operator) => {
+    const fake = poolFor(result(false));
+    await expect(new PostgresTenantActionPolicyStore(fake.pool).setDisabled({ tenantId: A }, id, true, operator as never)).rejects.toBeInstanceOf(TypeError);
+    expect(fake.connects).toBe(0);
+  });
+
   it("parameterizes text, snapshots write scope once, and rejects non-boolean writes", async () => {
     const fake = poolFor(result(false));
     const store = new PostgresTenantActionPolicyStore(fake.pool);
