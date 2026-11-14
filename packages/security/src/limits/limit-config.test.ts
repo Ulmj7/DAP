@@ -81,3 +81,55 @@ describe("T115 strict limit configuration", () => {
     }
   });
 });
+
+describe("T115 configuration is plain own data, never what an object merely exposes", () => {
+  const limitsOf = () => structuredClone(expected.limits);
+  const gatewayOf = () => structuredClone(expected);
+
+  it("takes no field from the prototype chain, at the root or nested", () => {
+    expect(() => validateGatewayConfig(Object.create(gatewayOf()))).toThrow();
+    expect(() => validateGatewayConfig({ ...gatewayOf(), limits: Object.create(limitsOf()) })).toThrow();
+    expect(() => validateLimitConfig(Object.create(limitsOf()))).toThrow();
+    expect(() => validateLimitConfig({ ...limitsOf(), denialThrottle: Object.create(expected.limits.denialThrottle) })).toThrow();
+  });
+  it("rejects class instances, exotic wrappers, symbol keys and hidden (non-enumerable) fields as extra keys", () => {
+    class Holder { limits = limitsOf(); maxPayloadBytes = 16_384; maxJsonDepth = 8; replayRetentionSeconds = 86_400; confirmationDefaultTtlSeconds = 300; hookTimeoutMs = 2000; }
+    expect(() => validateGatewayConfig(new Holder())).toThrow();
+    expect(() => validateLimitConfig({ ...limitsOf(), proposalsPerTurn: new Number(25) })).toThrow();
+    expect(() => validateLimitConfig({ ...limitsOf(), [Symbol("extra")]: 1 })).toThrow();
+    const hidden = limitsOf();
+    Object.defineProperty(hidden, "hidden", { value: 1, enumerable: false });
+    expect(() => validateLimitConfig(hidden)).toThrow();
+  });
+  it("never treats a string as configuration, even valid JSON text, and rejects arrays", () => {
+    expect(() => validateGatewayConfig(JSON.stringify(gatewayOf()))).toThrow();
+    expect(() => validateLimitConfig(JSON.stringify(limitsOf()))).toThrow();
+    expect(() => validateLimitConfig([limitsOf()])).toThrow();
+  });
+  it("still accepts null-prototype data, and reads an accessor exactly once", () => {
+    expect(validateLimitConfig(Object.assign(Object.create(null) as object, limitsOf()))).toEqual(expected.limits);
+    let reads = 0;
+    const flipping = { ...gatewayOf(), get hookTimeoutMs() { return ++reads === 1 ? 2000 : -1; } };
+    expect(validateGatewayConfig(flipping).hookTimeoutMs).toBe(2000);
+    expect(reads).toBe(1);
+  });
+  it("does not leak the offending value, a proxy trap's message or a stack in its error", () => {
+    const trap = new Proxy({}, { ownKeys() { throw new Error("CANARY_TRAP"); } });
+    for (const input of [trap, { ...gatewayOf(), hookTimeoutMs: "CANARY_VALUE" }]) {
+      try { validateGatewayConfig(input); expect.unreachable(); }
+      catch (error) {
+        expect(error).toBeInstanceOf(TypeError);
+        expect(String((error as Error).message) + String((error as Error).cause ?? "")).not.toMatch(/CANARY/);
+      }
+    }
+  });
+  it("gives each rule its own detached frozen object even when the caller aliases one", () => {
+    const shared = { limit: 1, windowSeconds: 60 };
+    const config = validateLimitConfig({ ...limitsOf(), perUserPerMinute: shared, perTenantPerMinute: shared });
+    expect(config.perUserPerMinute).not.toBe(config.perTenantPerMinute);
+    expect(Object.isFrozen(shared)).toBe(false);
+    shared.limit = 99;
+    expect(config.perUserPerMinute.limit).toBe(1);
+    expect(config.perTenantPerMinute.limit).toBe(1);
+  });
+});

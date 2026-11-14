@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { GatewayConfig, LimitConfig } from "@dap/contracts";
+import { parseStrictJson } from "../validation/strict-json.js";
 
 // Administrative ceilings bound work and retention without admitting an unlimited sentinel.
 const integer = (maximum: number) => z.number().int().min(1).max(maximum);
@@ -24,13 +25,25 @@ function freeze<T>(value: T): T {
   return value;
 }
 
+/**
+ * Configuration is plain own data. Copy it exactly once through strict intake first, so a field cannot come from the
+ * prototype chain, an accessor answers once, and symbol keys, hidden properties, class instances and exotic wrappers
+ * are refused instead of silently ignored. A string is JSON text to strict intake and is never configuration.
+ */
+function plainData(input: unknown): unknown {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new TypeError("not an object");
+  const copy = parseStrictJson(input);
+  if (!copy.ok) throw new TypeError("not plain data");
+  return copy.value;
+}
+
 /** Complete configuration required: missing fields never fall back or disable a limit. */
 export function validateLimitConfig(input: unknown): LimitConfig {
-  try { return freeze(limitsSchema.parse(input)); }
+  try { return freeze(limitsSchema.parse(plainData(input))); }
   catch { throw new TypeError("Invalid security limit configuration"); }
 }
 export function validateGatewayConfig(input: unknown): GatewayConfig {
-  try { return freeze(gatewaySchema.parse(input)); }
+  try { return freeze(gatewaySchema.parse(plainData(input))); }
   catch { throw new TypeError("Invalid security gateway configuration"); }
 }
 
