@@ -198,3 +198,21 @@ describe("construction", () => {
     expect(calls[0]![0]).toBe(evidence);
   });
 });
+
+describe("identifiers a log line or an audit record can be forged with are refused", () => {
+  const confusable = [
+    ["a bidirectional override", "alice\u202e"], ["a zero-width space", "al\u200bice"], ["a byte-order mark", "\ufeffalice"], ["a soft hyphen", "al\u00adice"],
+    ["a joiner", "al\u200dice"], ["a lone high surrogate", "al\ud800ice"], ["a lone low surrogate", "\udc00"], ["a private-use character", "al\ue000ice"],
+    ["an unassigned code point", "al\u0378ice"], ["a no-break space", "al\u00a0ice"], ["an ideographic space", "al\u3000ice"], ["only spaces", "   "],
+    ["a leading space", " alice"], ["a trailing space", "alice "], ["a tab", "a\tb"], ["a next-line character", "a\u0085b"], ["a line separator", "a\u2028b"],
+  ] as const;
+  it.each(confusable)("userId with %s is null", async (_name, userId) => {
+    expect(await factory(principal({ userId })).establish({})).toBeNull();
+  });
+  it.each(confusable)("sessionId with %s is null", async (_name, sessionId) => {
+    expect(await factory(principal({ sessionId })).establish({})).toBeNull();
+  });
+  it.each([["a plain id", "alice"], ["a single character", "a"], ["an email", "alice@example.com"], ["an id with an inner space", "Alice Smith"], ["an accented name", "Zoë Müller"], ["a CJK name", "山田太郎"], ["an emoji", "alice\u{1F600}"], ["a uuid", "123e4567-e89b-12d3-a456-426614174000"]])("userId that is %s stays valid", async (_name, userId) => {
+    expect(await factory(principal({ userId, sessionId: userId })).establish({})).toMatchObject({ userId, sessionId: userId });
+  });
+});

@@ -19,9 +19,12 @@ import { wrapHook, type HookOptions } from "../gateway/hook-wrapper.js";
  * What this factory adds to the hook wrapper's own principal check (`wrapHook(..., "authentication")` has already proved the
  * answer is exactly `{ userId, tenantId, sessionId, authenticatedAt, validUntil }` of non-empty text, a UUID tenant and ISO
  * instants with a zone): printable identifiers of a sane length, and a tenant in its one canonical spelling.
- * Identifiers end up in audit records and log lines, so no control or line-separator characters.
+ * Identifiers end up in audit records and log lines, so no control, format, surrogate, private-use or unassigned characters.
  */
-const identifier = z.string().max(256).regex(/^[^\p{Cc}\p{Zl}\p{Zp}]+$/u);
+// Not just "no controls": format characters (bidi overrides, zero-width, joiners), lone surrogates, private-use and
+// unassigned code points, and every space but the plain one are refused too, and so is a leading, trailing or
+// only-space id. Otherwise `alice` and `alice\u200b` are two users who read as one in every audit record and log line.
+const identifier = z.string().max(256).regex(/^[^\p{C}\p{Z}](?:[^\p{C}\p{Z}]| )*(?<! )$/u);
 // Lowercase, so one tenant has one spelling (tenant equality is a string comparison); the nil UUID is a "no tenant" sentinel, not a tenant.
 const canonicalTenant = z.string().refine((value) => value === value.toLowerCase() && value !== "00000000-0000-0000-0000-000000000000");
 const principalExtras = z.object({ userId: identifier, tenantId: canonicalTenant, sessionId: identifier });
