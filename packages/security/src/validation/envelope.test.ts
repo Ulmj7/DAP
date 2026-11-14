@@ -25,7 +25,7 @@ function assertNoLeak(result: {
 }): void {
   // The failure result is exactly (ok, outcome, reason) — no input content.
   expect(Object.keys(result).sort()).toEqual(["ok", "outcome", "reason"]);
-  expect(result.outcome).toBe("INVALID_ACTION");
+  expect(["INVALID_ACTION", "INVALID_PARAMETERS"]).toContain(result.outcome);
   expect(REASON_CODES).toContain(result.reason);
 }
 
@@ -170,7 +170,6 @@ describe("parseEnvelope: malformed payloads", () => {
 
   it("maps every other strict-json failure to malformed_envelope", () => {
     for (const text of [
-      '{"action":"sendEmail","params":1e400}', // not_finite
       '{"action":"sendEmail","params":{', // syntax
       '{"a":' .repeat(20) + "1", // too_deep
     ]) {
@@ -195,5 +194,92 @@ describe("parseEnvelope: no input echo", () => {
     expect(Object.keys(result).sort()).toEqual(["action", "ok", "params"]);
     expect(result.action).toBe("sendEmail");
     expect((result.params as Record<string, unknown>).pad).toBe(secret);
+  });
+});
+
+describe("parseEnvelope: QA hardening", () => {
+  const ok = '{"action":"sendEmail","params":{}}';
+
+  it("uses the configured caps, not hard-coded ones", () => {
+    expect(parseEnvelope(ok, { maxPayloadBytes: ok.length })).toMatchObject({ ok: true });
+    expect(parseEnvelope(ok, { maxPayloadBytes: ok.length - 1 })).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "payload_too_large" });
+    expect(parseEnvelope('{"action":"sendEmail","params":{"a":{"b":1}}}', { maxJsonDepth: 3 })).toMatchObject({ ok: true });
+    expect(parseEnvelope('{"action":"sendEmail","params":{"a":{"b":{"c":1}}}}', { maxJsonDepth: 3 })).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+    expect(() => parseEnvelope(ok, { maxPayloadBytes: 0 })).toThrow(RangeError);
+  });
+
+  it("reports a non-finite number as invalid parameters, not an invalid action (ATK-PARAMS-10)", () => {
+    for (const input of [
+      '{"action":"sendEmail","params":{"n":1e999}}', '{"action":"sendEmail","params":{"n":[-1e999]}}',
+      { action: "sendEmail", params: { n: NaN } }, { action: "sendEmail", params: { n: Infinity } }, { action: "sendEmail", params: { n: { deep: -Infinity } } },
+    ]) {
+      const result = parseEnvelope(input);
+      expect(result).toEqual({ ok: false, outcome: "INVALID_PARAMETERS", reason: "invalid_parameters" });
+      assertNoLeak(result);
+    }
+  });
+
+  it("keeps duplicate, forbidden, oversized and malformed input as an invalid action (ATK-PARAMS-06 to 09, 13)", () => {
+    for (const input of [
+      '{"action":"sendEmail","action":"other","params":{}}', '{"action":"sendEmail","params":{},"params":{}}', '{"action":"sendEmail","params":{"__proto__":{}}}',
+      '{"action":"sendEmail","params":{"constructor":1}}', '{"action":"sendEmail","params":{"prototype":1}}', '{"action":"sendEmail","params":{},"callId":"x"}',
+      '{"action":"sendEmail","params":{},"requestId":"x"}', '{"action":"sendEmail","params":{},"userConfirmed":true}', { action: "sendEmail", params: {}, userConfirmed: true },
+    ]) {
+      const result = parseEnvelope(input);
+      expect(result.ok).toBe(false);
+      expect(result).toMatchObject({ outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+      assertNoLeak(result);
+    }
+  });
+
+  it("judges the decoded action, not the escaped text", () => {
+    expect(parseEnvelope('{"action":"\u0073endEmail","params":{}}')).toMatchObject({ ok: true, action: "sendEmail" });
+    for (const action of ["sendEmail\n", "sendEmail\u0000", "\u0073endEmail\r", "send\u200bEmail", "s\u0435ndEmail", "\ud800sendEmail", "ab", "a".repeat(65), "SendEmail", "1send", "send_email", "send-email", "send email", ""]) {
+      const result = parseEnvelope(`{"action":"${action}","params":{}}`);
+      expect(result, action).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+    }
+  });
+
+  it("does not take an action or params from the prototype chain", () => {
+    const proto = Object.prototype as unknown as Record<string, unknown>;
+    proto.action = "sendEmail";
+    proto.params = {};
+    try {
+      for (const input of ['{"a":1,"b":2}', '{"x":"sendEmail","params":{}}', '{"action":"sendEmail","y":{}}', { a: 1, b: 2 }]) {
+        expect(parseEnvelope(input), JSON.stringify(input)).toMatchObject({ ok: false, reason: "malformed_envelope" });
+      }
+    } finally {
+      delete proto.action;
+      delete proto.params;
+    }
+  });
+
+  it("is independent of key order and of surrounding whitespace", () => {
+    expect(parseEnvelope('\n {"params":{"a":1},"action":"sendEmail"} \t')).toMatchObject({ ok: true, action: "sendEmail", params: { a: 1 } });
+  });
+
+  it("reads an already-parsed envelope exactly once", () => {
+    let reads = 0;
+    const source = { get action() { reads += 1; return reads === 1 ? "sendEmail" : "somethingElse"; }, params: {} };
+    expect(parseEnvelope(source)).toMatchObject({ ok: true, action: "sendEmail" });
+    expect(reads).toBe(1);
+  });
+
+  it("returns frozen results, so a caller cannot rewrite a decision input", () => {
+    const success = parseEnvelope('{"action":"sendEmail","params":{"a":[1]}}');
+    const failure = parseEnvelope("not json");
+    expect(Object.isFrozen(success) && Object.isFrozen(failure)).toBe(true);
+    if (!success.ok) throw new Error("expected success");
+    expect(Object.isFrozen(success.params) && Object.isFrozen((success.params as { a: unknown[] }).a)).toBe(true);
+    expect(failure).not.toBe(parseEnvelope("also not json"));
+  });
+
+  it("rejects every non-object shape for the whole envelope and for params", () => {
+    for (const input of ["[]", "null", "1", '"sendEmail"', "true", [], null, 1, undefined, () => 1, { action: "sendEmail" }, { params: {} }, {}]) {
+      expect(parseEnvelope(input), String(input)).toMatchObject({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+    }
+    for (const params of ["[]", "null", "1", '"x"', "true"]) {
+      expect(parseEnvelope(`{"action":"sendEmail","params":${params}}`), params).toMatchObject({ ok: false, reason: "malformed_envelope" });
+    }
   });
 });
