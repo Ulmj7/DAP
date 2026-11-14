@@ -1,11 +1,11 @@
-import { performance } from "node:perf_hooks";
 import { z } from "zod";
 import { PIPELINE_STAGES } from "@dap/contracts";
 import type { AuthorizationContext, JsonValue, PipelineStage, PlannerRunMeta, PolicyDecision, ProposalCall, RequestId } from "@dap/contracts";
 import { isMintedContext } from "@dap/contracts/mint";
 import { snapshotAnswer } from "./answer-snapshot.js";
 import { allowedDecision, confirmationDecision, denyDecision } from "./decision.js";
-import type { HookOptions, HookTimer } from "./hook-wrapper.js";
+import { assertTimeout, nativeTimer, underDeadline, type HookTimer } from "./deadline.js";
+import type { HookOptions } from "./hook-wrapper.js";
 
 export interface PipelineInput {
   readonly context: unknown;
@@ -25,7 +25,6 @@ export interface PipelineRecord extends Omit<PipelineInput, "context" | "run"> {
 export type StageResult = Readonly<{ kind: "continue"; data: Readonly<Record<string, JsonValue>> }> | Readonly<{ kind: "stop"; decision: PolicyDecision }>;
 export type PolicyStage = (request: PipelineRecord) => StageResult | Promise<StageResult>;
 export type StageMap = Partial<Record<PipelineStage, PolicyStage>>;
-const nativeTimer: HookTimer = { now: () => performance.now(), setTimeout: (callback, ms) => setTimeout(callback, ms), clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>) };
 const runSchema = z.strictObject({ aiSessionId: z.string().min(1), turnId: z.string().min(1), model: z.string().min(1), depth: z.number().int().nonnegative(), turnStartedAt: z.iso.datetime({ offset: true }) });
 const continuing = z.strictObject({ kind: z.literal("continue"), data: z.record(z.string(), z.json()) });
 type FailureReason = "internal_error" | "dependency_failure";
@@ -83,41 +82,14 @@ function captureResult(raw: unknown, request: PipelineRecord, stage: PipelineSta
 }
 
 function runStage(fn: PolicyStage, request: PipelineRecord, stage: PipelineStage, timeout: number, timer: HookTimer): Promise<StageResult> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let armed = false;
-    let handle: unknown;
-    const denied = (reason: FailureReason): StageResult => Object.freeze({ kind: "stop", decision: failure(request, stage, reason) });
-    const finish = (result: StageResult): void => {
-      if (settled) return;
-      settled = true;
-      try { if (armed) timer.clearTimeout(handle); } catch { result = denied("dependency_failure"); }
-      resolve(result);
-    };
-    try {
-      const start = timer.now();
-      if (!Number.isFinite(start)) { finish(denied("dependency_failure")); return; }
-      const withinDeadline = (): boolean => { const current = timer.now(); return Number.isFinite(current) && current >= start && current - start < timeout; };
-      handle = timer.setTimeout(() => finish(denied("dependency_failure")), timeout);
-      armed = true;
-      if (settled) { timer.clearTimeout(handle); return; }
-      let result: unknown;
-      try { result = fn(request); } catch { finish(denied("internal_error")); return; }
-      void Promise.resolve(result).then((raw: unknown) => {
-        if (settled) return;
-        try {
-          if (!withinDeadline()) { finish(denied("dependency_failure")); return; }
-          const captured = captureResult(raw, request, stage);
-          finish(withinDeadline() ? captured : denied("dependency_failure"));
-        } catch { finish(denied("dependency_failure")); }
-      }, () => finish(denied("internal_error")));
-    } catch { finish(denied("dependency_failure")); }
-  });
+  const denied = (reason: FailureReason): StageResult => Object.freeze({ kind: "stop", decision: failure(request, stage, reason) });
+  // A stage that throws or rejects is an internal error; a stage that is late, malformed or cannot be timed is a dependency failure.
+  return underDeadline<StageResult>(() => fn(request), (raw) => captureResult(raw, request, stage), (cause) => denied(cause === "thrown" || cause === "rejected" ? "internal_error" : "dependency_failure"), timeout, timer);
 }
 
 /** D6 positions are fixed; adding an implementation never changes another stage's code. */
 export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer = nativeTimer }: HookOptions = {}) {
-  if (!Number.isSafeInteger(hookTimeoutMs) || hookTimeoutMs < 1 || hookTimeoutMs > 0x7fff_ffff) throw new RangeError("Invalid pipeline timeout");
+  assertTimeout(hookTimeoutMs, "pipeline");
   const ordered = PIPELINE_STAGES.map((name) => Object.freeze({ name, fn: stages[name] }));
   return Object.freeze({
     async run(source: PipelineInput): Promise<PolicyDecision> {

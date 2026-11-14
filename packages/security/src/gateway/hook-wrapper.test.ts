@@ -35,6 +35,12 @@ describe("host hook timeout and answer boundary", () => {
     expect(await wrapHook(() => null, kind)()).toEqual({ ok: false, reason: "denied" });
   });
 
+  it("a void operation completes only through its promise: a bare undefined means the host omitted it", async () => {
+    expect(await wrapHook(() => undefined, "void")()).toEqual({ ok: false, reason: "dependency_failure" });
+    expect(await wrapHook(() => Promise.resolve(undefined), "void")()).toEqual({ ok: true, value: undefined });
+    expect(await wrapHook(async () => { /* completes */ }, "void")()).toEqual({ ok: true, value: undefined });
+  });
+
   it("tenant policy has negative polarity: only literal false means not disabled", async () => {
     expect(await wrapHook(() => true, "tenantPolicy")()).toEqual({ ok: false, reason: "denied" });
     for (const answer of [undefined, null, 0, "false", {}]) expect((await wrapHook(() => answer, "tenantPolicy")()).ok).toBe(false);
