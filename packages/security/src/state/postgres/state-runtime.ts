@@ -6,7 +6,9 @@ const uuid = z.uuid();
 export function captureStateInput(scope: TenantScope, key: string): { readonly tenantId: string; readonly key: string } {
   const tenantId: unknown = scope?.tenantId;
   if (!uuid.safeParse(tenantId).success) throw new TypeError("Security state requires a UUID tenant");
-  if (typeof key !== "string" || key.length < 1 || key.length > 1024 || key.includes("\u0000") || Buffer.byteLength(key) > 1024) throw new TypeError("Invalid security state key");
+  // Rejected BEFORE any query: PostgreSQL text cannot hold NUL, and a lone surrogate has no UTF-8 form, so the driver
+  // would silently turn two different keys into the same U+FFFD text.
+  if (typeof key !== "string" || key.length < 1 || key.length > 1024 || key.includes("\u0000") || /\p{Cs}/u.test(key) || Buffer.byteLength(key, "utf8") > 1024) throw new TypeError("Invalid security state key");
   return { tenantId: (tenantId as string).toLowerCase(), key };
 }
 export function stateInteger(value: unknown, maximum: number): number {
