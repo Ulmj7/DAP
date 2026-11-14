@@ -30,10 +30,15 @@ function assertVersioned(current: Row[], previous: Row[]): void {
   });
 }
 
+function assertPinned(current: Row[], previous: Row[]): void {
+  assertVersioned(current, previous);
+  if (JSON.stringify(current) !== JSON.stringify(previous)) throw new Error("Review and refresh the drift baseline for the new versions");
+}
+
 describe("versioned registry drift baseline (ATK-ARCH-08)", () => {
   it("pins every default capability plus the MEDIUM opt-out", () => {
     expect(definitions).toHaveLength(7);
-    assertVersioned(rows(definitions), baseline);
+    assertPinned(rows(definitions), baseline);
   });
 
   it("detects a schema change without a version bump and accepts the explicit bump", () => {
@@ -42,5 +47,14 @@ describe("versioned registry drift baseline (ATK-ARCH-08)", () => {
     expect(() => assertVersioned(rows([changed]), before)).toThrow("version bump");
     expect(() => assertVersioned(rows([{ ...changed, version: testSafeEcho.version + 1 }]), before)).not.toThrow();
     expect(() => assertVersioned(rows([{ ...testSafeEcho, version: testSafeEcho.version + 1 }]), rows([{ ...testSafeEcho, version: testSafeEcho.version + 2 }]))).toThrow("decrease");
+  });
+
+  it("requires refreshing the baseline after a version bump so later same-version drift cannot hide", () => {
+    const before = rows([testSafeEcho]);
+    const bumped = rows([{ ...testSafeEcho, version: testSafeEcho.version + 1 }]);
+    expect(() => assertPinned(bumped, before)).toThrow("refresh");
+    expect(() => assertPinned(bumped, bumped)).not.toThrow();
+    const later = rows([{ ...testSafeEcho, version: testSafeEcho.version + 1, inputSchema: z.strictObject({ message: z.string().min(1).max(201) }) }]);
+    expect(() => assertPinned(later, bumped)).toThrow("version bump");
   });
 });
