@@ -20,3 +20,6 @@ export { RESERVED_FORBIDDEN_ACTION_NAMES, RESERVED_PARAMETER_NAMES, normalizeFor
 export { InMemoryReplayGuard } from "./state/memory/replay.js";
 export { InMemoryRateLimiter } from "./state/memory/rate-limiter.js";
 export { DEFAULT_GATEWAY_CONFIG, DEFAULT_LIMIT_CONFIG, validateGatewayConfig, validateLimitConfig } from "./limits/limit-config.js";
+export { PostgresReplayGuard } from "./state/postgres/replay.js";
+export { PostgresRateLimiter } from "./state/postgres/rate-limiter.js";
+export type { PostgresStateOptions } from "./state/postgres/state-runtime.js";
