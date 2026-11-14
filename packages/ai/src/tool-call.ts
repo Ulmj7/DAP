@@ -25,8 +25,9 @@ export function toProposalCall(
   callId: string,
   rawArgumentsText: string,
 ): ProposalCall {
-  return {
+  // Frozen so nothing between the AI layer and the Gateway can rewrite what was proposed.
+  return Object.freeze({
     callId,
     raw: rawArgumentsText,
-  };
+  });
 }
