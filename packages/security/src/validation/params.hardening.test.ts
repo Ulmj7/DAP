@@ -140,6 +140,13 @@ describe("the resource extractor", () => {
     expect(result.paramsDigest).toBe(paramsDigest({ actionId: "probeAction", version: 1, params: good(), resource: { type: "project", id: "p1" }, tenantId: TENANT, userId: USER }));
   });
 
+  it("sees the normalized OUTPUT (defaults and transforms applied), never the raw input", () => {
+    const seen: unknown[] = [];
+    const definition = define(z.strictObject({ name: z.string().max(5), n: z.number().int().min(0).max(9).default(7) }), { resource: ((params: unknown) => { seen.push(params); return null; }) as never });
+    validateParams(definition, { name: "x" }, scope);
+    expect(seen).toEqual([{ name: "x", n: 7 }]);
+  });
+
   it("is not called at all when the parameters are invalid", () => {
     let calls = 0;
     const definition = withResource(() => { calls += 1; return null; });
@@ -170,7 +177,6 @@ describe("the resource extractor", () => {
 
 describe("issues: paths and generic codes, never values", () => {
   it.each([
-    ["a missing required value", { ...good(), name: undefined }, [["/name", "required"]]],
     ["a missing key", (() => { const { count: _count, ...rest } = good(); void _count; return rest; })(), [["/count", "required"]]],
     ["a missing nested value", { ...good(), nested: {} }, [["/nested/x", "required"]]],
     ["a string where a number belongs", { ...good(), count: "2" }, [["/count", "type"]]],
@@ -190,6 +196,13 @@ describe("issues: paths and generic codes, never values", () => {
     ["a union with no matching branch", { ...good(), pick: true }, [["/pick", "invalid"]]],
   ])("%s", (_label, input, expected) => {
     expect(issues(input)).toEqual(expected);
+  });
+
+  it("reports one issue where several refinements fail at the same path with the same code", () => {
+    const twice = define(z.strictObject({ s: z.string().max(5).refine(() => false).refine(() => false) }));
+    const result = validateParams(twice, { s: "ab" }, scope);
+    if (result.ok) throw new Error("expected issues");
+    expect(result.issues).toEqual([{ path: "/s", code: "invalid" }]);
   });
 
   it("escapes pointer syntax in schema keys", () => {
@@ -297,7 +310,7 @@ describe("defects in the definition are programmer errors, not planner feedback"
     ["a transform to undefined", z.strictObject({ n: z.number().min(0).max(9).transform(() => undefined) }), { n: 1 }],
     ["a transform past the payload cap", z.strictObject({ n: z.number().min(0).max(9).transform(() => "x".repeat(20_000)) }), { n: 1 }],
   ])("throws for %s", (_label, inputSchema, input) => {
-    expect(() => validateParams(define(inputSchema as never), input, scope)).toThrow(TypeError);
+    expect(() => validateParams(define(inputSchema as never), input, scope)).toThrow(/normalized output must be plain JSON data/);
   });
 
   it("lets a throwing refinement propagate, and refuses an asynchronous schema", () => {
@@ -315,6 +328,10 @@ describe("defects in the definition are programmer errors, not planner feedback"
     ["no tenant", { tenantId: "", userId: USER }], ["no user", { tenantId: TENANT, userId: "" }], ["numeric ids", { tenantId: 1, userId: 2 }], ["missing ids", {}],
   ])("throws for a scope with %s, so a digest can never be under-bound", (_label, bad) => {
     expect(() => validateParams(registered, good(), bad as never)).toThrow(TypeError);
+  });
+
+  it("reports a bad scope as a defect even when the parameters are also invalid", () => {
+    expect(() => validateParams(registered, { not: "valid" }, { tenantId: "", userId: USER })).toThrow(TypeError);
   });
 
   it("reads the scope once", () => {
