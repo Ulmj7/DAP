@@ -1,4 +1,4 @@
-import type { ActionRegistry, AnyActionDefinition, FeedbackIssue } from "@dap/contracts";
+import type { ActionRegistry, AnyActionDefinition } from "@dap/contracts";
 import { validateParams } from "../../validation/params.js";
 import type { StrictJsonOptions } from "../../validation/strict-json.js";
 import { denyDecision } from "../decision.js";
