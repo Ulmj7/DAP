@@ -117,6 +117,7 @@ export type PlannerCategory =
  * field paths with generic codes. MUST NOT contain: internal reasons, stack traces, secrets,
  * policy or permission names, confirmation ids or tokens, parameter values, or any hint that
  * an inaccessible resource exists (FR-015, SC-009). Mapping table: research D14.
+ * An authorized execution that fails remains ALLOWED, with category try_later (T091).
  */
 export interface PlannerFeedback {
   readonly outcome: Outcome;

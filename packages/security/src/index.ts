@@ -9,4 +9,6 @@ export type { SchemaInspection } from "./registry/schema-rules.js";
 export { definitionHash } from "./registry/definition-hash.js";
 export { wrapHook } from "./gateway/hook-wrapper.js";
 export type { HookKind, HookOptions, HookResult, HookTimer } from "./gateway/hook-wrapper.js";
+export { allowedDecision, confirmationDecision, denyDecision } from "./gateway/decision.js";
+export { toPlannerFeedback } from "./gateway/feedback.js";
 export { RESERVED_FORBIDDEN_ACTION_NAMES, RESERVED_PARAMETER_NAMES, normalizeForClassification } from "./registry/reserved-names.js";

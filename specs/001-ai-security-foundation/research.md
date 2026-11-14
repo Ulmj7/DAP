@@ -312,6 +312,7 @@ malformed hook answer at any stage maps to `DENIED` (`dependency_failure`/`inter
 | Replayed request | `DENIED` | `not_available` |
 | Needs confirmation | `REQUIRES_CONFIRMATION` | `needs_user_confirmation` (no id, no token) |
 | Success | `ALLOWED` | `ok` |
+| Authorized execution attempted but executor failed | `ALLOWED` | `try_later` (no error text, result value, or internal code) |
 
 - **Rationale**: the model needs enough to repair a malformed call and to tell the user an action is
   unavailable, but not enough to map which names, resources, or permissions exist.
