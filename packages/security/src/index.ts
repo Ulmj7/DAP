@@ -1,4 +1,6 @@
 export { canonicalJson, sha256Canonical } from "./validation/canonical.js";
+export { InMemoryTenantActionPolicyStore } from "./state/memory/tenant-policy.js";
+export { PostgresTenantActionPolicyStore } from "./state/postgres/tenant-policy.js";
 export { buildRegistry } from "./registry/build-registry.js";
 export { bindExecutors } from "./registry/bind-executors.js";
 export { createEnablementPolicy } from "./registry/enablement.js";

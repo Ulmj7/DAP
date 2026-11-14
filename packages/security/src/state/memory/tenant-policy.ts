@@ -1,4 +1,5 @@
 import type { ActionId, TenantActionPolicyStore, TenantScope } from "@dap/contracts";
+import { policyFlag, policyInput } from "../tenant-policy-input.js";
 
 /**
  * In-memory `TenantActionPolicyStore` for tests and local development.
@@ -10,15 +11,18 @@ export class InMemoryTenantActionPolicyStore implements TenantActionPolicyStore 
   private readonly disabledByTenant = new Map<string, Map<string, boolean>>();
 
   async isDisabled(scope: TenantScope, actionId: ActionId): Promise<boolean> {
-    return this.disabledByTenant.get(scope.tenantId)?.get(actionId) ?? false;
+    const captured = policyInput(scope, actionId);
+    return this.disabledByTenant.get(captured.tenantId)?.get(captured.actionId) ?? false;
   }
 
   async setDisabled(scope: TenantScope, actionId: ActionId, disabled: boolean): Promise<void> {
-    let byAction = this.disabledByTenant.get(scope.tenantId);
+    const captured = policyInput(scope, actionId);
+    policyFlag(disabled);
+    let byAction = this.disabledByTenant.get(captured.tenantId);
     if (byAction === undefined) {
       byAction = new Map<string, boolean>();
-      this.disabledByTenant.set(scope.tenantId, byAction);
+      this.disabledByTenant.set(captured.tenantId, byAction);
     }
-    byAction.set(actionId, disabled);
+    byAction.set(captured.actionId, disabled);
   }
 }
