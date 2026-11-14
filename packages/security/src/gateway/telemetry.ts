@@ -40,11 +40,10 @@ export const noopTelemetry: GatewayTelemetry = Object.freeze({ decision: noop, a
 const UNKNOWN = "unknown";
 const oneOf = <T extends string>(allowed: readonly T[], value: unknown): T | typeof UNKNOWN => (typeof value === "string" && (allowed as readonly string[]).includes(value) ? value as T : UNKNOWN);
 
-/** Calls `method` on `target` and swallows everything: a throw, a rejection, a hang (never awaited). */
+/** Calls `method` on `target` and swallows everything: a throw (a missing method included), a rejection, a hang (never awaited). */
 function fire(target: object, method: unknown, args: readonly unknown[]): void {
-  if (typeof method !== "function") return;
   try {
-    const result: unknown = Reflect.apply(method, target, args);
+    const result: unknown = Reflect.apply(method as (...args: readonly unknown[]) => unknown, target, args);
     if (result !== null && typeof result === "object" && typeof (result as { then?: unknown }).then === "function") void Promise.resolve(result).then(noop, noop);
   } catch { /* telemetry never changes a decision */ }
 }
@@ -54,7 +53,8 @@ function fire(target: object, method: unknown, args: readonly unknown[]): void {
  * `unknown`); a missing method counts nothing.
  */
 export function safeTelemetry(source?: Partial<GatewayTelemetry>): GatewayTelemetry {
-  if (source === undefined || source === null || typeof source !== "object") return noopTelemetry;
+  // (A null source is caught below: reading its methods throws.)
+  if (source === undefined || typeof source !== "object") return noopTelemetry;
   let methods: Record<keyof GatewayTelemetry, unknown>;
   try {
     methods = { decision: source.decision, auditWriteFailed: source.auditWriteFailed, dependencyFailed: source.dependencyFailed, rateLimited: source.rateLimited };

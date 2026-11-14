@@ -72,6 +72,8 @@ describe("safeTelemetry passes what happened, with labels from closed vocabulari
     expect(Object.isFrozen(sent)).toBe(true);
     expect(Object.keys(sent).sort()).toEqual(["action", "outcome", "reason", "risk"]);
     expect(Object.isFrozen(safeTelemetry(target))).toBe(true);
+    const wrapped = safeTelemetry(target);
+    for (const method of [wrapped.decision, wrapped.auditWriteFailed, wrapped.dependencyFailed, wrapped.rateLimited]) expect(Object.isFrozen(method)).toBe(true);
   });
 });
 

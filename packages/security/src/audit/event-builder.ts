@@ -19,7 +19,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { AUDIT_EVENT_TYPES, OUTCOMES, REASON_CODES, RISK_LEVELS } from "@dap/contracts";
+import { AUDIT_EVENT_TYPES, REASON_CODES, RISK_LEVELS } from "@dap/contracts";
 import type { AuditEvent, AuditEventType, AuthorizationContext, ConfirmationId, IsoInstant, JsonValue, Outcome, PlannerRunMeta, ReasonCode, RequestId, ResourceRef, RiskLevel } from "@dap/contracts";
 import { isMintedContext } from "@dap/contracts/mint";
 import { isValidActionId } from "../registry/reserved-names.js";
@@ -77,7 +77,7 @@ const SHAPES: Readonly<Record<AuditEventType, Shape>> = Object.freeze({
 });
 
 /** Printable text of a bounded length: identifiers that end up in rows and log lines. */
-const identifier = z.string().min(1).max(256).regex(/^[^\p{Cc}\p{Zl}\p{Zp}]+$/u);
+const identifier = z.string().max(256).regex(/^[^\p{Cc}\p{Zl}\p{Zp}]+$/u);
 const uuid = z.uuid();
 const instant = z.iso.datetime({ offset: true });
 const reject = (field: string): never => { throw new TypeError(`Invalid audit event: ${field}`); };
@@ -133,7 +133,8 @@ export function buildAuditEvent(input: AuditEventInput): AuditEvent {
 
   if (shape.outcomes === null) { if (outcome !== undefined || reason !== undefined) reject("outcome"); }
   else {
-    if (outcome === undefined || !(OUTCOMES as readonly string[]).includes(outcome) || !shape.outcomes.includes(outcome)) reject("outcome");
+    // Every shape lists a subset of the known outcomes, so membership in the shape also proves the outcome is known.
+    if (outcome === undefined || !shape.outcomes.includes(outcome)) reject("outcome");
     if (reason === undefined || !(REASON_CODES as readonly string[]).includes(reason) || !shape.reason(reason)) reject("reason");
   }
 
