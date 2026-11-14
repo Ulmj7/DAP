@@ -3,14 +3,14 @@ import { z } from "zod";
 import type { RiskLevel, TenantId } from "@dap/contracts";
 import {
   NO_EXECUTOR,
+  ALL_TEST_CAPABILITIES,
   INVALID_PARAM_SAMPLES,
   VALID_PARAMS,
   testCriticalDelete,
   testForbiddenShell,
   testHighPublish,
-  testLowNavigate,
   testMediumDraft,
-  testSafeEcho,
+  testMediumOptOut,
 } from "./index.js";
 import type { TestHighPublishParams } from "./index.js";
 
@@ -22,14 +22,7 @@ const RESERVED_PARAM_NAMES = new Set([
   "confirmationId", "approved", "authorization", "token",
 ]);
 
-const ALL = [
-  testSafeEcho,
-  testLowNavigate,
-  testMediumDraft,
-  testHighPublish,
-  testCriticalDelete,
-  testForbiddenShell,
-];
+const ALL = ALL_TEST_CAPABILITIES;
 
 function schemaNode(def: (typeof ALL)[number]) {
   return z.toJSONSchema(def.inputSchema, { io: "input" }) as Record<string, unknown>;
@@ -79,14 +72,20 @@ describe("test-capabilities (T030)", () => {
     };
     check("testSafeEcho", "SAFE", false, false);
     check("testLowNavigate", "LOW", false, false);
-    check("testMediumDraft", "MEDIUM", true, false);
+    check("testMediumDraft", "MEDIUM", true, true);
     check("testHighPublish", "HIGH", true, true);
     check("testCriticalDelete", "CRITICAL", true, true);
     check("testForbiddenShell", "FORBIDDEN", false, false);
   });
 
-  it("MEDIUM uses a not-required confirmation with a justification", () => {
-    const confirmation = testMediumDraft.confirmation;
+  it("a separate MEDIUM opt-out has a justification while the default requires confirmation", () => {
+    expect(testMediumDraft.confirmation.kind).toBe("required");
+    expect(testMediumOptOut.id).not.toBe(testMediumDraft.id);
+    expect(testMediumOptOut.risk).toBe("MEDIUM");
+    expect(testMediumOptOut.changesState).toBe(true);
+    expect(testMediumOptOut.inputSchema.safeParse(VALID_PARAMS.testMediumDraft).success).toBe(true);
+    expect(testMediumOptOut.inputSchema.safeParse({}).success).toBe(false);
+    const confirmation = testMediumOptOut.confirmation;
     expect(confirmation.kind).toBe("not-required");
     if (confirmation.kind === "not-required") {
       expect(typeof confirmation.justification).toBe("string");
@@ -134,6 +133,13 @@ describe("test-capabilities (T030)", () => {
     });
     expect(withoutResource.title).not.toContain("doc-1");
     expect(withoutResource.irreversible).toBe(true);
+    const onlyTrusted = {
+      resource: trusted,
+      get params(): never { throw new Error("Consequence must not read planner parameters"); },
+    };
+    for (const def of [testMediumDraft, testHighPublish, testCriticalDelete]) {
+      expect(def.describeConsequence!(onlyTrusted).title).toContain(trusted.displayName);
+    }
   });
 
   it("testForbiddenShell has no executor", () => {

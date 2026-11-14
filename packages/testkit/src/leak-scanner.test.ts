@@ -94,9 +94,10 @@ describe("LeakScanner — reason-code kind", () => {
   });
 
   it("does not flag near-miss reason codes", () => {
-    expectKinds("permission_missing!", []);
+    expectKinds("permission_missing!", ["reason-code"]);
     expectKinds("unknown_reason", []);
-    expectKinds("a permission_missing note", []); // not exact
+    expectKinds("a permission_missing note", ["reason-code"]);
+    expectKinds("permission_missing_suffix", []);
   });
 });
 
@@ -138,12 +139,12 @@ describe("LeakScanner — traversal and safety", () => {
     expectKinds({ message: "hello world", count: 3, ok: true, none: null }, []);
   });
 
-  it("ignores values deeper than depth 20", () => {
+  it("scans values deeper than depth 20", () => {
     let leaf: Record<string, unknown> = { secret: HEX32 };
     for (let i = 0; i < 25; i++) {
       leaf = { next: leaf };
     }
-    expect(new LeakScanner().scan(leaf)).toEqual([]);
+    expect(new LeakScanner().scan(leaf).some((finding) => finding.kind === "secret-shaped")).toBe(true);
   });
 
   it("terminates on cyclic structures", () => {

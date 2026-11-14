@@ -53,7 +53,7 @@ describe("faulty", () => {
     expect(wrapped["has"]!(ctx, "p")).toBeUndefined();
   });
 
-  it("wrong-type mode: sync methods return the string 'yes', async-shaped methods return Promise<'yes'>", async () => {
+  it("wrong-type mode returns a deterministic invalid value regardless of method name or async shape", async () => {
     const port = {
       syncThing: () => 1,
       asyncThingAsync: async () => 2,
@@ -61,9 +61,8 @@ describe("faulty", () => {
     };
     const wrapped = faulty(port, "wrong-type") as unknown as Record<string, (...a: unknown[]) => unknown>;
     expect(wrapped["syncThing"]!()).toBe("yes");
-    await expect(wrapped["asyncThingAsync"]!()).resolves.toBe("yes");
-    // Known port method: has() is async-shaped.
-    await expect(wrapped["has"]!()).resolves.toBe("yes");
+    expect(await wrapped["asyncThingAsync"]!()).toBe("yes");
+    expect(await wrapped["has"]!()).toBe("yes");
   });
 
   it("rejects unknown modes", () => {

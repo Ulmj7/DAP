@@ -88,13 +88,13 @@ describe("FakePermissionChecker", () => {
     const ctx = mintAuthorizationContext(principal(ALICE, TENANT));
     const other = mintAuthorizationContext(principal(BOB, TENANT));
 
-    checker.grant(ALICE, PERM);
+    checker.grant(ALICE, PERM, TENANT);
     expect(await checker.has(ctx, PERM)).toBe(true);
     // Revoking for alice does not touch bob...
-    checker.revoke(ALICE, PERM);
+    checker.revoke(ALICE, PERM, TENANT);
     expect(await checker.has(ctx, PERM)).toBe(false);
     // ...and a grant for bob does not leak to alice.
-    checker.grant(BOB, PERM);
+    checker.grant(BOB, PERM, TENANT);
     expect(await checker.has(ctx, PERM)).toBe(false);
     expect(await checker.has(other, PERM)).toBe(true);
     expect(checker.calls).toBe(4);
