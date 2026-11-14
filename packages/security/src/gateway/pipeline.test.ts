@@ -47,20 +47,73 @@ describe("ordered immutable request pipeline", () => {
     expect(reads).toBe(1);
   });
 
-  it("reads every proposal field exactly once however many stages ask", async () => {
+  it("reads every proposal field exactly once however often intake asks", async () => {
     let callIdReads = 0;
     let rawReads = 0;
     const raw = { action: "viewProject", params: {} };
     const call = { get callId() { callIdReads++; return "call"; }, get raw() { rawReads++; return raw; } };
     const seen: unknown[] = [];
     const stages = stageMap(allow);
-    stages.intake = (request) => { seen.push(request.readProposal(), request.readProposal()); return { kind: "continue", data: {} }; };
-    stages.resolve = (request) => { seen.push(request.readProposal()); return { kind: "continue", data: {} }; };
+    stages.intake = (request) => { seen.push(request.readProposal(), request.readProposal(), request.readProposal()); return { kind: "continue", data: {} }; };
     expect((await createPipeline(stages).run({ ...input(), readProposal: () => call as never })).outcome).toBe("ALLOWED");
     expect([callIdReads, rawReads]).toEqual([1, 1]);
     expect(new Set(seen).size).toBe(1);
     expect(seen[0]).toEqual({ callId: "call", raw });
     expect(Object.isFrozen(seen[0])).toBe(true);
+  });
+
+  it.each(PIPELINE_STAGES.filter((name) => name !== "intake"))("%s cannot read the untrusted proposal; only intake may", async (stage) => {
+    let reads = 0;
+    let executions = 0;
+    const call = { get callId(): string { reads++; return "call"; }, get raw(): unknown { reads++; return {}; } };
+    const stages = stageMap(() => { executions++; throw new Error("unreachable"); });
+    stages[stage] = (request) => { request.readProposal(); return allow(request); };
+    expect(await createPipeline(stages).run({ ...input(), readProposal: () => call as never })).toMatchObject({ outcome: "DENIED", reason: "internal_error", stage });
+    expect(reads).toBe(0);
+    expect(executions).toBe(0);
+  });
+
+  it("never lets a stage after context run without a minted context", async () => {
+    let later = 0;
+    const stages = stageMap(() => { later++; throw new Error("unreachable"); });
+    stages.context = () => ({ kind: "continue", data: {} });
+    stages.intake = () => { later++; return { kind: "continue", data: {} }; };
+    expect(await createPipeline(stages).run({ ...input(), context: { forged: true } })).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "context" });
+    expect(await createPipeline(stages).run({ ...input(), context: undefined })).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "context" });
+    expect(later).toBe(0);
+  });
+
+  it.each([
+    ["null", null], ["undefined", undefined], ["empty", {}], ["negative depth", { ...run, depth: -1 }], ["fractional depth", { ...run, depth: 1.5 }], ["missing model", { ...run, model: undefined }],
+    ["empty turn", { ...run, turnId: "" }], ["extra key", { ...run, userId: "mallory" }], ["bad instant", { ...run, turnStartedAt: "yesterday" }],
+  ])("denies before any stage when run metadata is %s", async (_label, metadata) => {
+    let calls = 0;
+    const stages = stageMap(() => { calls++; return allow({ ...input(), run, context: null, facts: {} }); });
+    for (const name of PIPELINE_STAGES) { const original = stages[name]!; stages[name] = (request) => { calls++; return original(request); }; }
+    expect(await createPipeline(stages).run({ ...input(), run: metadata })).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "context" });
+    expect(calls).toBe(0);
+    expect((await createPipeline(stageMap(allow)).run(input())).outcome).toBe("ALLOWED");
+  });
+
+  it("denies before any stage when run metadata cannot even be read", async () => {
+    let calls = 0;
+    const cyclic: Record<string, unknown> = { ...run };
+    cyclic.self = cyclic;
+    const stages = stageMap(allow);
+    for (const name of PIPELINE_STAGES) { const original = stages[name]!; stages[name] = (request) => { calls++; return original(request); }; }
+    const decision = await createPipeline(stages).run({ ...input(), run: cyclic });
+    expect(decision).toMatchObject({ outcome: "DENIED", stage: "context" });
+    expect(["internal_error", "dependency_failure"]).toContain((decision as { reason: string }).reason);
+    expect(calls).toBe(0);
+  });
+
+  it.each([["decisionId", undefined], ["decisionId", ""], ["decisionId", 7], ["requestId", undefined], ["requestId", ""], ["requestId", null], ["readProposal", undefined], ["readProposal", "call"]])("denies before any stage when %s is %j", async (field, value) => {
+    let calls = 0;
+    const stages = stageMap(allow);
+    for (const name of PIPELINE_STAGES) { const original = stages[name]!; stages[name] = (request) => { calls++; return original(request); }; }
+    const decision = await createPipeline(stages).run({ ...input(), [field]: value });
+    expect(decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "context" });
+    expect(calls).toBe(0);
   });
 
   it("stays unavailable when the proposal throws once, without a second read", async () => {

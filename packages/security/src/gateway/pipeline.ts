@@ -30,8 +30,9 @@ const runSchema = z.strictObject({ aiSessionId: z.string().min(1), turnId: z.str
 const continuing = z.strictObject({ kind: z.literal("continue"), data: z.record(z.string(), z.json()) });
 type FailureReason = "internal_error" | "dependency_failure";
 /**
- * Each untrusted proposal field is read exactly once, however many stages ask. The shell is
- * frozen; `raw` stays the caller's value for intake to copy once (never frozen in place).
+ * Each untrusted proposal field is read exactly once. The shell is frozen; `raw` stays the caller's
+ * value for intake to copy once (never frozen in place), so intake is the only stage handed this reader:
+ * every other stage works from intake's detached facts and can never see a second, different `raw`.
  */
 function onceProposal(read: () => ProposalCall): () => ProposalCall {
   let captured: { readonly proposal: ProposalCall } | null | undefined;
@@ -47,6 +48,7 @@ function onceProposal(read: () => ProposalCall): () => ProposalCall {
     return captured.proposal;
   });
 }
+const proposalWithheld = Object.freeze((): ProposalCall => { throw new TypeError("Only intake may read the proposal"); });
 const failure = (request: Pick<PipelineInput, "decisionId" | "requestId">, stage: PipelineStage, reason: FailureReason) => denyDecision({ decisionId: request.decisionId, requestId: request.requestId, stage, reason });
 
 function captureResult(raw: unknown, request: PipelineRecord, stage: PipelineStage): StageResult {
@@ -127,13 +129,17 @@ export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer =
         identifiers = { decisionId, requestId };
         const capturedRun = snapshotAnswer(run);
         if (!runSchema.safeParse(capturedRun).success || typeof readProposal !== "function") return failure(identifiers, current, "dependency_failure");
-        let request: PipelineRecord = Object.freeze({ ...identifiers, context: isMintedContext(context) ? context : null, run: capturedRun as PlannerRunMeta, readProposal: onceProposal(readProposal), facts: Object.freeze({}) });
+        let request: PipelineRecord = Object.freeze({ ...identifiers, context: isMintedContext(context) ? context : null, run: capturedRun as PlannerRunMeta, readProposal: proposalWithheld, facts: Object.freeze({}) });
+        const proposal = onceProposal(readProposal);
         for (const { name, fn } of ordered) {
           current = name;
           // Absent guards must stop before any later hook or executor can run.
           if (typeof fn !== "function") return failure(request, name, "dependency_failure");
-          const result = await runStage(fn, request, name, hookTimeoutMs, timer);
+          const view: PipelineRecord = name === "intake" ? Object.freeze({ ...request, readProposal: proposal }) : request;
+          const result = await runStage(fn, view, name, hookTimeoutMs, timer);
           if (result.kind === "stop") return result.decision;
+          // Whatever the context stage is, nothing after it may run without a minted context.
+          if (name === "context" && request.context === null) return failure(request, name, "dependency_failure");
           request = Object.freeze({ ...request, facts: Object.freeze({ ...request.facts, [name]: result.data }) });
         }
         return failure(request, "execute", "dependency_failure");
