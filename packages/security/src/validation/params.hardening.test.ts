@@ -406,7 +406,14 @@ describe("guards pinned by mutation testing", () => {
     it("collapses an exact duplicate, but keeps two codes at one path and one code at two paths", () => {
       const tooBig = { code: "too_big", origin: "string", path: ["a"] };
       const format = { code: "invalid_format", path: ["a"] };
-      const codes = (...found: object[]) => { const result = validateParams(reporting(...found), {}, scope); return result.ok ? null : result.issues.map((issue) => `${issue.path}:${issue.code}`); };
+      // Real declared fields keep this assertion about distinct STRUCTURAL paths, not invented paths.
+      const codes = (...found: object[]) => {
+        const schema = z.strictObject({ a: z.string().max(5).optional(), b: z.string().max(5).optional() }).superRefine((_params, ctx) => {
+          for (const issue of found) ctx.addIssue({ ...issue, message: "synthetic diagnostic" } as never);
+        });
+        const result = validateParams(define(schema), {}, scope);
+        return result.ok ? null : result.issues.map((issue) => `${issue.path}:${issue.code}`);
+      };
       expect(codes(tooBig, tooBig)).toEqual(["/a:too_long"]);
       expect(codes(tooBig, format)).toEqual(["/a:too_long", "/a:format"]);
       expect(codes(tooBig, { ...tooBig, path: ["b"] })).toEqual(["/a:too_long", "/b:too_long"]);

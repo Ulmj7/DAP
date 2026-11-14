@@ -14,10 +14,13 @@
  * Planner-facing issues carry a JSON-pointer path and one of eight generic codes, never a value, a message or
  * a model-authored key: an unknown key is reported at its PARENT's path.
  */
+import { createHash } from "node:crypto";
+import { z } from "zod";
 import type { AnyActionDefinition, FeedbackIssue, JsonValue, ResourceRef, Sha256Hex } from "@dap/contracts";
-import { sha256Canonical } from "./canonical.js";
+import { canonicalJson } from "./canonical.js";
 import { parseStrictJson } from "./strict-json.js";
 import type { StrictJsonCode, StrictJsonOptions } from "./strict-json.js";
+import { declaredIssuePath } from "./issue-path.js";
 
 export interface ParamsScope {
   readonly tenantId: string;
@@ -49,10 +52,13 @@ export function paramsDigest(input: ParamsDigestInput): Sha256Hex {
   if (!text(actionId) || !Number.isSafeInteger(version) || version < 1 || !text(tenantId) || !text(userId)) {
     throw new TypeError("A parameter digest needs an action, a version, a tenant and a user");
   }
-  if (resource !== null && !(typeof resource === "object" && Object.keys(resource).length === 2 && text(resource.type) && text(resource.id))) {
+  // Capture the entire binding together: params and resource may alias the same hostile object.
+  const encoded = canonicalJson({ actionId, version, params, resource, tenant: tenantId, user: userId });
+  const captured = (JSON.parse(encoded) as { resource: unknown }).resource;
+  if (captured !== null && !(typeof captured === "object" && Object.keys(captured).length === 2 && text(Reflect.get(captured, "type")) && text(Reflect.get(captured, "id")))) {
     throw new TypeError("A parameter digest needs a resource of exactly { type, id } or null");
   }
-  return sha256Canonical({ actionId, version, params, resource, tenant: tenantId, user: userId });
+  return createHash("sha256").update(encoded, "utf8").digest("hex") as Sha256Hex;
 }
 
 function pointer(path: readonly PropertyKey[]): string {
@@ -76,14 +82,15 @@ function isMissing(input: unknown, path: readonly PropertyKey[]): boolean {
 
 interface ZodLike { readonly code: string; readonly path: readonly PropertyKey[]; readonly origin?: unknown }
 
-function toIssues(issues: readonly ZodLike[], input: unknown): readonly FeedbackIssue[] {
+function toIssues(issues: readonly ZodLike[], input: unknown, schema: unknown): readonly FeedbackIssue[] {
   const seen = new Set<string>();
   const out: FeedbackIssue[] = [];
   for (const issue of issues) {
-    const path = pointer(issue.path);
+    const segments = [...issue.path];
+    const path = declaredIssuePath(schema, segments, input) ? pointer(segments) : "";
     let code: Code;
     switch (issue.code) {
-      case "invalid_type": code = isMissing(input, issue.path) ? "required" : "type"; break;
+      case "invalid_type": code = isMissing(input, segments) ? "required" : "type"; break;
       case "too_big": code = issue.origin === "string" ? "too_long" : issue.origin === "array" ? "too_many" : "out_of_range"; break;
       case "too_small": case "not_multiple_of": code = "out_of_range"; break;
       case "invalid_format": code = "format"; break;
@@ -142,7 +149,8 @@ export function validateParams(
   const version: unknown = definition.version;
   const schema: unknown = definition.inputSchema;
   const extract: unknown = definition.resource;
-  if (!text(actionId) || typeof version !== "number" || schema === null || typeof schema !== "object" || typeof (schema as { safeParse?: unknown }).safeParse !== "function") {
+  const safeParse: unknown = schema !== null && typeof schema === "object" ? Reflect.get(schema, "safeParse") : undefined;
+  if (!text(actionId) || typeof version !== "number" || typeof safeParse !== "function") {
     throw new TypeError("Cannot validate against a malformed definition");
   }
   // A string is JSON TEXT to strict intake; parameters are always data, and a string is never a parameter object.
@@ -150,8 +158,13 @@ export function validateParams(
   const copy = parseStrictJson(params, options);
   if (!copy.ok) return reject([{ path: "", code: STRICT_JSON_ISSUE[copy.code] }]);
 
-  const parsed = (schema as { safeParse(input: unknown): { success: boolean; data?: unknown; error?: { issues: readonly ZodLike[] } } }).safeParse(copy.value);
-  if (!parsed.success) return reject(toIssues(parsed.error?.issues ?? [], copy.value));
+  const parsed = Reflect.apply(safeParse, schema, [copy.value]) as { success: boolean; data?: unknown; error?: { issues: readonly ZodLike[] } };
+  if (!parsed.success) {
+    let declared: unknown;
+    try { declared = z.toJSONSchema(schema as z.ZodType, { io: "input", unrepresentable: "throw" }); }
+    catch { /* A defective schema has no provable diagnostic paths; only the root is safe. */ }
+    return reject(toIssues(parsed.error?.issues ?? [], copy.value, declared));
+  }
 
   // Only the normalized OUTPUT is ever authorized, digested, confirmed, audited and executed (FR-020): it must be JSON data.
   const normalized = parseStrictJson(parsed.data, options);
