@@ -6,7 +6,7 @@
  * two absent stages with a pass-through, to observe resolve and validate behind the same door. Past validate the
  * next absent stage (authorize) denies fail-closed, so nothing ever executes.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { defineAction, defineExecutor } from "@dap/contracts";
 import type { ActionId, ExecutorId, GatewayDependencies, PermissionId, PlannerFeedback } from "@dap/contracts";
@@ -163,5 +163,26 @@ describe("the composed stages", () => {
     const shallow = composeStages({ ...deps, registry: accepting as never, config: { ...deps.config, maxJsonDepth: 4 } }).validate as PolicyStage;
     expect(await deep(record(facts))).toMatchObject({ kind: "continue" }); // deeper than the default of 8
     expect(await shallow(record(facts))).toMatchObject({ kind: "stop", decision: { outcome: "INVALID_PARAMETERS" } });
+  });
+
+  it("bind authorize to the gateway's hook timeout and host ports", async () => {
+    vi.useFakeTimers();
+    try {
+      const { deps } = dependencies();
+      const entry = deps.registry.get("viewProject")!;
+      const hung = new Promise<boolean>(() => {});
+      const seen: unknown[] = [];
+      const stage = composeStages({ ...deps, config: { ...deps.config, hookTimeoutMs: 40 }, hooks: { ...deps.hooks, permissions: { has: (...args: unknown[]) => { seen.push(args); return hung; } } as never } }).authorize as PolicyStage;
+      const facts = { resolve: { id: "viewProject", version: entry.definition.version, risk: "SAFE", definitionHash: entry.definitionHash }, validate: { params: {}, paramsDigest: "a".repeat(64), resource: null } };
+      const pending = stage({ ...record(facts), budget: { remainingMs: () => 10_000 } });
+      await vi.advanceTimersByTimeAsync(39);
+      let settled = false;
+      void Promise.resolve(pending).then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toMatchObject({ kind: "stop", decision: { outcome: "DENIED", reason: "dependency_failure", stage: "authorize" } });
+      expect(seen).toHaveLength(1); // the gateway's own permission port was the one asked
+    } finally { vi.useRealTimers(); }
   });
 });

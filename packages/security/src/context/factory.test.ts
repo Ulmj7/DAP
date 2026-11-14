@@ -141,9 +141,13 @@ describe("a faulty authentication port is null and never leaks", () => {
     const timer = new ManualTimer();
     const { establish } = factory(principal(), () => new Promise(() => {}), timer, { hookTimeoutMs: 50 });
     const pending = establish(0);
-    await Promise.resolve(); await Promise.resolve();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(timer.pending.size).toBe(1); // the clock call is guarded by THIS timer and timeout, not a default
+    const [guard] = [...timer.pending.values()];
+    expect(guard!.at).toBe(50);
     timer.advance(50);
     expect(await pending).toBeNull();
+    expect(timer.pending.size).toBe(0);
   });
 
   it("does not take a late answer", async () => {

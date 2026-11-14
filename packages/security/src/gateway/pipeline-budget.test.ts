@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import type { PipelineStage } from "@dap/contracts";
 import { createPipeline, type PolicyStage } from "./pipeline.js";
-import { createPolicyGateway } from "./create-gateway.js";
+import { createPolicyGateway, pipelineOptions } from "./create-gateway.js";
 import type { HookTimer } from "./hook-wrapper.js";
 import { allowedDecision } from "./decision.js";
 import { dependencies, input, stageMap } from "./fixtures.test-support.js";
@@ -37,6 +37,19 @@ describe("proposalBudgetMs", () => {
     expect((await createPipeline(costing(within, 999), { timer: within, hookTimeoutMs: 2000 }).run(input())).outcome).toBe("ALLOWED"); // 10 gaps x 999 = 9990
     const over = new ManualTimer();
     expect(await createPipeline(costing(over, 1000), { timer: over, hookTimeoutMs: 2000 }).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" }); // 10 gaps x 1000 = 10000: nothing left
+  });
+
+  it("defaults to exactly 10 000 ms: 9999 ms spent leaves the next stage 1 ms, 10 000 leaves none", async () => {
+    for (const [spentMs, reaches] of [[9999, "rate_limit"], [10_000, "intake"]] as const) {
+      const timer = new ManualTimer();
+      const ran: PipelineStage[] = [];
+      const stages = costing(timer, 0, ran);
+      stages.context = () => { ran.push("context"); timer.gap = spentMs; return { kind: "continue", data: {} }; };
+      stages.intake = () => { ran.push("intake"); timer.gap = 0; return { kind: "continue", data: {} }; };
+      const decision = await createPipeline(stages, { timer }).run(input());
+      expect(ran.includes("intake"), String(spentMs)).toBe(reaches !== "intake");
+      expect(decision, String(spentMs)).toMatchObject({ outcome: spentMs === 9999 ? "ALLOWED" : "DENIED", ...(spentMs === 9999 ? {} : { stage: "intake", reason: "dependency_failure" }) });
+    }
   });
 
   it("denies the NEXT stage once the budget is spent, attributed to that stage, and never runs it", async () => {
@@ -112,7 +125,7 @@ describe("proposalBudgetMs", () => {
     expect(decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
   });
 
-  it.each([["NaN at the start", () => Number.NaN], ["infinite at the start", () => Number.POSITIVE_INFINITY]])("a timer that cannot tell the time leaves no budget (%s)", async (_name, reading) => {
+  it.each([["NaN at the start", () => Number.NaN], ["infinite at the start", () => Number.POSITIVE_INFINITY], ["negative infinity at the start", () => Number.NEGATIVE_INFINITY]])("a timer that cannot tell the time leaves no budget (%s)", async (_name, reading) => {
     const timer = new ManualTimer();
     timer.now = reading;
     const ran: PipelineStage[] = [];
@@ -155,10 +168,17 @@ describe("proposalBudgetMs", () => {
 });
 
 describe("the gateway's proposalBudgetMs setting", () => {
-  it.each([0, -1, 1.5, "60", null, 0x8000_0000])("rejects an invalid configured value %j", (value) => {
+  it.each([0, -1, 1.5, "60", null, 0x8000_0000])("rejects an invalid configured value %j at the config check", (value) => {
     const { deps } = dependencies();
     Object.assign(deps.config, { proposalBudgetMs: value });
-    expect(() => createPolicyGateway(deps)).toThrow();
+    expect(() => createPolicyGateway(deps)).toThrow(TypeError); // the config schema, not the pipeline's own RangeError
+  });
+
+  it("reaches the runner: pipelineOptions carries the configured budget and hook timeout, and omits an unset budget", () => {
+    const { deps } = dependencies();
+    expect(pipelineOptions(deps.config)).toEqual({ hookTimeoutMs: 2000 });
+    expect(Object.hasOwn(pipelineOptions(deps.config), "proposalBudgetMs")).toBe(false);
+    expect(pipelineOptions({ ...deps.config, proposalBudgetMs: 4321, hookTimeoutMs: 77 })).toEqual({ hookTimeoutMs: 77, proposalBudgetMs: 4321 });
   });
 
   it("is optional, and accepts a positive integer", () => {
