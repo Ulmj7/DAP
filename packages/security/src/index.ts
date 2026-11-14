@@ -19,6 +19,8 @@ export type { ParamsDigestInput, ParamsScope, ValidatedParams } from "./validati
 export { RESERVED_FORBIDDEN_ACTION_NAMES, RESERVED_PARAMETER_NAMES, normalizeForClassification } from "./registry/reserved-names.js";
 export { InMemoryReplayGuard } from "./state/memory/replay.js";
 export { InMemoryRateLimiter } from "./state/memory/rate-limiter.js";
+export { createLimiter } from "./limits/limiter.js";
+export type { CapabilityLimitInput, DenialInput, DenialRecord, Limiter, LimiterOptions, LimitKind, LimitVerdict, ProposalLimitInput, TurnLimitInput } from "./limits/limiter.js";
 export { DEFAULT_GATEWAY_CONFIG, DEFAULT_LIMIT_CONFIG, validateGatewayConfig, validateLimitConfig } from "./limits/limit-config.js";
 export { PostgresReplayGuard } from "./state/postgres/replay.js";
 export { PostgresRateLimiter } from "./state/postgres/rate-limiter.js";
