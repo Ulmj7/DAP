@@ -12,23 +12,30 @@
  *   fixtures (including pg inside state/postgres and a locally declared
  *   `fetch`) must not be.
  */
-import { describe, expect, it } from "vitest";
-import { join } from "node:path";
-import { scanProductionTree, scanSource } from "./static-scan.js";
-import type { StaticScanFinding } from "./static-scan.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
+import { assertCompilerApi, REQUIRED_COMPILER_API, scanSource, scanTree } from "./static-scan.js";
+import type { StaticScanFinding, StaticScanKind } from "./static-scan.js";
 
-const REPO_ROOT = join(__dirname, "..", "..");
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-const SCAN_ROOTS = [
-  "packages/ai/src",
-  "packages/actions/src",
-  "packages/security/src",
+/** Every root, with one file that must be reachable, so an empty or mistyped root can never pass vacuously. */
+const SCAN_ROOTS: ReadonlyArray<readonly [string, string]> = [
+  ["packages/ai/src", "packages/ai/src/tool-call.ts"],
+  ["packages/actions/src", "packages/actions/src/index.ts"],
+  ["packages/security/src", "packages/security/src/gateway/pipeline.ts"],
 ];
 
 describe("production scan: no forbidden modules or global fetch", () => {
-  for (const root of SCAN_ROOTS) {
+  for (const [root, sentinel] of SCAN_ROOTS) {
     it(`is clean in ${root}`, () => {
-      const findings = scanProductionTree(join(REPO_ROOT, root));
+      const { files, findings } = scanTree(REPO_ROOT, root);
+      expect(files.length).toBeGreaterThan(0);
+      expect(files).toContain(sentinel);
       expect(findings).toEqual([]);
     });
   }
@@ -39,7 +46,7 @@ describe("positive control: forbidden constructs are flagged", () => {
     label: string;
     file: string;
     code: string;
-    kind: "forbidden-import" | "global-fetch";
+    kind: StaticScanKind;
     module?: string;
   }> = [
     {
@@ -211,4 +218,262 @@ describe("negative control: allowed constructs are not flagged", () => {
       expect(scanSource(fixture.file, fixture.code)).toEqual([]);
     });
   }
+});
+
+const kinds = (code: string, file = "packages/ai/src/probe.ts"): StaticScanKind[] => [...new Set(scanSource(file, code).map((finding) => finding.kind))].sort();
+
+describe("bypass attempts: module specifiers", () => {
+  it.each([
+    ["an aliased named import", 'import { request as secretly } from "node:http";\nexport const go = secretly;\n', "node:http"],
+    ["a namespace import of net", 'import * as sock from "node:net";\nexport const go = sock;\n', "node:net"],
+    ["a default import of tls", 'import tls from "tls";\nexport const go = tls;\n', "tls"],
+    ["http2", 'import { connect } from "node:http2";\nexport const go = connect;\n', "node:http2"],
+    ["a dns subpath", 'import { lookup } from "node:dns/promises";\nexport const go = lookup;\n', "node:dns/promises"],
+    ["dgram", 'import dgram from "dgram";\nexport const go = dgram;\n', "dgram"],
+    ["inspector", 'import inspector from "node:inspector";\nexport const go = inspector;\n', "node:inspector"],
+    ["the module loader", 'import { createRequire } from "node:module";\nexport const go = createRequire;\n', "node:module"],
+    ["a side-effect import", 'import "node:child_process";\n', "node:child_process"],
+    ["an inline type modifier, which verbatimModuleSyntax still emits", 'import { type Pool } from "pg";\nexport type P = Pool;\n', "pg"],
+    ["a pg subpath", 'import Client from "pg/lib/client";\nexport const go = Client;\n', "pg/lib/client"],
+    ["an undici subpath", 'import { Agent } from "undici/types";\nexport const go = Agent;\n', "undici/types"],
+    ["an axios subpath", 'import axios from "axios/dist/node/axios.cjs";\nexport const go = axios;\n', "axios/dist/node/axios.cjs"],
+    ["pg-pool", 'import Pool from "pg-pool";\nexport const go = Pool;\n', "pg-pool"],
+    ["export * from a forbidden module", 'export * from "node:vm";\n', "node:vm"],
+    ["export * as from a forbidden module", 'export * as vm from "node:vm";\n', "node:vm"],
+    ["a named re-export", 'export { request } from "node:https";\n', "node:https"],
+    ["a require in a template literal", "export const vm = require(`child_process`);\n", "child_process"],
+    ["a dynamic import in a template literal", "export const load = () => import(`node:vm`);\n", "node:vm"],
+    ["a dynamic import with an options argument", 'export const load = () => import("node:vm", { with: {} });\n', "node:vm"],
+    ["import-equals with export", 'export import vm = require("vm");\n', "vm"],
+    ["getBuiltinModule with a literal", 'export const vm = process.getBuiltinModule("node:vm");\n', "node:vm"],
+    ["an element-access getBuiltinModule with a literal", 'export const vm = process["getBuiltinModule"]("vm");\n', "vm"],
+    ["require nested in an expression", 'export const run = (() => require("vm"))().runInNewContext;\n', "vm"],
+  ])("flags %s", (_label, code, module) => {
+    const findings = scanSource("packages/ai/src/probe.ts", code);
+    expect(findings.map((finding) => [finding.kind, finding.module])).toEqual([["forbidden-import", module]]);
+  });
+
+  it.each([
+    ["a concatenated require", 'export const vm = require("child_" + "process");\n'],
+    ["a variable dynamic import", 'export const load = (name: string) => import(name);\n'],
+    ["a template with a substitution", "export const load = (n: string) => import(`node:${n}`);\n"],
+    ["a bare reference to require", 'const load = require;\nexport const vm = load("vm");\n'],
+    ["a require with no argument", "export const x = require();\n"],
+    ["getBuiltinModule with a variable", 'export const vm = (n: string) => process.getBuiltinModule(n);\n'],
+    ["an element-access getBuiltinModule with a variable", 'export const vm = (n: string) => process["getBuiltinModule"](n);\n'],
+  ])("cannot see through %s, so it fails closed", (_label, code) => {
+    expect(kinds(code)).toContain("dynamic-module");
+  });
+
+  it("does not flag a type-only import or export, which emits nothing", () => {
+    for (const code of [
+      'import type { Pool } from "pg";\nexport type P = Pool;\n', 'import type pg from "pg";\nexport type P = pg.Pool;\n', 'import type * as vm from "node:vm";\nexport type V = typeof vm;\n',
+      'export type { Server } from "node:http";\n', 'export type * from "node:http";\n', 'import type vm = require("vm");\nexport type V = typeof vm;\n',
+    ]) expect(scanSource("packages/security/src/probe.ts", code), code).toEqual([]);
+  });
+
+  it("rests that on verbatimModuleSyntax, so the assumption cannot lapse silently", () => {
+    const base = ts.readConfigFile(join(REPO_ROOT, "tsconfig.base.json"), ts.sys.readFile);
+    expect((base.config as { compilerOptions: { verbatimModuleSyntax?: boolean } }).compilerOptions.verbatimModuleSyntax).toBe(true);
+  });
+});
+
+describe("bypass attempts: pg is allowed only under state/postgres, anchored at the repository root", () => {
+  const pg = 'import pg from "pg";\nexport const client = pg.Client;\n';
+  it.each([
+    "packages/security/src/state/postgres/tenant-policy.ts", "packages/security/src/state/postgres/nested/deeper/x.ts", "packages/security/src/state/postgres/x.mjs",
+  ])("allows %s", (file) => { expect(scanSource(file, pg)).toEqual([]); });
+
+  it.each([
+    "packages/ai/src/packages/security/src/state/postgres/x.ts", "packages/security/src/state/postgres-evil/x.ts", "packages/security/src/state/postgresql/x.ts",
+    "packages/security/src/state/conformance/postgres/x.ts", "packages/security/src/other/state/postgres/x.ts", "evil/packages/security/src/state/postgres/x.ts",
+    "packages/security/src/state/postgres.ts", "packages/actions/src/state/postgres/x.ts",
+  ])("flags %s", (file) => { expect(scanSource(file, pg).map((finding) => finding.kind)).toEqual(["forbidden-import"]); });
+
+  it("anchors an absolute path at the given repository root, and refuses an absolute path without one", () => {
+    const allowed = `${REPO_ROOT}/packages/security/src/state/postgres/x.ts`;
+    expect(scanSource(allowed, pg, REPO_ROOT)).toEqual([]);
+    expect(scanSource(allowed, pg).map((finding) => finding.kind)).toEqual(["forbidden-import"]);
+    expect(scanSource(`${REPO_ROOT}/packages/ai/src/packages/security/src/state/postgres/x.ts`, pg, REPO_ROOT)).toHaveLength(1);
+    expect(scanSource("/elsewhere/packages/security/src/state/postgres/x.ts", pg, REPO_ROOT)).toHaveLength(1);
+  });
+
+  it("uses forward and back slashes alike", () => {
+    expect(scanSource("packages\\security\\src\\state\\postgres\\x.ts", pg)).toEqual([]);
+    expect(scanSource("packages\\ai\\src\\state\\postgres\\x.ts", pg)).toHaveLength(1);
+  });
+});
+
+describe("bypass attempts: reaching the network through the global object", () => {
+  it.each([
+    ["globalThis.fetch", "export const go = (u: string) => globalThis.fetch(u);\n"],
+    ["window.fetch", "export const go = (u: string) => window.fetch(u);\n"],
+    ["self.fetch", "export const go = (u: string) => self.fetch(u);\n"],
+    ["global.fetch", "export const go = (u: string) => global.fetch(u);\n"],
+    ["a computed string key", 'export const go = (u: string) => globalThis["fetch"](u);\n'],
+    ["a cast globalThis", "export const go = (u: string) => (globalThis as unknown as { fetch: (u: string) => unknown }).fetch(u);\n"],
+    ["a non-null globalThis", "export const go = (u: string) => globalThis!.fetch(u);\n"],
+    ["optional chaining", "export const go = (u: string) => globalThis?.fetch?.(u);\n"],
+    ["destructuring from globalThis", "const { fetch } = globalThis;\nexport const go = (u: string) => fetch(u);\n"],
+    ["a renamed destructuring from globalThis", "const { fetch: f } = globalThis;\nexport const go = (u: string) => f(u);\n"],
+    ["a local alias of the global fetch", "const fetch = globalThis.fetch;\nexport const go = (u: string) => fetch(u);\n"],
+    ["a local alias that hides the call", "const f = globalThis.fetch;\nexport const go = (u: string) => f(u);\n"],
+    ["an alias of the global object itself", "const g = globalThis;\nexport const go = (u: string) => g.fetch(u);\n"],
+    ["Reflect.get on the global object", 'export const go = Reflect.get(globalThis, "fetch");\n'],
+    ["an indirect string key", 'const key = "fet" + "ch";\nexport const go = (globalThis as Record<string, unknown>)[key];\n'],
+    ["fetch in a template literal", "export const go = (u: string) => `${fetch(u)}`;\n"],
+    ["fetch held in an array", "export const go = (u: string) => [fetch][0]?.(u);\n"],
+    ["fetch as a shorthand property", "export const bag = { fetch };\n"],
+    ["fetch with optional call", "export const go = (u: string) => fetch?.(u);\n"],
+    ["fetch passed as an argument", "export const go = (use: (f: unknown) => void) => use(fetch);\n"],
+    ["a typeof probe followed by a call", 'export const go = (u: string) => (typeof fetch === "function" ? fetch(u) : null);\n'],
+  ])("flags %s", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code).length, code).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["new WebSocket", 'export const go = () => new WebSocket("wss://example.test");\n'], ["new XMLHttpRequest", "export const go = () => new XMLHttpRequest();\n"],
+    ["new EventSource", 'export const go = () => new EventSource("https://example.test");\n'], ["globalThis.WebSocket", 'export const go = () => new globalThis.WebSocket("wss://x");\n'],
+  ])("flags %s", (_label, code) => {
+    expect(kinds(code)).toEqual(expect.arrayContaining([expect.stringMatching(/global-network|global-object/)]));
+  });
+
+  it.each([
+    ["an as cast", "export const go = (globalThis as unknown as { fetch: unknown }).fetch;\n"], ["a non-null assertion", "export const go = globalThis!.fetch;\n"],
+    ["a type assertion", "export const go = (<{ fetch: unknown }>(<unknown>globalThis)).fetch;\n"], ["satisfies", "export const go = (globalThis satisfies object).fetch;\n"],
+    ["nested parentheses", "export const go = ((globalThis)).fetch;\n"], ["a string key", 'export const go = globalThis["fetch"];\n'],
+    ["an optional string key", 'export const go = globalThis?.["fetch"];\n'], ["window", "export const go = window.fetch;\n"], ["self", "export const go = self.fetch;\n"], ["global", "export const go = global.fetch;\n"],
+  ])("names the fetch kind through %s", (_label, code) => {
+    expect(kinds(code)).toContain("global-fetch");
+  });
+
+  it.each([["a string key", 'export const go = () => new globalThis["WebSocket"]("wss://x");\n'], ["a cast", 'export const go = () => new (globalThis as { WebSocket: new (u: string) => unknown }).WebSocket("wss://x");\n']])("names the network kind through %s", (_label, code) => {
+    expect(kinds(code)).toContain("global-network");
+  });
+
+  it("names the specific kind when the member is fetch", () => {
+    expect(kinds("export const go = (u: string) => globalThis.fetch(u);\n")).toEqual(["global-fetch", "global-object"]);
+    expect(kinds("const g = globalThis;\nexport const go = g;\n")).toEqual(["global-object"]);
+  });
+
+  it.each([
+    ["a local binding named self", "export function run(): number {\n  const self = { n: 1 };\n  return self.n;\n}\n"],
+    ["a parameter named window", "export const area = (window: { w: number; h: number }) => window.w * window.h;\n"],
+    ["a local named global", "export function run(): number {\n  const global = { n: 1 };\n  return global.n;\n}\n"],
+    ["a property that is named like a global", "export const read = (o: { window: number; self: number; global: number; globalThis: number }) => o.window + o.self + o.global + o.globalThis;\n"],
+    ["the words in a string and a comment", '// globalThis.fetch is not used here\nexport const note = "globalThis window self global";\n'],
+    ["an object key", "export const options = { window: 1, self: 2, globalThis: 3 };\n"],
+    ["a method named fetch", "export class Repo {\n  fetch(id: string): string { return id; }\n}\nexport const read = (r: Repo) => r.fetch('x');\n"],
+    ["a function parameter shadowing fetch", "export const run = (fetch: (u: string) => string) => fetch('x');\n"],
+    ["an imported local fetch", 'import { fetch } from "./local-repo.js";\nexport const run = () => fetch("x");\n'],
+    ["a destructured rename from a local object", "export const run = (o: { fetch: (u: string) => string }) => { const { fetch: get } = o; return get('x'); };\n"],
+    ["an interface member", "export interface Repo { fetch(id: string): string }\n"],
+  ])("does not flag %s", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code), code).toEqual([]);
+  });
+});
+
+afterEach(() => { vi.doUnmock("typescript"); });
+
+describe("failing loudly", () => {
+  it("reports a file the compiler cannot parse instead of silently scanning half of it", () => {
+    const findings = scanSource("packages/ai/src/broken.ts", 'import { exec } from "node:child_process";\nexport const = ;\nexport function (\n');
+    expect(findings.map((finding) => finding.kind)).toContain("unparseable");
+    expect(scanSource("packages/ai/src/ok.ts", "export const fine = 1;\n")).toEqual([]);
+  });
+
+  it("reports 1-based lines for findings on later lines", () => {
+    const findings = scanSource("packages/ai/src/probe.ts", '\n\nexport const a = 1;\nimport { request } from "node:http";\n\nexport const b = fetch;\n');
+    expect(findings.map((finding) => [finding.kind, finding.line])).toEqual([["forbidden-import", 4], ["global-fetch", 6]]);
+  });
+
+  it("refuses to run on a TypeScript API that lacks a node kind or guard the scan depends on", () => {
+    expect(() => assertCompilerApi(ts)).not.toThrow();
+    for (const name of REQUIRED_COMPILER_API.functions) {
+      expect(() => assertCompilerApi({ ...ts, [name]: undefined } as unknown as typeof ts), name).toThrow(name);
+    }
+    for (const name of REQUIRED_COMPILER_API.syntaxKinds) {
+      const kinds = { ...ts.SyntaxKind } as Record<string, unknown>;
+      delete kinds[name];
+      expect(() => assertCompilerApi({ ...ts, SyntaxKind: kinds } as unknown as typeof ts), name).toThrow(name);
+    }
+    expect(() => assertCompilerApi({} as typeof ts)).toThrow();
+  });
+
+  it("refuses at import time to load against a TypeScript that lacks a required guard", async () => {
+    vi.resetModules();
+    vi.doMock("typescript", () => ({ default: { ...ts, isImportEqualsDeclaration: undefined } }));
+    try {
+      await expect(import("./static-scan.js")).rejects.toThrow(/isImportEqualsDeclaration/);
+    } finally {
+      vi.doUnmock("typescript");
+      vi.resetModules();
+    }
+  });
+
+  it("lists every compiler API the scan actually uses, so the guard cannot drift from the code", () => {
+    const text = readFileSync(join(REPO_ROOT, "tests/architecture/static-scan.ts"), "utf8");
+    const used = new Set([...text.matchAll(/\bts\.(is[A-Z]\w*|create\w+|transpileModule|forEachChild)\b/g)].map((match) => match[1]));
+    const guarded = new Set<string>(REQUIRED_COMPILER_API.functions);
+    for (const name of used) expect(guarded.has(name as string), `ts.${name} is used but not asserted present`).toBe(true);
+    const kindsUsed = new Set([...text.matchAll(/\bts\.SyntaxKind\.(\w+)\b/g)].map((match) => match[1]));
+    const guardedKinds = new Set<string>(REQUIRED_COMPILER_API.syntaxKinds);
+    for (const name of kindsUsed) expect(guardedKinds.has(name as string), `SyntaxKind.${name} is used but not asserted present`).toBe(true);
+  });
+});
+
+describe("walking the tree", () => {
+  const withTree = (build: (root: string) => void, check: (root: string) => void): void => {
+    const root = mkdtempSync(join(tmpdir(), "static-scan-"));
+    try { build(root); check(root); } finally { rmSync(root, { recursive: true, force: true }); }
+  };
+  const put = (root: string, relative: string, text: string): void => {
+    mkdirSync(dirname(join(root, relative)), { recursive: true });
+    writeFileSync(join(root, relative), text);
+  };
+  const vm = 'import { runInNewContext } from "node:vm";\nexport const run = runInNewContext;\n';
+
+  it.each(["x.ts", "x.mts", "x.cts", "x.tsx", "x.js", "x.mjs", "x.cjs", "x.jsx", "x.test-support.ts", "deep/er/x.ts"])("scans %s as production code", (name) => {
+    withTree((root) => put(root, `packages/ai/src/${name}`, name.endsWith("x") ? "export const x = <div/>;\n" : vm), (root) => {
+      const { files, findings } = scanTree(root, "packages/ai/src");
+      expect(files).toEqual([`packages/ai/src/${name}`]);
+      if (name !== "x.tsx" && name !== "x.jsx") expect(findings.map((finding) => finding.kind)).toEqual(["forbidden-import"]);
+    });
+  });
+
+  it("skips tests and declaration files only", () => {
+    withTree((root) => {
+      for (const name of ["a.test.ts", "a.test.mts", "a.test.js", "a.d.ts", "a.d.mts", "a.json", "a.md", "a.txt"]) put(root, `packages/ai/src/${name}`, vm);
+      put(root, "packages/ai/src/prod.ts", "export const fine = 1;\n");
+    }, (root) => {
+      const { files, findings } = scanTree(root, "packages/ai/src");
+      expect(files).toEqual(["packages/ai/src/prod.ts"]);
+      expect(findings).toEqual([]);
+    });
+  });
+
+  it("reports relative file paths and applies the pg allow-list against the repository root", () => {
+    withTree((root) => {
+      put(root, "packages/security/src/state/postgres/ok.ts", 'import pg from "pg";\nexport const c = pg;\n');
+      put(root, "packages/security/src/state/other.ts", 'import pg from "pg";\nexport const c = pg;\n');
+    }, (root) => {
+      const { findings } = scanTree(root, "packages/security/src");
+      expect(findings.map((finding) => finding.file)).toEqual(["packages/security/src/state/other.ts"]);
+    });
+  });
+
+  it("fails loudly on a missing or empty scan root, and on symbolic links", () => {
+    withTree(() => undefined, (root) => {
+      expect(() => scanTree(root, "packages/ai/src")).toThrow();
+      mkdirSync(join(root, "packages/ai/src"), { recursive: true });
+      expect(() => scanTree(root, "packages/ai/src")).toThrow(/no source files/);
+    });
+    withTree((root) => {
+      put(root, "packages/ai/src/real.ts", "export const fine = 1;\n");
+      put(root, "elsewhere/vm.ts", vm);
+      symlinkSync(join(root, "elsewhere/vm.ts"), join(root, "packages/ai/src/link.ts"));
+    }, (root) => {
+      expect(() => scanTree(root, "packages/ai/src")).toThrow(/symbolic link/);
+    });
+  });
 });
