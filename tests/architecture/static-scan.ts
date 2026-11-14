@@ -60,16 +60,17 @@ export const REQUIRED_COMPILER_API = {
     "isAsExpression", "isNonNullExpression", "isTypeAssertionExpression", "isSatisfiesExpression", "isPropertyAssignment", "isMethodDeclaration",
     "isMethodSignature", "isPropertyDeclaration", "isPropertySignature", "isImportSpecifier", "isExportSpecifier", "isImportClause",
     "isVariableDeclaration", "isBindingElement", "isFunctionDeclaration", "isFunctionExpression", "isArrowFunction", "isParameter", "isCatchClause",
-    "isClassDeclaration", "isClassExpression", "isEnumDeclaration", "isTypeAliasDeclaration", "isInterfaceDeclaration", "isModuleDeclaration",
+    "isClassDeclaration", "isClassExpression", "isEnumDeclaration", "isTypeAliasDeclaration", "isModuleDeclaration",
     "isQualifiedName", "isConstructorDeclaration", "isBlock", "isSourceFile", "isVariableStatement", "isNamedImports", "isNamespaceImport",
     "isTypeReferenceNode", "isTypeQueryNode", "isBinaryExpression", "isObjectBindingPattern", "isForStatement", "isForInStatement",
     "isForOfStatement", "isVariableDeclarationList", "isCaseClause", "isDefaultClause", "isModuleBlock", "isGetAccessorDeclaration",
     "isSetAccessorDeclaration", "isEnumMember", "isLabeledStatement", "isBreakStatement", "isContinueStatement", "isTypeOfExpression",
-    "isExpressionWithTypeArguments", "isHeritageClause", "isTypeParameterDeclaration", "isNamedTupleMember",
+    "isExpressionWithTypeArguments", "isHeritageClause", "isTypeParameterDeclaration", "isNamedTupleMember", "isNamespaceExport", "isObjectLiteralExpression",
+    "isComputedPropertyName", "isShorthandPropertyAssignment", "isInterfaceDeclaration",
   ],
   syntaxKinds: [
     "ImportKeyword", "ExternalModuleReference", "DeclareKeyword", "InstanceOfKeyword", "ImplementsKeyword", "EqualsToken", "EqualsEqualsToken",
-    "EqualsEqualsEqualsToken", "ExclamationEqualsToken", "ExclamationEqualsEqualsToken",
+    "EqualsEqualsEqualsToken", "ExclamationEqualsToken", "ExclamationEqualsEqualsToken", "ThisKeyword",
   ],
   /** Other enums the scan reads: name -> members. */
   enums: { ScriptTarget: ["ES2022"], ModuleKind: ["ESNext"], JsxEmit: ["Preserve"], DiagnosticCategory: ["Error"] },
@@ -164,7 +165,7 @@ function isNamePosition(node: ts.Identifier, parent: ts.Node | undefined): boole
   if (ts.isPropertySignature(parent) && parent.name === node) return true;
   if ((ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent)) && parent.name === node) return true;
   if (ts.isEnumMember(parent) && parent.name === node) return true;
-  if ((ts.isTypeParameterDeclaration(parent) || ts.isNamedTupleMember(parent)) && parent.name === node) return true;
+  if ((ts.isTypeParameterDeclaration(parent) || ts.isNamedTupleMember(parent) || ts.isNamespaceExport(parent) || ts.isImportEqualsDeclaration(parent)) && parent.name === node) return true;
   if ((ts.isLabeledStatement(parent) || ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === node) return true;
   if (ts.isImportSpecifier(parent) && (parent.name === node || parent.propertyName === node)) return true;
   if (ts.isExportSpecifier(parent) && (parent.name === node || parent.propertyName === node)) return true;
@@ -201,13 +202,24 @@ function declaresInList(list: ts.VariableDeclarationList, name: string): boolean
   return list.declarations.some((declaration) => bindsName(declaration.name, name));
 }
 
+/** A namespace that holds only types (interfaces, aliases, other such namespaces) emits nothing and binds no value. */
+function isInstantiated(declaration: ts.ModuleDeclaration): boolean {
+  const body = declaration.body;
+  if (body === undefined) return false;
+  if (ts.isModuleDeclaration(body)) return isInstantiated(body);
+  if (!ts.isModuleBlock(body)) return false;
+  return body.statements.some((statement) =>
+    !(ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) && !(ts.isModuleDeclaration(statement) && !isInstantiated(statement)));
+}
+
 /** Does this statement introduce a value binding called `name` into the scope that holds it? */
 function declaresStatement(statement: ts.Statement, name: string): boolean {
   if (ts.isVariableStatement(statement)) return !isAmbient(statement) && declaresInList(statement.declarationList, name);
   // A function without a body is an overload signature: it emits nothing, and its implementation declares the name.
   if (ts.isFunctionDeclaration(statement)) return !isAmbient(statement) && statement.body !== undefined && statement.name?.text === name;
   if (ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) return !isAmbient(statement) && statement.name?.text === name;
-  if (ts.isModuleDeclaration(statement)) return !isAmbient(statement) && ts.isIdentifier(statement.name) && statement.name.text === name;
+  if (ts.isModuleDeclaration(statement)) return !isAmbient(statement) && ts.isIdentifier(statement.name) && statement.name.text === name && isInstantiated(statement);
+  if (ts.isImportEqualsDeclaration(statement)) return !statement.isTypeOnly && statement.name.text === name;
   if (ts.isImportDeclaration(statement)) {
     // TS 6: default and namespace bindings both live on the import clause. A type-only import binds no value.
     const clause = statement.importClause;
@@ -235,6 +247,8 @@ function declaresName(scope: ts.Node, name: string): boolean {
     return scope.initializer !== undefined && ts.isVariableDeclarationList(scope.initializer) && declaresInList(scope.initializer, name);
   }
   if (ts.isCatchClause(scope)) return scope.variableDeclaration !== undefined && bindsName(scope.variableDeclaration.name, name);
+  // `const A = class fetch { ... }`: the class's own name is visible inside it.
+  if (ts.isClassExpression(scope)) return scope.name?.text === name;
   return false;
 }
 
@@ -388,13 +402,20 @@ export function scanSource(file: string, text: string, repoRoot?: string): Stati
       if (member === "getBuiltinModule" && !isDirectLiteralCall(node)) report(node, "dynamic-module");
       else if (member !== undefined && member !== "getBuiltinModule" && LOADER_MEMBERS.has(member) && global === "process") report(node, "dynamic-module");
       // `x.constructor` is how a function's Function constructor is reached; see constructorReadIsHarmless for what is fine.
-      if (member === "constructor" && !constructorReadIsHarmless(node)) report(node, "dynamic-code");
+      // `this.constructor` in a method is the instance's own class (a class that extends Function is a finding by itself).
+      if (member === "constructor" && target.kind !== ts.SyntaxKind.ThisKeyword && !constructorReadIsHarmless(node)) report(node, "dynamic-code");
     }
 
-    // `const { constructor: F } = fn` reaches it without a member access.
+    // `const { constructor: F } = fn`, `const { ["constructor"]: F } = fn`, `({ constructor: F } = fn)`, `({ constructor } = fn)`.
+    const destructuredKey = (key: ts.PropertyName): string | undefined =>
+      ts.isIdentifier(key) || ts.isStringLiteral(key) ? key.text : ts.isComputedPropertyName(key) ? stringKey(key.expression) : undefined;
     if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
-      const key = node.propertyName ?? node.name;
-      if ((ts.isIdentifier(key) || ts.isStringLiteral(key)) && key.text === "constructor") report(node, "dynamic-code");
+      if (destructuredKey(node.propertyName ?? (node.name as ts.PropertyName)) === "constructor") report(node, "dynamic-code");
+    } else if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) && ts.isObjectLiteralExpression(node.parent)) {
+      const assignment = node.parent.parent;
+      if (ts.isBinaryExpression(assignment) && assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken && assignment.left === node.parent && destructuredKey(node.name) === "constructor") {
+        report(node, "dynamic-code");
+      }
     }
 
     if (ts.isIdentifier(node)) {
@@ -409,8 +430,14 @@ export function scanSource(file: string, text: string, repoRoot?: string): Stati
       else if (name === "module") report(node, "dynamic-module");
       // `process` may only be used as `process.<member>`; an alias, a destructuring or a computed key can reach any loader.
       else if (name === "process") {
-        const member = parent && ts.isPropertyAccessExpression(parent) && parent.expression === node ? parent : parent && ts.isElementAccessExpression(parent) && parent.expression === node && stringKey(parent.argumentExpression) !== undefined ? parent : undefined;
-        if (!member) report(node, "dynamic-module");
+        let top: ts.Node = node;
+        while (top.parent && (ts.isParenthesizedExpression(top.parent) || ts.isNonNullExpression(top.parent) || ts.isAsExpression(top.parent) ||
+          ts.isTypeAssertionExpression(top.parent) || ts.isSatisfiesExpression(top.parent))) top = top.parent;
+        const outer = top.parent;
+        const usedAsMember = outer && ((ts.isPropertyAccessExpression(outer) && outer.expression === top) ||
+          (ts.isElementAccessExpression(outer) && outer.expression === top && stringKey(outer.argumentExpression) !== undefined));
+        // `typeof process` only asks whether it exists.
+        if (!usedAsMember && !(outer && ts.isTypeOfExpression(outer))) report(node, "dynamic-module");
       } else if (name === "eval") report(node, "dynamic-code");
       // `Function` is the code-from-text constructor. Testing against it (`x instanceof Function`) or reading `Function.prototype` is not a use of it.
       else if (name === "Function") {

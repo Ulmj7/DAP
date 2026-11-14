@@ -55,6 +55,12 @@ function importsOf(file: string): Array<{ specifier: string; names: string[] | "
       found.push({ specifier: node.moduleSpecifier.text, names: clause && ts.isNamedExports(clause) ? clause.elements.map((element) => (element.propertyName ?? element.name).text) : "*" });
     } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference) && ts.isStringLiteral(node.moduleReference.expression)) {
       found.push({ specifier: node.moduleReference.expression.text, names: "*" });
+    } else if (ts.isImportTypeNode(node)) {
+      // `import("x").Name` in a type position still names another module's type.
+      const argument = node.argument;
+      const specifier = ts.isLiteralTypeNode(argument) && ts.isStringLiteral(argument.literal) ? argument.literal.text : "<non-literal>";
+      const first = node.qualifier ? (ts.isIdentifier(node.qualifier) ? node.qualifier.text : node.qualifier.left.getText()) : undefined;
+      found.push({ specifier, names: first === undefined ? "*" : [first] });
     } else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
       const first = node.arguments[0];
       found.push({ specifier: first && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first)) ? first.text : "<non-literal>", names: "*" });

@@ -172,7 +172,7 @@ describe("parseEnvelope: malformed payloads", () => {
   it("maps every other strict-json failure to malformed_envelope", () => {
     for (const text of [
       '{"action":"sendEmail","params":{', // syntax
-      '{"a":'.repeat(20) + "1" + "}".repeat(20), // too_deep, and a well-formed document otherwise
+      `{"action":"sendEmail","params":${'{"a":'.repeat(8)}1${"}".repeat(8)}}`, // a valid envelope that is nine levels too deep: only the depth cap rejects it
     ]) {
       const result = parseEnvelope(text);
       expect(result).toEqual({
@@ -200,6 +200,14 @@ describe("parseEnvelope: no input echo", () => {
 
 describe("parseEnvelope: QA hardening", () => {
   const ok = '{"action":"sendEmail","params":{}}';
+
+  it("rejects only because of the depth cap: the same envelope within the cap is accepted", () => {
+    const within = `{"action":"sendEmail","params":${'{"a":'.repeat(7)}1${"}".repeat(7)}}`;
+    const beyond = `{"action":"sendEmail","params":${'{"a":'.repeat(8)}1${"}".repeat(8)}}`;
+    expect(parseEnvelope(within)).toMatchObject({ ok: true });
+    expect(parseEnvelope(beyond)).toEqual({ ok: false, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+    expect(parseEnvelope(beyond, { maxJsonDepth: 10 })).toMatchObject({ ok: true });
+  });
 
   it("uses the configured caps, not hard-coded ones", () => {
     expect(parseEnvelope(ok, { maxPayloadBytes: ok.length })).toMatchObject({ ok: true });

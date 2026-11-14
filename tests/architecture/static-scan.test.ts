@@ -576,6 +576,74 @@ describe("third round: node:process, constructor idioms, heritage clauses and ty
   });
 });
 
+describe("fourth round: namespaces, assignment destructuring, process casts, this.constructor and exported names", () => {
+  it.each([
+    ["a type-only namespace", "namespace fetch { export type T = 1 }\nexport const r = (u: string) => fetch(u);\n"],
+    ["an interface-only namespace", "namespace self { export interface I { n: number } }\nexport const r = (u: string) => self.fetch(u);\n"],
+    ["a nested type-only namespace", "namespace fetch { export namespace inner { export type T = 1 } }\nexport const r = (u: string) => fetch(u);\n"],
+    ["an ambient namespace", "declare namespace fetch { const x: number }\nexport const r = (u: string) => fetch(u);\n"],
+    ["a dotted type-only namespace", "namespace fetch.inner { export type T = 1 }\nexport const r = (u: string) => fetch(u);\n"],
+  ])("is not fooled by %s, which emits nothing", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code).length, code).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["an instantiated namespace", "namespace fetch { export const x = 1 }\nexport const r = fetch.x;\n"],
+    ["a namespace with a function", "namespace self { export function f(): number { return 1; } }\nexport const r = self.f();\n"],
+    ["a namespace with an enum", "namespace window { export enum E { A } }\nexport const r = window.E.A;\n"],
+    ["a nested instantiated namespace", "namespace self { export namespace inner { export const y = 1 } }\nexport const r = self.inner.y;\n"],
+    ["a dotted instantiated namespace", "namespace self.inner { export const y = 1 }\nexport const r = self.inner.y;\n"],
+  ])("still treats %s as a local binding", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code), code).toEqual([]);
+  });
+
+  it.each([
+    ["assignment destructuring", "let F: unknown;\nexport const go = (fn: object) => { ({ constructor: F } = fn); return F; };\n"],
+    ["assignment destructuring with a computed literal key", 'let F: unknown;\nexport const go = (fn: object) => { ({ ["constructor"]: F } = fn); return F; };\n'],
+    ["shorthand assignment destructuring", "let constructor: unknown;\nexport const go = (fn: object) => { ({ constructor } = fn); return constructor; };\n"],
+    ["a computed literal key in a declaration", 'export const go = (fn: object) => { const { ["constructor"]: F } = fn; return F; };\n'],
+    ["a quoted key in a declaration", 'export const go = (fn: object) => { const { "constructor": F } = fn; return F; };\n'],
+  ])("flags .constructor reached through %s", (_label, code) => {
+    expect(kinds(code), code).toContain("dynamic-code");
+  });
+
+  it.each([
+    ["a cast", "export const env = () => (process as NodeJS.Process).env;\n"], ["a non-null assertion", "export const env = () => process!.env;\n"],
+    ["parentheses", "export const env = () => (process).env;\n"], ["a typeof guard", 'export const hasProcess = (): boolean => typeof process !== "undefined";\n'],
+    ["a typeof guard on a member", 'export const hasEnv = (): boolean => typeof process.env === "object";\n'], ["a computed safe member", 'export const v = () => (process as NodeJS.Process)["version"];\n'],
+  ])("allows process through %s", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code), code).toEqual([]);
+  });
+
+  it.each([
+    ["a cast alias", "export const p = process as unknown as Record<string, unknown>;\n"], ["a cast loader member", 'export const b = (process as NodeJS.Process & { binding: (n: string) => unknown }).binding("fs");\n'],
+    ["a non-null alias", "export const p = process!;\n"],
+  ])("still flags process through %s", (_label, code) => {
+    expect(kinds(code), code).toContain("dynamic-module");
+  });
+
+  it.each([
+    ["new this.constructor", "export class A {\n  clone(): A { return new (this.constructor as new () => A)(); }\n}\n"],
+    ["a this.constructor alias", "export class A {\n  static make(): number { return 1; }\n  run(): number { const C = this.constructor as typeof A; return C.make(); }\n}\n"],
+    ["this.constructor passed on", "export class A {\n  register(use: (c: unknown) => void): void { use(this.constructor); }\n}\n"],
+  ])("does not flag %s: a class instance's constructor is its class", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code), code).toEqual([]);
+  });
+
+  it("still flags a call on a non-this constructor, and a class that really extends Function", () => {
+    expect(kinds('export const make = (f: () => void) => new (f.constructor as new (s: string) => () => void)("return 1");\n')).toContain("dynamic-code");
+    expect(kinds("export class C extends Function { m(): unknown { return new (this.constructor as new () => unknown)(); } }\n")).toContain("dynamic-code");
+  });
+
+  it.each([
+    ["a namespace re-export named process", 'export * as process from "./process.js";\n'], ["named module", 'export * as module from "./m.js";\n'], ["named self", 'export * as self from "./s.js";\n'],
+    ["named fetch", 'export * as fetch from "./f.js";\n'], ["a class expression's own name", "export const A = class fetch { x = (): unknown => fetch; };\n"],
+    ["an import-equals alias", 'import fetch = require("./local.js");\nexport const r = (u: string) => fetch(u);\n'],
+  ])("does not flag %s as a use of the global", (_label, code) => {
+    expect(scanSource("packages/ai/src/probe.ts", code), code).toEqual([]);
+  });
+});
+
 describe("failing loudly", () => {
   it("reports a file the compiler cannot parse instead of silently scanning half of it", () => {
     const findings = scanSource("packages/ai/src/broken.ts", 'import { exec } from "node:child_process";\nexport const = ;\nexport function (\n');
