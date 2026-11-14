@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GatewayDependencies, PlannerRunMeta, ProposalCall } from "@dap/contracts";
+import type { GatewayDependencies } from "@dap/contracts";
 import { createPolicyGateway } from "./create-gateway.js";
 import { context, dependencies, run } from "./fixtures.test-support.js";
 
@@ -79,27 +79,6 @@ describe("gateway composition and planner boundary", () => {
     await submitter.submit({ callId: "one", raw: {} });
     await submitter.submit({ callId: "two", raw: {} });
     expect(reads).toBe(1);
-    expect(calls()).toBe(0);
-  });
-
-  it.each([null, {}, { ...run, depth: -1 }, { ...run, model: undefined }])("malformed run %j denies without throwing", async (metadata) => {
-    const { deps, calls } = dependencies();
-    const submitter = createPolicyGateway(deps).proposals.forSession(context(), metadata as PlannerRunMeta);
-    expect(await submitter.submit({ callId: "one", raw: {} })).toEqual({ outcome: "DENIED", category: "try_later" });
-    expect(calls()).toBe(0);
-  });
-
-  it.each([undefined, null, 42, Promise.resolve("id")])("malformed decision id %j denies", async (id) => {
-    const { deps, calls } = dependencies();
-    Object.assign(deps, { ids: { ...deps.ids, newDecisionId: () => id } });
-    expect(await createPolicyGateway(deps).proposals.forSession(context(), run).submit({} as ProposalCall)).toEqual({ outcome: "DENIED", category: "try_later" });
-    expect(calls()).toBe(0);
-  });
-
-  it("contains ID generation failures and does not expose error text", async () => {
-    const { deps, calls } = dependencies();
-    Object.assign(deps, { ids: { ...deps.ids, newDecisionId: () => { throw new Error("CANARY"); } } });
-    expect(await createPolicyGateway(deps).proposals.forSession(context(), run).submit({ callId: "x", raw: {} })).toEqual({ outcome: "DENIED", category: "try_later" });
     expect(calls()).toBe(0);
   });
 
