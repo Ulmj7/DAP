@@ -34,8 +34,8 @@ export function declaredIssuePath(schema: unknown, path: readonly PropertyKey[],
     const child = data !== null && typeof data === "object" && Object.hasOwn(data, segment) ? Reflect.get(data, segment) : undefined;
     const properties = record(node.properties);
     if (properties && Object.hasOwn(properties, segment) && walk(properties[segment], index + 1, child)) return true;
-    const arrayIndex = typeof segment === "number" ? segment : -1;
-    if (!Number.isSafeInteger(arrayIndex) || arrayIndex < 0) return false;
+    const arrayIndex = Number.isSafeInteger(segment) ? segment as number : -1;
+    if (arrayIndex < 0) return false;
     // A refinement must not encode a numeric parameter as an invented array index.
     if (!Array.isArray(data) || arrayIndex >= data.length) return false;
     if (Array.isArray(node.prefixItems) && arrayIndex < node.prefixItems.length) return walk(node.prefixItems[arrayIndex], index + 1, child);
