@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PIPELINE_STAGES } from "@dap/contracts";
 import { createPipeline, type PolicyStage } from "./pipeline.js";
 import { allowedDecision } from "./decision.js";
-import { input, stageMap } from "./fixtures.test-support.js";
+import { input, run, stageMap } from "./fixtures.test-support.js";
 
 afterEach(() => { vi.useRealTimers(); });
 const allow: PolicyStage = (request) => ({ kind: "stop", decision: allowedDecision({ decisionId: request.decisionId, requestId: request.requestId, actionId: "viewProject" as never, risk: "SAFE", paramsDigest: "a".repeat(64) as never }) });
@@ -137,7 +137,7 @@ describe("ordered immutable request pipeline", () => {
   });
 
   it("rejects a decision bound to a different request", async () => {
-    const stages = stageMap(() => allow({ ...input("other"), context: null, facts: {} }));
+    const stages = stageMap(() => allow({ ...input("other"), run, context: null, facts: {} }));
     expect(await createPipeline(stages).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
   });
 

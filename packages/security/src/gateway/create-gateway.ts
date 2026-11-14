@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type {
-  ActionId, ActionRegistry, AuditSink, AuthorizationContext, Clock, ConfirmationChannel, ConfirmationService, ConfirmationStore, ExecutorTable, GatewayConfig, GatewayDependencies,
-  IdGenerator, PageContextProvider, PermissionChecker, PlannerFeedback, PlannerRunMeta, PolicyGateway, ProposalCall, RateLimiter, ReplayGuard, RequestId, ResourceAuthorizer,
+  ActionId, ActionRegistry, AuditSink, Clock, ConfirmationChannel, ConfirmationService, ConfirmationStore, ExecutorTable, GatewayConfig, GatewayDependencies,
+  IdGenerator, PageContextProvider, PermissionChecker, PolicyGateway, RateLimiter, ReplayGuard, ResourceAuthorizer,
   SecurityStateStore, TenantActionPolicyStore,
 } from "@dap/contracts";
 import { snapshotAnswer } from "./answer-snapshot.js";
-import { toPlannerFeedback } from "./feedback.js";
 import { createPipeline } from "./pipeline.js";
+import { createProposalGateway } from "./submitter.js";
 import { createContextStage } from "./stages/context.js";
 import { createResolveStage } from "./stages/resolve.js";
 
@@ -16,7 +16,6 @@ const configSchema = z.strictObject({
   limits: z.strictObject({ proposalsPerTurn: positive, executionsPerTurn: positive, maxChainDepth: z.number().int().nonnegative(), turnBudgetMs: positive, perUserPerMinute: rule, perTenantPerMinute: rule, perUserPerCapabilityPerMinute: rule, highRiskPerUserPerHour: rule, denialThrottle: z.strictObject({ denials: positive, windowSeconds: positive, blockSeconds: positive }) }),
   maxPayloadBytes: positive, maxJsonDepth: positive, replayRetentionSeconds: positive, confirmationDefaultTtlSeconds: positive.max(900), hookTimeoutMs: positive.max(0x7fff_ffff),
 });
-const unavailable: PlannerFeedback = Object.freeze({ outcome: "DENIED", category: "try_later" });
 
 /**
  * Compile-time exhaustive method lists: a method added to (or removed from) a contract port
@@ -93,22 +92,7 @@ export function createPolicyGateway(source: GatewayDependencies): Readonly<{ pro
     resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),
     // Unimplemented D6 positions remain absent and therefore deny before later hooks run.
   }, options);
-  const proposals: PolicyGateway = Object.freeze({ forSession: Object.freeze((context: AuthorizationContext, run: PlannerRunMeta) => {
-    let capturedRun: unknown;
-    try { capturedRun = snapshotAnswer(run); } catch { capturedRun = null; }
-    return Object.freeze({ submit: Object.freeze(async (call: ProposalCall): Promise<PlannerFeedback> => {
-      try {
-        const decisionId: unknown = deps.ids.newDecisionId();
-        if (typeof decisionId !== "string" || !decisionId) {
-          // A broken synchronous port may return a rejecting promise; consume its rejection.
-          void Promise.resolve(decisionId).catch(() => {});
-          return unavailable;
-        }
-        const decision = await pipeline.run({ context, run: capturedRun as Parameters<PolicyGateway["forSession"]>[1], decisionId, requestId: decisionId as RequestId, readProposal: () => call });
-        return toPlannerFeedback(decision);
-      } catch { return unavailable; }
-    }) });
-  }) });
+  const proposals = createProposalGateway({ pipeline, ids: deps.ids });
   const confirmations: ConfirmationService = Object.freeze({
     decide: Object.freeze(async () => Object.freeze({ status: "not_valid", category: "not_found" } as const)),
     listPending: Object.freeze(async () => Object.freeze([])),

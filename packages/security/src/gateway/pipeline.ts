@@ -9,14 +9,16 @@ import type { HookOptions, HookTimer } from "./hook-wrapper.js";
 
 export interface PipelineInput {
   readonly context: unknown;
-  readonly run: PlannerRunMeta;
+  /** Untrusted until the pipeline validates it; a record that cannot be read arrives as null. */
+  readonly run: unknown;
   readonly decisionId: string;
   readonly requestId: RequestId;
   /** Only intake reads the proposal; context denial must not even inspect its getters. */
   readonly readProposal: () => ProposalCall;
 }
-export interface PipelineRecord extends Omit<PipelineInput, "context"> {
+export interface PipelineRecord extends Omit<PipelineInput, "context" | "run"> {
   readonly context: AuthorizationContext | null;
+  readonly run: PlannerRunMeta;
   /** Each stage owns one append-only slot. Values are detached, deeply frozen JSON data. */
   readonly facts: Readonly<Partial<Record<PipelineStage, JsonValue>>>;
 }
