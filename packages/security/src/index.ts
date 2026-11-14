@@ -1,1 +1,7 @@
 export { canonicalJson, sha256Canonical } from "./validation/canonical.js";
+export { buildRegistry } from "./registry/build-registry.js";
+export { bindExecutors } from "./registry/bind-executors.js";
+export { createEnablementPolicy } from "./registry/enablement.js";
+export type { EnablementPolicy } from "./registry/enablement.js";
+export { RegistrationError } from "./registry/registration-error.js";
+export { RESERVED_FORBIDDEN_ACTION_NAMES, RESERVED_PARAMETER_NAMES, normalizeForClassification } from "./registry/reserved-names.js";
