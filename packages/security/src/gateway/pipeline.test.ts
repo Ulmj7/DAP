@@ -47,6 +47,48 @@ describe("ordered immutable request pipeline", () => {
     expect(reads).toBe(1);
   });
 
+  it("reads every proposal field exactly once however many stages ask", async () => {
+    let callIdReads = 0;
+    let rawReads = 0;
+    const raw = { action: "viewProject", params: {} };
+    const call = { get callId() { callIdReads++; return "call"; }, get raw() { rawReads++; return raw; } };
+    const seen: unknown[] = [];
+    const stages = stageMap(allow);
+    stages.intake = (request) => { seen.push(request.readProposal(), request.readProposal()); return { kind: "continue", data: {} }; };
+    stages.resolve = (request) => { seen.push(request.readProposal()); return { kind: "continue", data: {} }; };
+    expect((await createPipeline(stages).run({ ...input(), readProposal: () => call as never })).outcome).toBe("ALLOWED");
+    expect([callIdReads, rawReads]).toEqual([1, 1]);
+    expect(new Set(seen).size).toBe(1);
+    expect(seen[0]).toEqual({ callId: "call", raw });
+    expect(Object.isFrozen(seen[0])).toBe(true);
+  });
+
+  it("stays unavailable when the proposal throws once, without a second read", async () => {
+    let reads = 0;
+    let executions = 0;
+    const call = { callId: "call", get raw(): never { reads++; throw new Error("CANARY"); } };
+    const stages = stageMap(() => { executions++; throw new Error("unreachable"); });
+    const failures: unknown[] = [];
+    stages.intake = (request) => {
+      for (let attempt = 0; attempt < 2; attempt++) { try { request.readProposal(); } catch (error) { failures.push(error); } }
+      throw failures[0];
+    };
+    const decision = await createPipeline(stages).run({ ...input(), readProposal: () => call });
+    expect(decision).toMatchObject({ outcome: "DENIED", reason: "internal_error", stage: "intake" });
+    expect(failures).toHaveLength(2);
+    expect(reads).toBe(1);
+    expect(executions).toBe(0);
+    expect(JSON.stringify(decision)).not.toContain("CANARY");
+  });
+
+  it.each([null, undefined, 7, "text"])("an unusable proposal object %j is unavailable, not a crash", async (value) => {
+    let outcome = "";
+    const stages = stageMap(allow);
+    stages.intake = (request) => { try { request.readProposal(); outcome = "read"; } catch { outcome = "unavailable"; } return { kind: "continue", data: {} }; };
+    await createPipeline(stages).run({ ...input(), readProposal: () => value as never });
+    expect(outcome).toBe("unavailable");
+  });
+
   it("takes a snapshot of stage registrations", async () => {
     const stages = stageMap(allow);
     const pipeline = createPipeline(stages);

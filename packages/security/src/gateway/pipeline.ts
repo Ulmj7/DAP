@@ -27,6 +27,24 @@ const nativeTimer: HookTimer = { now: () => performance.now(), setTimeout: (call
 const runSchema = z.strictObject({ aiSessionId: z.string().min(1), turnId: z.string().min(1), model: z.string().min(1), depth: z.number().int().nonnegative(), turnStartedAt: z.iso.datetime({ offset: true }) });
 const continuing = z.strictObject({ kind: z.literal("continue"), data: z.record(z.string(), z.json()) });
 type FailureReason = "internal_error" | "dependency_failure";
+/**
+ * Each untrusted proposal field is read exactly once, however many stages ask. The shell is
+ * frozen; `raw` stays the caller's value for intake to copy once (never frozen in place).
+ */
+function onceProposal(read: () => ProposalCall): () => ProposalCall {
+  let captured: { readonly proposal: ProposalCall } | null | undefined;
+  return Object.freeze((): ProposalCall => {
+    if (captured === undefined) {
+      try {
+        const call = read();
+        if (call === null || typeof call !== "object") throw new TypeError("Proposal is not an object");
+        captured = { proposal: Object.freeze({ callId: call.callId, raw: call.raw }) };
+      } catch { captured = null; }
+    }
+    if (captured === null) throw new TypeError("Proposal unavailable");
+    return captured.proposal;
+  });
+}
 const failure = (request: Pick<PipelineInput, "decisionId" | "requestId">, stage: PipelineStage, reason: FailureReason) => denyDecision({ decisionId: request.decisionId, requestId: request.requestId, stage, reason });
 
 function captureResult(raw: unknown, request: PipelineRecord, stage: PipelineStage): StageResult {
@@ -107,7 +125,7 @@ export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer =
         identifiers = { decisionId, requestId };
         const capturedRun = snapshotAnswer(run);
         if (!runSchema.safeParse(capturedRun).success || typeof readProposal !== "function") return failure(identifiers, current, "dependency_failure");
-        let request: PipelineRecord = Object.freeze({ ...identifiers, context: isMintedContext(context) ? context : null, run: capturedRun as PlannerRunMeta, readProposal: Object.freeze(() => readProposal()), facts: Object.freeze({}) });
+        let request: PipelineRecord = Object.freeze({ ...identifiers, context: isMintedContext(context) ? context : null, run: capturedRun as PlannerRunMeta, readProposal: onceProposal(readProposal), facts: Object.freeze({}) });
         for (const { name, fn } of ordered) {
           current = name;
           // Absent guards must stop before any later hook or executor can run.
