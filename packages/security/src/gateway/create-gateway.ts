@@ -5,8 +5,10 @@ import type {
   SecurityStateStore, TenantActionPolicyStore,
 } from "@dap/contracts";
 import { snapshotAnswer } from "./answer-snapshot.js";
-import { createPipeline } from "./pipeline.js";
+import { createPipeline, type StageMap } from "./pipeline.js";
 import { createProposalGateway } from "./submitter.js";
+import { createIntakeStage } from "./stages/intake.js";
+import { createValidateStage } from "./stages/validate.js";
 import { createContextStage } from "./stages/context.js";
 import { createResolveStage } from "./stages/resolve.js";
 
@@ -84,14 +86,24 @@ function captureDependencies(source: GatewayDependencies): GatewayDependencies {
   } catch { throw new TypeError("Missing or invalid gateway dependency"); }
 }
 
+/**
+ * The D6 stages implemented so far, bound to the captured dependencies. Positions not listed stay absent, and the
+ * pipeline denies fail-closed at the first absent one. Exported for tests only; not part of the package surface.
+ */
+export function composeStages(deps: GatewayDependencies): StageMap {
+  const options = { hookTimeoutMs: deps.config.hookTimeoutMs };
+  const caps = { maxPayloadBytes: deps.config.maxPayloadBytes, maxJsonDepth: deps.config.maxJsonDepth };
+  return {
+    context: createContextStage(deps.clock, options),
+    intake: createIntakeStage(caps),
+    resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),
+    validate: createValidateStage(deps.registry, caps),
+  };
+}
+
 export function createPolicyGateway(source: GatewayDependencies): Readonly<{ proposals: PolicyGateway; confirmations: ConfirmationService }> {
   const deps = captureDependencies(source);
-  const options = { hookTimeoutMs: deps.config.hookTimeoutMs };
-  const pipeline = createPipeline({
-    context: createContextStage(deps.clock, options),
-    resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),
-    // Unimplemented D6 positions remain absent and therefore deny before later hooks run.
-  }, options);
+  const pipeline = createPipeline(composeStages(deps), { hookTimeoutMs: deps.config.hookTimeoutMs });
   const proposals = createProposalGateway({ pipeline, ids: deps.ids });
   const confirmations: ConfirmationService = Object.freeze({
     decide: Object.freeze(async () => Object.freeze({ status: "not_valid", category: "not_found" } as const)),
