@@ -201,7 +201,9 @@ describe("exact resolution and live default-deny enablement", () => {
       expect(result.executions).toBe(0);
     });
 
-    it.each([undefined, null, 5, "entry", [], {}, { definition: null, definitionHash: "x" }, { definition: { id: "viewProject", version: "1", risk: "SAFE" }, definitionHash: "x" }, { definition: { id: "viewProject", version: 1, risk: 5 }, definitionHash: "x" }, { definition: { id: "viewProject", version: 1, risk: "SAFE" }, definitionHash: 5 }])("treats the malformed entry %j as a failure, never an allow", async (entry) => {
+    it.each([undefined, null, 5, "entry", [], {}, { definition: null, definitionHash: "x" }, { definition: { id: "viewProject", version: "1", risk: "SAFE" }, definitionHash: "x" }, { definition: { id: "viewProject", version: 1, risk: 5 }, definitionHash: "x" }, { definition: { id: "viewProject", version: 1, risk: "SAFE" }, definitionHash: 5 },
+    ...[0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 2].map((version) => ({ definition: { id: "viewProject", version, risk: "SAFE" }, definitionHash: "a".repeat(64) })),
+    { definition: { id: "viewProject", version: 1, risk: "ROOT" }, definitionHash: "a".repeat(64) }, { definition: { id: "viewProject", version: 1, risk: "SAFE" }, definitionHash: "A".repeat(64) }, { definition: { id: "viewProject", version: 1, risk: "SAFE" }, definitionHash: "a".repeat(63) }])("treats the malformed entry %j as a failure, never an allow", async (entry) => {
       const result = await run(() => entry);
       expect(result.decision.outcome).not.toBe("ALLOWED");
       expect(result.decision).toMatchObject({ stage: "resolve" });
