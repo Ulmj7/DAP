@@ -27,6 +27,9 @@ export default defineConfig({
           name: "conformance",
           include: ["packages/*/src/state/conformance/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/dist/**"],
+          // These files share one PostgreSQL database; the T118 purge deletes expired rows database-wide,
+          // which would remove rows that fake-clock files in other workers still rely on.
+          fileParallelism: false,
         },
       },
       {
