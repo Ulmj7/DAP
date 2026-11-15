@@ -9,6 +9,8 @@ import { snapshotAnswer } from "./answer-snapshot.js";
 import { createPipeline, type PipelineOptions, type StageMap } from "./pipeline.js";
 import { createProposalGateway } from "./submitter.js";
 import { createIntakeStage } from "./stages/intake.js";
+import { createRateLimitStage } from "./stages/rate-limit.js";
+import { createReplayStage } from "./stages/replay.js";
 import { createAuthorizeStage } from "./stages/authorize.js";
 import { createValidateStage } from "./stages/validate.js";
 import { createContextStage } from "./stages/context.js";
@@ -92,6 +94,8 @@ export function composeStages(deps: GatewayDependencies): StageMap {
   return {
     context: createContextStage(deps.clock, options),
     intake: createIntakeStage(caps),
+    rate_limit: createRateLimitStage(limiter, options),
+    replay: createReplayStage({ replay: deps.state.replay, retainSeconds: deps.config.replayRetentionSeconds }, options),
     resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),
     validate: createValidateStage(deps.registry, caps),
     authorize: createAuthorizeStage({ registry: deps.registry, permissions: deps.hooks.permissions, resources: deps.hooks.resources, pages: deps.hooks.pages, clock: deps.clock, limiter }, options),

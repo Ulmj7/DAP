@@ -98,7 +98,7 @@ export interface PipelineOptions extends HookOptions {
   readonly proposalBudgetMs?: number;
 }
 /** Stages that make several host calls in sequence: their deadline is the remaining proposal budget, each call is capped by `hookTimeoutMs` inside the stage. */
-const SEQUENTIAL_HOOK_STAGES: ReadonlySet<PipelineStage> = new Set(["authorize"]);
+const SEQUENTIAL_HOOK_STAGES: ReadonlySet<PipelineStage> = new Set(["rate_limit", "authorize"]);
 
 /** D6 positions are fixed; adding an implementation never changes another stage's code. */
 export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer = nativeTimer, proposalBudgetMs = 10_000 }: PipelineOptions = {}) {

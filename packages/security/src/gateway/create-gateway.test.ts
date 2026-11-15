@@ -27,7 +27,7 @@ describe("gateway composition and planner boundary", () => {
     const { deps, calls } = dependencies();
     const submitter = createPolicyGateway(deps).proposals.forSession(context(), run);
     const result = await submitter.submit({ callId: "CANARY_CALL", raw: { action: "viewProject", params: { canary: "CANARY_VALUE" } } });
-    expect(result).toEqual({ outcome: "DENIED", category: "try_later" });
+    expect(result).toEqual({ outcome: "INVALID_PARAMETERS", category: "invalid_input", issues: [{ path: "", code: "unknown_key" }] });
     expect(Object.keys(submitter)).toEqual(["submit"]);
     expect(Object.isFrozen(submitter)).toBe(true);
     expect(Object.isFrozen(result)).toBe(true);
@@ -49,6 +49,7 @@ describe("gateway composition and planner boundary", () => {
     const seen = new WeakMap<object, Map<PropertyKey, number>>();
     const copies = new WeakMap<object, object>();
     let clockCalls = 0;
+    let constructing = true;
     const receivers: unknown[] = [];
     const port = { time: "2026-01-01T00:00:00Z", now() { clockCalls++; receivers.push(this); return this.time as never; } };
     Object.assign(deps, { clock: port });
@@ -56,6 +57,7 @@ describe("gateway composition and planner boundary", () => {
       const old = copies.get(value);
       if (old) return old;
       const proxy = new Proxy(value, { get(target, key) {
+        if (!constructing) return Reflect.get(target, key, target);
         const counts = seen.get(target) ?? new Map<PropertyKey, number>();
         seen.set(target, counts);
         const count = (counts.get(key) ?? 0) + 1; counts.set(key, count);
@@ -67,9 +69,10 @@ describe("gateway composition and planner boundary", () => {
       return proxy;
     }
     const gateway = createPolicyGateway(watch(deps) as GatewayDependencies);
+    constructing = false; // Only dependency CAPTURE is read-once; live host methods may read their own fields repeatedly.
     expect(await gateway.proposals.forSession(context(), run).submit({ callId: "call", raw: VALID })).toEqual({ outcome: "DENIED", category: "try_later" });
-    expect(clockCalls).toBe(1);
-    expect(receivers).toHaveLength(1);
+    expect(clockCalls).toBe(3);
+    expect(receivers).toHaveLength(3);
     expect(receivers[0]).toBe(copies.get(port));
     expect(calls()).toBe(0);
   });
@@ -93,7 +96,7 @@ describe("gateway composition and planner boundary", () => {
     Object.assign(deps.clock, { now: () => { throw new Error("replacement"); } });
     Object.assign(deps.config, { hookTimeoutMs: -1 });
     expect(await gateway.proposals.forSession(context(), run).submit({ callId: "call", raw: VALID })).toEqual({ outcome: "DENIED", category: "try_later" });
-    expect(clocks).toBe(1);
+    expect(clocks).toBe(3);
     expect(calls()).toBe(0);
   });
 });

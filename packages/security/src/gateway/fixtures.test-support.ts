@@ -2,6 +2,8 @@ import { z } from "zod";
 import { defineAction, defineExecutor } from "@dap/contracts";
 import type { ActionId, ExecutorId, GatewayDependencies, IsoInstant, PermissionId, PipelineStage, PlannerRunMeta, RequestId } from "@dap/contracts";
 import { mintAuthorizationContext } from "@dap/contracts/mint";
+import { InMemoryReplayGuard } from "../state/memory/replay.js";
+import { InMemoryRateLimiter } from "../state/memory/rate-limiter.js";
 import { buildRegistry } from "../registry/build-registry.js";
 import { bindExecutors } from "../registry/bind-executors.js";
 import type { PipelineInput, PolicyStage, StageMap } from "./pipeline.js";
@@ -24,7 +26,7 @@ export function dependencies() {
   const deps: GatewayDependencies = {
     registry, executors: bindExecutors(registry, [executor]), globalAllowlist: new Set([definition.id]),
     hooks: { permissions: { has: unavailable }, resources: { resolve: unavailable }, pages: { currentPage: unavailable } },
-    state: { replay: { claim: unavailable }, rateLimiter: { hit: unavailable, isBlocked: unavailable, block: unavailable }, confirmations: { create: unavailable, get: unavailable, listPending: unavailable, tryAccept: unavailable, tryReject: unavailable, invalidate: unavailable, recordExecution: unavailable }, tenantPolicy: { isDisabled: async () => false }, ping: unavailable },
+    state: { replay: new InMemoryReplayGuard({ now: () => now }), rateLimiter: new InMemoryRateLimiter({ now: () => now }), confirmations: { create: unavailable, get: unavailable, listPending: unavailable, tryAccept: unavailable, tryReject: unavailable, invalidate: unavailable, recordExecution: unavailable }, tenantPolicy: { isDisabled: async () => false }, ping: unavailable },
     audit: { append: unavailable }, confirmationChannel: { deliver: unavailable }, clock: { now: () => now }, ids: { newDecisionId: () => "decision", newConfirmationId: unavailable },
     config: { limits: { proposalsPerTurn: 12, executionsPerTurn: 5, maxChainDepth: 6, turnBudgetMs: 45000, perUserPerMinute: { limit: 60, windowSeconds: 60 }, perTenantPerMinute: { limit: 600, windowSeconds: 60 }, perUserPerCapabilityPerMinute: { limit: 30, windowSeconds: 60 }, highRiskPerUserPerHour: { limit: 5, windowSeconds: 3600 }, denialThrottle: { denials: 5, windowSeconds: 60, blockSeconds: 60 } }, maxPayloadBytes: 16384, maxJsonDepth: 8, replayRetentionSeconds: 86400, confirmationDefaultTtlSeconds: 300, hookTimeoutMs: 2000 },
   };

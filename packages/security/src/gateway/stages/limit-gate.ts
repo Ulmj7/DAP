@@ -24,14 +24,16 @@ export function createLimitGate(limiter: Pick<Limiter, "recordDenial">, { hookTi
     const left = (): number => {
       try { return Math.min(hookTimeoutMs, Math.floor(request.budget.remainingMs())); } catch { return 0; }
     };
-    if (!isMintedContext(request.context) || !(left() >= 1)) return denial("dependency_failure");
-    const verdict = await underDeadline(check, (answer) => verdictSchema.parse(snapshotAnswer(answer)), () => null, left(), timer);
+    const checkTimeout = left();
+    if (!isMintedContext(request.context) || !(checkTimeout >= 1)) return denial("dependency_failure");
+    const verdict = await underDeadline(check, (answer) => verdictSchema.parse(snapshotAnswer(answer)), () => null, checkTimeout, timer);
     if (verdict === null) return denial("dependency_failure");
     if (verdict.allowed) return null;
     const result = denial(verdict.reason);
     // Local rejections, active blocks and faults deliberately make no shared throttle round trip.
-    if (verdict.countsTowardThrottle && left() >= 1) {
-      await underDeadline(() => recordDenial({ scope: request.context!, aiSessionId: request.run.aiSessionId }), () => undefined, () => undefined, left(), timer);
+    const recordTimeout = left();
+    if (verdict.countsTowardThrottle && recordTimeout >= 1) {
+      await underDeadline(() => recordDenial({ scope: request.context!, aiSessionId: request.run.aiSessionId }), () => undefined, () => undefined, recordTimeout, timer);
     }
     return result;
   };

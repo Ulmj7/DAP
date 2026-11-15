@@ -1,11 +1,4 @@
-/**
- * T067 at the planner's door. `createPolicyGateway` composes the real context, intake, resolve and validate stages;
- * rate_limit and replay (D6 positions 3 and 4, between intake and resolve) are not built yet, so through the real
- * gateway every proposal that survives intake is denied fail-closed at rate_limit (`dependency_failure`, planner
- * category `try_later`) and resolve and validate cannot be reached. `staged` therefore stands in for exactly those
- * two absent stages with a pass-through, to observe resolve and validate behind the same door. Past validate the
- * next absent stage (authorize) denies fail-closed, so nothing ever executes.
- */
+/** T117: intake-to-authorize tests use the real composed rate/replay stages; risk remains absent. */
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { defineAction, defineExecutor } from "@dap/contracts";
@@ -14,12 +7,6 @@ import { bindExecutors } from "../registry/bind-executors.js";
 import { buildRegistry } from "../registry/build-registry.js";
 import { composeStages, createPolicyGateway } from "./create-gateway.js";
 import type { PipelineRecord, PolicyStage } from "./pipeline.js";
-import { createPipeline } from "./pipeline.js";
-import { createProposalGateway } from "./submitter.js";
-import { createContextStage } from "./stages/context.js";
-import { createIntakeStage } from "./stages/intake.js";
-import { createResolveStage } from "./stages/resolve.js";
-import { createValidateStage } from "./stages/validate.js";
 import { context, dependencies, run } from "./fixtures.test-support.js";
 
 function world(config: Partial<GatewayDependencies["config"]> = {}) {
@@ -34,23 +21,21 @@ function world(config: Partial<GatewayDependencies["config"]> = {}) {
   const executor = defineExecutor({ id: open.executorId, run: async () => { executions++; return { status: "success" as const }; } });
   const wired: GatewayDependencies = { ...deps, registry, executors: bindExecutors(registry, [executor]), globalAllowlist: new Set([open.id]),
     state: { ...deps.state, tenantPolicy: { isDisabled: async () => { tenantChecks++; return false; } } }, config: { ...deps.config, ...config } };
-  const real = (raw: unknown, callId = "call_1"): Promise<PlannerFeedback> => createPolicyGateway(wired).proposals.forSession(context(), run).submit({ callId, raw });
-  const caps = { maxPayloadBytes: wired.config.maxPayloadBytes, maxJsonDepth: wired.config.maxJsonDepth };
-  const pass = () => ({ kind: "continue" as const, data: {} });
-  const pipeline = createPipeline({ context: createContextStage(wired.clock), intake: createIntakeStage(caps), rate_limit: pass, replay: pass,
-    resolve: createResolveStage({ registry, globalAllowlist: wired.globalAllowlist, tenantPolicy: wired.state.tenantPolicy }), validate: createValidateStage(registry, caps) });
-  const staged = (raw: unknown, callId = "call_1"): Promise<PlannerFeedback> => createProposalGateway({ pipeline, ids: wired.ids }).forSession(context(), run).submit({ callId, raw });
-  return { real, submit: staged, executions: () => executions, tenantChecks: () => tenantChecks };
+  let callIndex = 0;
+  const gateway = createPolicyGateway(wired);
+  const real = (raw: unknown, callId = `call_${++callIndex}`): Promise<PlannerFeedback> => gateway.proposals.forSession(context(), run).submit({ callId, raw });
+  return { real, submit: real, executions: () => executions, tenantChecks: () => tenantChecks };
+
 }
 const text = (action: unknown, params: unknown) => JSON.stringify({ action, params });
 const TRY_LATER = { outcome: "DENIED", category: "try_later" };
 const NOT_AVAILABLE = { outcome: "INVALID_ACTION", category: "not_available" };
 
 describe("the proposal door with intake and validate wired in", () => {
-  it("denies a valid proposal fail-closed at the first absent stage, before resolve, validate or any executor", async () => {
+  it("denies a valid proposal fail-closed at the first absent stage, after resolve and validate, before any executor", async () => {
     const w = world();
     expect(await w.real(text("openProject", { projectId: "p1" }))).toEqual(TRY_LATER);
-    expect(w.tenantChecks()).toBe(0);
+    expect(w.tenantChecks()).toBe(1);
     expect(w.executions()).toBe(0);
   });
 
@@ -129,8 +114,8 @@ describe("the proposal door with intake and validate wired in", () => {
 describe("the composed stages", () => {
   const record = (facts: object): PipelineRecord => ({ decisionId: "d", requestId: "r", run: {}, context: context(), readProposal: () => { throw new Error("withheld"); }, facts }) as unknown as PipelineRecord;
 
-  it("are exactly context, intake, resolve, validate and authorize: every later position is absent and so denies fail-closed", () => {
-    expect(Object.keys(composeStages(dependencies().deps)).sort()).toEqual(["authorize", "context", "intake", "resolve", "validate"]);
+  it("include real rate/replay between intake and resolve: every later position is absent and so denies fail-closed", () => {
+    expect(Object.keys(composeStages(dependencies().deps)).sort()).toEqual(["authorize", "context", "intake", "rate_limit", "replay", "resolve", "validate"]);
   });
 
   it("bind intake to the gateway's configured caps", async () => {
