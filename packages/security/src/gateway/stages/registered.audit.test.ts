@@ -26,7 +26,7 @@ describe("what the proof keeps for the audit and execute stages", () => {
     expect(reads).toBe(1);
   });
 
-  it.each([["no audit", {}], ["a null audit", { audit: null }], ["audit that is a string", { audit: "x" }], ["params that are not a list", { audit: { params: "x" } }]]])(
+  it.each([["no audit", {}], ["a null audit", { audit: null }], ["audit that is a string", { audit: "x" }], ["params that are not a list", { audit: { params: "x" } }]])(
     "records nothing for %s", (_name, definition) => {
       expect(provenDefinition(registryOf(definition), resolved)!.auditParams).toEqual([]);
     });
