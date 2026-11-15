@@ -30,8 +30,9 @@ const submitAll = async (target: SecretAttackTarget, id: string, raws: readonly 
 };
 /** Findings in everything visible to the planner and recorded in the trail, counting only what must never appear: canaries, stack traces, secret-shaped text. */
 export function secretFindings(observation: AttackObservation, extraCanaries: readonly string[] = []): readonly string[] {
-  const scanner = new LeakScanner({ canaries: [...SECRET_CANARIES, ...extraCanaries] });
-  const kinds = new Set(["canary", "stack-trace", "secret-shaped"]);
+  const canaries = [...SECRET_CANARIES, ...extraCanaries].flatMap((secret) => [secret, JSON.stringify(secret).slice(1, -1), Buffer.from(secret).toString("base64"), encodeURIComponent(secret), secret.toLowerCase(), secret.toUpperCase(), secret.slice(0, 12), secret.split("").map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("")]);
+  const scanner = new LeakScanner({ canaries });
+  const kinds = new Set(["canary", "stack-trace", "secret-shaped", "scan-error"]);
   const out: string[] = [];
   for (const finding of scanner.scan(observation.feedback)) if (kinds.has(finding.kind)) out.push(`planner output: ${finding.kind} at ${finding.path}`);
   for (const finding of scanner.scan(observation.auditEvents as readonly AuditEvent[])) if (kinds.has(finding.kind)) out.push(`audit trail: ${finding.kind} at ${finding.path}`);

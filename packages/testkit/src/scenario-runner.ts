@@ -109,7 +109,7 @@ export async function runScenario(
       async submit(call: ProposalCall): Promise<PlannerFeedback> {
         let response: unknown;
         try { response = await Reflect.apply(submit, target, [call]); }
-        catch { failed = true; throw new Error("Scenario submitter failed"); }
+        catch { failed = true; findings.add("runner-error:$"); throw new Error("Scenario submitter failed"); }
         // Capture once; scan the same snapshot even if the scenario drops it or throws later.
         let captured: PlannerFeedback;
         try { captured = snapshotData(response) as PlannerFeedback; }
@@ -149,7 +149,7 @@ export async function runScenario(
         const kind = typeof finding === "string" ? /^(canary|stack-trace|secret-shaped|reason-code|confirmation-id|scan-error):/.exec(finding)?.[1] : undefined;
         findings.add(`${kind ?? "scenario-reported"}:$`);
       }
-    } catch { failed = true; }
+    } catch { failed = true; findings.add("runner-error:$"); }
     try { scan(visibleOutput()); }
     catch { failed = true; findings.add("scan-error:$"); }
   } catch { failed = true; findings.add("runner-error:$"); }

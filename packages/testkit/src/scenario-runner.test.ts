@@ -110,7 +110,7 @@ describe("scenario-runner (T035)", () => {
     expect(obs.feedback).toEqual([{ outcome: "DENIED", category: "not_available" }]);
     expect(obs.executorCalls).toBe(0);
     expect(obs.auditEvents).toEqual([]);
-    expect(obs.leakFindings).toEqual([]);
+    expect(obs.leakFindings).toEqual(["runner-error:$"]);
   });
 
   it("is fail-closed: a throwing target submitter does not crash the runner", async () => {

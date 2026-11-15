@@ -1,5 +1,5 @@
 /**
- * T082, ATK-SECRET-01..04. The oracles are proven able to fail; the scenarios run against the end-to-end world once it exists (T070).
+ * T082, ATK-SECRET-01..04. The oracles are proven able to fail; the scenarios run against the end-to-end world through the shared world (T070).
  */
 import { afterEach, describe, expect, it } from "vitest";
 import type { AuditEvent, PlannerFeedback } from "@dap/contracts";
@@ -29,6 +29,19 @@ describe("secretFindings", () => {
   it.each(SECRET_CANARIES)("finds the canary %s in planner output and in the trail", (canary) => {
     expect(secretFindings(obs({ feedback: [{ outcome: "DENIED", category: "try_later", note: canary } as never] })).join()).toContain("planner output: canary");
     expect(secretFindings(obs({ auditEvents: [event({ actionId: canary })] })).join()).toContain("audit trail: canary");
+  });
+  it("detects independently encoded, case-folded and truncated canaries in feedback, result data and EVERY audit field", () => {
+    const canary = 'QZ"\\\n秘密_private_marker';
+    for (const secret of [SECRET_CANARIES[0]!, canary]) {
+      for (const value of [secret, JSON.stringify(secret).slice(1, -1), Buffer.from(secret).toString("base64"), encodeURIComponent(secret), secret.toLowerCase(), secret.toUpperCase(), secret.slice(0, 12), secret.split("").map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("")]) {
+        for (const field of Object.keys(event({}))) {
+          expect(secretFindings(obs({ auditEvents: [event({ [field]: value })] }), [secret]), field).not.toEqual([]);
+        }
+        expect(secretFindings(obs({ feedback: [{ ...tryLater, result: { detail: value } } as never] }), [secret])).not.toEqual([]);
+        expect(secretFindings(obs({ auditEvents: [event({ paramsView: { [value]: "hidden key" } })] }), [secret])).not.toEqual([]);
+      }
+    }
+    expect(secretFindings(obs({ feedback: [tryLater], auditEvents: [event({})] }), [canary])).toEqual([]);
   });
   it("finds an extra canary, a stack trace, a secret-shaped value and reported leaks", () => {
     expect(secretFindings(obs({ auditEvents: [event({ actionId: "hunter2" })] }), ["hunter2"])).not.toEqual([]);
@@ -95,21 +108,21 @@ const noStackOrCanary = (o: AttackObservation, label: string) => {
   for (const pattern of STACK) expect(text, `${label}: ${pattern}`).not.toMatch(pattern);
   expect(secretFindings(o, EVERYWHERE), label).toEqual([]);
 };
-const secretTarget = (world: GatewayWorld, planted: string[] = []) => ({
+const secretTarget = (world: GatewayWorld, planted = new Map<string, string | undefined>()) => ({
   ...world.targetFor("testSafeEcho", A_ALICE),
   validProposal: () => world.proposal("testSafeEcho").raw,
   failPermissionsWith: (message: string) => world.failPermissionsWith(message),
   plantCanaries: () => {
     // the environment, a trusted resource's display name, and what the executor returns: every place a canary could be read from
-    for (const [index, canary] of SECRET_CANARIES.entries()) { process.env[`CANARY_${index}`] = canary; planted.push(`CANARY_${index}`); }
+    for (const [index, canary] of SECRET_CANARIES.entries()) { const name = `CANARY_${index}`; if (!planted.has(name)) planted.set(name, process.env[name]); process.env[name] = canary; }
     world.setResourceAnswer({ ref: { type: "document", id: "doc-1" }, tenantId: world.tenants.A, displayName: SECRET_CANARIES[0] });
     world.executor("testSafeEcho").setNextResult({ status: "success", value: { secret: SECRET_CANARIES[1] }, affected: { type: "document", id: "doc-1" } });
   },
 });
 
 describe("T082 through the REAL gateway, via withGateway() (REQUIRED, representative: ATK-SECRET-01 to 04)", () => {
-  const planted: string[] = [];
-  afterEach(() => { for (const name of planted.splice(0)) delete process.env[name]; });
+  const planted = new Map<string, string | undefined>();
+  afterEach(() => { for (const [name, previous] of planted) { if (previous === undefined) delete process.env[name]; else process.env[name] = previous; } planted.clear(); });
 
   it.each(["ATK-SECRET-01", "ATK-SECRET-02", "ATK-SECRET-03", "ATK-SECRET-04"])("%s: the scenario's own oracle passes on the real world with canaries planted", async (id) => {
     const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
@@ -119,6 +132,16 @@ describe("T082 through the REAL gateway, via withGateway() (REQUIRED, representa
     expect(observation.leakFindings).toEqual([]);
     if (id === "ATK-SECRET-01") expect(observation.executorCalls).toBe(1); // the control inside the scenario: the one valid proposal executed, carrying planted values
     else expect(observation.executorCalls).toBe(0);
+    world.failPermissionsWith(undefined);
+    expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"))).toEqual({ outcome: "ALLOWED", category: "ok" });
+    expect(world.executorCalls()).toBe(observation.executorCalls + 1);
+  });
+
+  it("a submitter throwing a secret-bearing error invalidates the observation rather than passing a clean-output oracle", async () => {
+    const target = secretTarget(withGateway());
+    const observation = await runScenario(scenario("ATK-SECRET-04"), { ...target, submit: async () => { throw new Error(SECRET_CANARIES[0]); } });
+    expect(scenario("ATK-SECRET-04").verify(observation)).not.toEqual([]);
+    expect(JSON.stringify(observation)).not.toContain(SECRET_CANARIES[0]);
   });
 
   it("the oracle is not vacuous on the real world: planting a canary into the real audit events or feedback fails the same verify", async () => {
@@ -199,10 +222,13 @@ describe("T082 through the REAL gateway, via withGateway() (REQUIRED, representa
     it.each(["resources", "tenantPolicy", "replay", "audit"] as const)("the %s host port throws: generic answer, executor at zero, no fault text anywhere", async (port) => {
       const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       world.injectFault(port, "throws");
-      const answer = await world.submit(A_ALICE, port === "resources" ? world.resourceProposal("testHighPublish", "same-tenant-unauthorized") : world.proposal("testSafeEcho"));
-      expect(["DENIED", "INVALID_ACTION", "UNAUTHORIZED"]).toContain(answer.outcome);
+      const answer = await world.submit(A_ALICE, port === "resources" ? world.proposal("testHighPublish") : world.proposal("testSafeEcho"));
+      expect(answer).toEqual({ outcome: "DENIED", category: "try_later" });
       expect(JSON.stringify(answer)).not.toContain(FAULT_CANARY);
       noStackOrCanary(observe(world, [answer]), port);
+      world.clearFault(port);
+      expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"))).toEqual({ outcome: "ALLOWED", category: "ok" });
+      expect(world.executorCalls()).toBe(1);
     });
 
     it("the executor body throws with a canary message and a real stack: execution fails generically, and neither the answer nor the trail carries it", async () => {
@@ -236,11 +262,14 @@ describe("T082 through the REAL gateway, via withGateway() (REQUIRED, representa
   describe("(3) the audit projection keeps codes and digests, not raw input or secrets", () => {
     it("a canary in a MASKED parameter (a draft) is not in the confirmation-required record; reasons are codes; no event holds raw params", async () => {
       const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      secretTarget(world, planted).plantCanaries();
       const alice = await world.submitterFor(A_ALICE);
       const answer = await alice.submit({ callId: "draft", raw: { action: "testMediumDraft", params: { documentId: "doc-1", draft: `notes ${SECRET_CANARIES[0]} password=hunter2` } } });
       expect(answer).toEqual({ outcome: "REQUIRES_CONFIRMATION", category: "needs_user_confirmation" });
       expect(world.executorCalls()).toBe(0);
       const decision = world.events().find((event) => event.type === "AI_CONFIRMATION_REQUIRED")!;
+      expect(world.stats().resourceCalls).toBe(1); // the canary-bearing resource answer was actually read
+      expect(decision.resource).toEqual({ type: "document", id: "doc-1" });
       expect(decision.paramsView).toEqual({ "/documentId": "doc-1", "/draft": "[masked]" }); // the projection really ran: the draft is recorded as a mask only
       noStackOrCanary(observe(world, [answer]), "masked parameter");
       for (const event of world.events()) {
