@@ -20,6 +20,8 @@ export const MAX_AUDIT_QUERY_LIMIT = 500;
 
 /** Where events are read from; the in-memory store implements it, and PostgreSQL will. Asked for ONE tenant. */
 export interface AuditEventSource {
+  /** Optional bounded backend query; the reader still rechecks every returned event. */
+  queryForTenant?(tenantId: string, query: AuditQuery): Promise<readonly AuditEvent[]> | readonly AuditEvent[];
   listForTenant(tenantId: string): Promise<readonly AuditEvent[]> | readonly AuditEvent[];
 }
 
@@ -35,6 +37,8 @@ export function createAuditReader(source: AuditEventSource): AuditReader {
   const list: unknown = source?.listForTenant;
   if (typeof list !== "function") throw new TypeError("Missing audit source");
   const listForTenant = list as AuditEventSource["listForTenant"];
+  const bounded = source.queryForTenant;
+  if (bounded !== undefined && typeof bounded !== "function") throw new TypeError("Invalid bounded audit source");
   return Object.freeze({
     query: Object.freeze(async (ctx: AuthorizationContext, q: AuditQuery): Promise<readonly AuditEvent[]> => {
       if (!isMintedContext(ctx)) throw new TypeError("Audit queries need an authenticated context");
@@ -46,7 +50,7 @@ export function createAuditReader(source: AuditEventSource): AuditReader {
       if (from !== undefined && to !== undefined && from > to) throw new TypeError("Invalid audit query");
       const tenantId = ctx.tenantId;
       let candidates: readonly AuditEvent[];
-      try { candidates = await Reflect.apply(listForTenant, source, [tenantId]) as readonly AuditEvent[]; } catch { throw new TypeError("Audit source unavailable"); }
+      try { candidates = await (bounded === undefined ? Reflect.apply(listForTenant, source, [tenantId]) : Reflect.apply(bounded, source, [tenantId, query])) as readonly AuditEvent[]; } catch { throw new TypeError("Audit source unavailable"); }
       const types = query.types === undefined ? undefined : new Set<string>(query.types);
       let matching: { readonly event: AuditEvent }[];
       try {

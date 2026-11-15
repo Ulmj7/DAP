@@ -13,37 +13,50 @@
  * - FAIL CLOSED: any database failure (connection, timeout, constraint, permission) rejects with a generic error that carries no
  *   driver text, host, database, user or SQL. The audit writer then treats the write as failed (an allow is not executed).
  * - `occurredAt` is stored as given by the event (the host clock reading made by the Gateway's event factory) and comes back as a
- *   normalized UTC instant with millisecond precision.
+ *   normalized UTC instant without losing PostgreSQL microseconds. Finer nonzero fractions are refused, never silently rounded.
  */
 import { z } from "zod";
 import type { Pool } from "pg";
 import { AUDIT_EVENT_TYPES, OUTCOMES, REASON_CODES, RISK_LEVELS } from "@dap/contracts";
-import type { AuditEvent, AuditSink, JsonValue } from "@dap/contracts";
+import type { AuditEvent, AuditQuery, AuditSink, JsonValue } from "@dap/contracts";
 import { isBuiltAuditEvent } from "../../audit/event-builder.js";
+import { MAX_AUDIT_QUERY_LIMIT } from "../../audit/audit-reader.js";
 import type { AuditEventSource } from "../../audit/audit-reader.js";
 import { canonicalJson } from "../../validation/canonical.js";
 import { withTenant } from "./tenant-tx.js";
 
+const OBSERVED_POOLS = new WeakSet<Pool>();
 const UNAVAILABLE = "Audit store unavailable";
 const text = z.string().min(1).max(256);
 const row = z.strictObject({
-  id: z.uuid(), occurredAt: z.iso.datetime({ offset: true }), type: z.enum(AUDIT_EVENT_TYPES), requestId: text, decisionId: text, tenantId: z.uuid(), userId: text,
+  id: z.uuid(), occurredAt: z.iso.datetime({ offset: true }).refine((value) => !/[1-9]/.test((/\.(\d+)/.exec(value)?.[1] ?? "").slice(6))), type: z.enum(AUDIT_EVENT_TYPES), requestId: text, decisionId: text, tenantId: z.uuid(), userId: text,
   aiSessionId: text, turnId: text, model: text, actionId: text.nullable(), definitionVersion: z.number().int().min(1).nullable(),
   paramsView: z.record(z.string(), z.json()), risk: z.enum(RISK_LEVELS).nullable(), outcome: z.enum(OUTCOMES).nullable(), reason: z.enum(REASON_CODES).nullable(),
   confirmationId: z.uuid().nullable(), confirmationState: z.enum(["pending", "accepted", "rejected", "invalidated"]).nullable(),
   executionResult: z.enum(["success", "failure"]).nullable(), resource: z.strictObject({ type: text, id: text }).nullable(),
 });
+const querySchema = z.strictObject({
+  requestId: text.optional(), userId: text.optional(), from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
+  types: z.array(z.enum(AUDIT_EVENT_TYPES)).min(1).max(AUDIT_EVENT_TYPES.length).optional(), limit: z.number().int().min(1).max(MAX_AUDIT_QUERY_LIMIT),
+});
 const COLUMNS = "id, tenant_id, occurred_at, event_type, request_id, decision_id, user_id, ai_session_id, turn_id, model, action_id, definition_version, params_view, risk, outcome, reason, confirmation_id, confirmation_state, execution_result, resource_type, resource_id";
+// Read timestamp text instead of pg's Date parser, which truncates sub-millisecond precision.
+const READ_COLUMNS = COLUMNS.replace("occurred_at", `to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at`);
 
-/** The normal form two copies of one event are compared in: millisecond UTC instant, canonical JSON. */
+
+/** The normal form two copies of one event are compared in: UTC instant (microseconds preserved), canonical JSON and UUIDs. */
+function instant(value: string): string {
+  const fraction = (/\.(\d+)/.exec(value)?.[1] ?? "").replace(/0+$/, "").padEnd(3, "0");
+  return new Date(value).toISOString().replace(/\.\d{3}Z$/, `.${fraction}Z`);
+}
 function normalized(event: AuditEvent): string {
-  return canonicalJson({ ...event, occurredAt: new Date(event.occurredAt).toISOString() });
+  return canonicalJson({ ...event, paramsView: JSON.parse(JSON.stringify(event.paramsView)), id: event.id.toLowerCase(), tenantId: event.tenantId.toLowerCase(), confirmationId: event.confirmationId?.toLowerCase() ?? null, occurredAt: instant(event.occurredAt) });
 }
 
 function toEvent(r: Record<string, unknown>): AuditEvent {
   const event = row.parse({
-    id: r.id, occurredAt: (r.occurred_at as Date).toISOString(), type: r.event_type, requestId: r.request_id, decisionId: r.decision_id, tenantId: r.tenant_id, userId: r.user_id,
-    aiSessionId: r.ai_session_id, turnId: r.turn_id, model: r.model, actionId: r.action_id, definitionVersion: r.definition_version, paramsView: r.params_view,
+    id: r.id, occurredAt: instant(r.occurred_at as string), type: r.event_type, requestId: r.request_id, decisionId: r.decision_id, tenantId: r.tenant_id, userId: r.user_id,
+    aiSessionId: r.ai_session_id, turnId: r.turn_id, model: r.model, actionId: r.action_id, definitionVersion: r.definition_version === null ? null : Number(r.definition_version), paramsView: r.params_view,
     risk: r.risk, outcome: r.outcome, reason: r.reason, confirmationId: r.confirmation_id, confirmationState: r.confirmation_state, executionResult: r.execution_result,
     resource: r.resource_type === null ? null : { type: r.resource_type, id: r.resource_id },
   });
@@ -51,7 +64,13 @@ function toEvent(r: Record<string, unknown>): AuditEvent {
 }
 
 export class PostgresAuditStore implements AuditSink, AuditEventSource {
-  constructor(private readonly pool: Pool) {}
+  constructor(private readonly pool: Pool) {
+    if (!OBSERVED_POOLS.has(pool)) {
+      // pg already removes broken idle clients; an unhandled pool error would otherwise terminate the process.
+      pool.on("error", () => {});
+      OBSERVED_POOLS.add(pool);
+    }
+  }
 
   async append(event: AuditEvent): Promise<void> {
     // Validation errors are the caller's programming errors and name no value; database errors become one generic error.
@@ -70,18 +89,34 @@ export class PostgresAuditStore implements AuditSink, AuditEventSource {
         if (inserted.command !== "INSERT" || (inserted.rowCount !== 0 && inserted.rowCount !== 1)) throw new TypeError("Invalid insert result");
         if (inserted.rowCount === 1) return;
         // The id exists: only the very same event is a success. An id held by another tenant is invisible here, so it is not found, and refused.
-        const existing = await client.query(`SELECT ${COLUMNS} FROM public.sec_audit_events WHERE id=$1`, [e.id]);
+        const existing = await client.query(`SELECT ${READ_COLUMNS} FROM public.sec_audit_events WHERE id=$1 AND params_view=$2::jsonb`, [e.id, JSON.stringify(e.paramsView)]);
         if (existing.rowCount !== 1 || normalized(toEvent(existing.rows[0] as Record<string, unknown>)) !== normalized(e as unknown as AuditEvent)) throw new TypeError("An audit event id cannot be reused with different content");
       });
     } catch { throw new Error(UNAVAILABLE); }
   }
 
-  /** The tenant's events, oldest first; events with the same instant in commit order. */
-  async listForTenant(tenantId: string): Promise<readonly AuditEvent[]> {
+  /** Full-history source compatibility. Reviewers use queryForTenant, which is bounded in SQL. */
+  listForTenant(tenantId: string): Promise<readonly AuditEvent[]> { return this.read(tenantId); }
+
+  queryForTenant(tenantId: string, query: AuditQuery): Promise<readonly AuditEvent[]> { return this.read(tenantId, query); }
+
+  private async read(tenantId: string, query?: AuditQuery): Promise<readonly AuditEvent[]> {
     if (!z.uuid().safeParse(tenantId).success) throw new TypeError("Audit queries need a UUID tenant");
+    const parsed = query === undefined ? undefined : querySchema.safeParse(query);
+    if (parsed !== undefined && !parsed.success) throw new TypeError("Invalid audit query");
+    const q = parsed?.data;
+    if (q?.from !== undefined && q.to !== undefined && Date.parse(q.from) > Date.parse(q.to)) throw new TypeError("Invalid audit query");
+    const values: unknown[] = [tenantId.toLowerCase()];
+    const where = ["tenant_id=$1"];
+    for (const [column, operator, value] of [["request_id", "=", q?.requestId], ["user_id", "=", q?.userId], ["occurred_at", ">=", q?.from], ["occurred_at", "<=", q?.to]] as const) {
+      if (value !== undefined) { values.push(value); where.push(`${column}${operator}$${values.length}`); }
+    }
+    if (q?.types !== undefined) { values.push(q.types); where.push(`event_type=ANY($${values.length}::text[])`); }
+    let limit = "";
+    if (q !== undefined) { values.push(q.limit); limit = ` LIMIT $${values.length}`; }
     try {
       return await withTenant(this.pool, tenantId.toLowerCase(), async (client) => {
-        const result = await client.query(`SELECT ${COLUMNS} FROM public.sec_audit_events WHERE tenant_id=$1 ORDER BY occurred_at, seq`, [tenantId.toLowerCase()]);
+        const result = await client.query(`SELECT ${READ_COLUMNS} FROM public.sec_audit_events WHERE ${where.join(" AND ")} ORDER BY public.sec_audit_events.occurred_at, seq${limit}`, values);
         return result.rows.map((r) => toEvent(r as Record<string, unknown>));
       });
     } catch { throw new Error(UNAVAILABLE); }

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { readFile } from "node:fs/promises";
-import { AUDIT_EVENT_TYPES, OUTCOMES, RISK_LEVELS } from "@dap/contracts";
+import { AUDIT_EVENT_TYPES, OUTCOMES, RISK_LEVELS, REASON_CODES } from "@dap/contracts";
 import { assertStateAcl, openStatePools } from "./state-pg-fixtures.js";
 
 const MIGRATION = new URL("../../../../../db/migrations/020_sec_audit_events.sql", import.meta.url);
@@ -30,7 +30,7 @@ describe("T093 audit migration", () => {
       { column_name: "turn_id", data_type: "text", is_nullable: "NO" },
       { column_name: "model", data_type: "text", is_nullable: "NO" },
       { column_name: "action_id", data_type: "text", is_nullable: "YES" },
-      { column_name: "definition_version", data_type: "integer", is_nullable: "YES" },
+      { column_name: "definition_version", data_type: "bigint", is_nullable: "YES" },
       { column_name: "params_view", data_type: "jsonb", is_nullable: "NO" },
       { column_name: "risk", data_type: "text", is_nullable: "YES" },
       { column_name: "outcome", data_type: "text", is_nullable: "YES" },
@@ -60,7 +60,7 @@ describe("T093 audit migration", () => {
 
   it("closes the enums the contract closes (event type, outcome, risk, confirmation state, execution result)", async () => {
     const checks = (await app.query("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='public.sec_audit_events'::regclass AND contype='c'")).rows.map((row) => row.definition as string).join("\n");
-    for (const value of [...AUDIT_EVENT_TYPES, ...OUTCOMES, ...RISK_LEVELS, "pending", "accepted", "rejected", "invalidated", "success", "failure"]) expect(checks, value).toContain(`'${value}'`);
+    for (const value of [...AUDIT_EVENT_TYPES, ...OUTCOMES, ...RISK_LEVELS, ...REASON_CODES, "pending", "accepted", "rejected", "invalidated", "success", "failure"]) expect(checks, value).toContain(`'${value}'`);
   });
 
   it("refuses UPDATE, DELETE and TRUNCATE for everyone through triggers, the owner included (row changes are proven in state-postgres-audit.test.ts)", async () => {
