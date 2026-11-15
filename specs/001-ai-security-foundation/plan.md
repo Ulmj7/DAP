@@ -376,6 +376,12 @@ What remains:
     coverage tooling) is not exercised end to end. It MUST NOT be wired into a production path until
     its trigger exists.
 
+12. **Attempted action names in forensic audit** are planner-authored data, escaped to printable
+    ASCII and capped at 64 characters. Recognized secret patterns are scrubbed, but arbitrary
+    unknown canary-like strings can remain in actionId. This field must be treated as untrusted
+    text by audit reviewers; it is never returned in planner feedback. M1 does not promise secrecy
+    for arbitrary secrets the planner itself embeds in an attempted action name.
+
 ## Complexity Tracking
 
 No constitution violations to justify. The five-package split is a deliberate enforcement mechanism
