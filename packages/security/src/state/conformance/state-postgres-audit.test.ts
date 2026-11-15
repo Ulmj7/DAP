@@ -105,6 +105,11 @@ describe("T094 PostgreSQL audit store: append-only and tenant isolation at the d
     }
   });
 
+  it("refuses non-finite PostgreSQL timestamps that are not ISO instants", async () => {
+    const t = randomUUID();
+    for (const instant of ["infinity", "-infinity"]) await expect(withTenant(app, t, (client) => client.query("INSERT INTO public.sec_audit_events (id,tenant_id,occurred_at,event_type,request_id,decision_id,user_id,ai_session_id,turn_id,model,params_view,outcome,reason) VALUES ($1,$2,$3,'AI_ACTION_DENIED','r','d','u','s','t','m','{}','DENIED','permission_missing')", [randomUUID(), t, instant]))).rejects.toThrow(/check constraint/);
+  });
+
   it("preserves microseconds: a retry succeeds, but a distinct instant in the same millisecond is not the same body", async () => {
     const t = randomUUID(); const id = randomUUID(); const store = new PostgresAuditStore(app);
     const event = auditEvent(t, { id, occurredAt: "2026-01-01T00:00:10.123456Z" });

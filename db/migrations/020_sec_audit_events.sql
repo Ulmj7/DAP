@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS public.sec_audit_events (
   seq bigint GENERATED ALWAYS AS IDENTITY,
   id uuid NOT NULL PRIMARY KEY,
   tenant_id uuid NOT NULL,
-  occurred_at timestamptz NOT NULL,
+  occurred_at timestamptz NOT NULL CHECK (isfinite(occurred_at)),
   event_type text NOT NULL CHECK (event_type IN (
     'AI_ACTION_PROPOSED','AI_ACTION_ALLOWED','AI_ACTION_DENIED','AI_CONFIRMATION_REQUIRED','AI_CONFIRMATION_ACCEPTED',
     'AI_CONFIRMATION_REJECTED','AI_POLICY_VIOLATION','AI_RATE_LIMITED','AI_ACTION_EXECUTED')),
