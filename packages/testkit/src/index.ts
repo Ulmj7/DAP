@@ -18,3 +18,7 @@ export * from "./attacks/unknown-action.js";
 export * from "./attacks/malformed-parameters.js";
 export * from "./attacks/injection-corpus.js";
 export * from "./attacks/prompt-injection.js";
+export * from "./parity.js";
+export * from "./attacks/valid-params.js";
+export * from "./attacks/privilege-escalation.js";
+export * from "./attacks/cross-tenant.js";

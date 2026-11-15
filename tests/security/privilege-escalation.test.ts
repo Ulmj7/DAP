@@ -1,0 +1,207 @@
+/**
+ * T072, ATK-PRIV-01, 02, 05, 06, 07, 08 and the parity oracle. Runs now: the scenario definitions, every oracle proven able to FAIL with
+ * hand-built observations, the parity oracle against the real host fakes, and the facts the scenarios rely on (the reserved action names,
+ * the schemas that must accept a claim as plain text). The scenario runs against the whole chain are `it.todo` with their precise blockers.
+ */
+import { describe, expect, it } from "vitest";
+import type { AttackObservation, AuditEvent, CapabilityTraits, PermissionId, PlannerFeedback } from "@dap/contracts";
+import { buildRegistry } from "@dap/security";
+import {
+  ALICE, BOB, CAROL, CLAIM_KEYS, FakePermissionChecker, NON_BOOLEAN_ANSWERS, PERMISSION_ACTION_NAMES, PRIVILEGE_CLAIMS, SPOOFED_PAGES, TENANT_A, TENANT_B, VALID_PARAMS,
+  ctx, hostParity, parityViolations, privilegeEscalationScenarios, stringParamNames, testCriticalDelete, testHighPublish, testLowNavigate, testMediumDraft, testSafeEcho, validParamsFor,
+} from "@dap/testkit";
+import type { DenialScenario } from "@dap/testkit";
+
+const scenario = (id: string) => privilegeEscalationScenarios.find((entry) => entry.id === id)!;
+const denial = (id: string) => scenario(id) as DenialScenario;
+const traitsFor = (actionId: string, risk: CapabilityTraits["risk"] = "SAFE"): CapabilityTraits => ({ actionId, risk, changesState: false, targetsResource: false, requiresConfirmation: false });
+const safe = traitsFor("testSafeEcho");
+const event = (over: Partial<AuditEvent>): AuditEvent => ({ id: "e", occurredAt: "2026-01-01T00:00:00Z", type: "AI_ACTION_DENIED", requestId: "r", decisionId: "r", tenantId: "t", userId: "u", aiSessionId: "s", turnId: "n", model: "m", actionId: null, definitionVersion: null, paramsView: {}, risk: null, outcome: "UNAUTHORIZED", reason: "permission_missing", confirmationId: null, confirmationState: null, executionResult: null, resource: null, ...over }) as AuditEvent;
+const obs = (over: Partial<AttackObservation>): AttackObservation => ({ feedback: [], executorCalls: 0, auditEvents: [], leakFindings: [], ...over });
+const denied = (outcome: string, category: string, extra: object = {}): PlannerFeedback => ({ outcome, category, ...extra }) as PlannerFeedback;
+
+describe("the scenarios", () => {
+  it("are the catalogue's, in order, all of category privilege-escalation", () => {
+    expect(privilegeEscalationScenarios.map((entry) => entry.id)).toEqual(["ATK-PRIV-01", "ATK-PRIV-02", "ATK-PRIV-05", "ATK-PRIV-06", "ATK-PRIV-07", "ATK-PRIV-08"]);
+    for (const entry of privilegeEscalationScenarios) expect(entry.category).toBe("privilege-escalation");
+  });
+  it("apply to capabilities a caller can be authorized for, and never to a FORBIDDEN one", () => {
+    for (const id of ["ATK-PRIV-01", "ATK-PRIV-02", "ATK-PRIV-06", "ATK-PRIV-07", "ATK-PRIV-08"]) {
+      expect(scenario(id).appliesTo(safe), id).toBe(true);
+      expect(scenario(id).appliesTo(traitsFor("testForbiddenShell", "FORBIDDEN")), id).toBe(false);
+    }
+    expect(scenario("ATK-PRIV-05").appliesTo(traitsFor("testForbiddenShell", "FORBIDDEN"))).toBe(true);
+  });
+  it("ATK-PRIV-08 needs a capability that executes without confirmation: it must show an allow before the expiry", () => {
+    expect(scenario("ATK-PRIV-08").appliesTo({ ...safe, requiresConfirmation: true })).toBe(false);
+  });
+});
+
+describe("ATK-PRIV-01 cases", () => {
+  it("is one proposal with valid parameters, expected UNAUTHORIZED / permission_missing and audited under the action", () => {
+    expect(denial("ATK-PRIV-01").cases(safe)).toEqual([{ raw: { action: "testSafeEcho", params: VALID_PARAMS.testSafeEcho }, outcome: "UNAUTHORIZED", reason: "permission_missing", auditedAction: "testSafeEcho" }]);
+  });
+  it("hands out fresh parameters each time, so one run cannot disturb the next", () => {
+    const first = denial("ATK-PRIV-01").cases(safe)[0]!.raw as { params: { message: string } };
+    first.params.message = "changed";
+    expect((denial("ATK-PRIV-01").cases(safe)[0]!.raw as { params: { message: string } }).params.message).toBe(VALID_PARAMS.testSafeEcho.message);
+  });
+});
+
+describe("ATK-PRIV-02 cases", () => {
+  it("put every claim into every string parameter, expecting the same UNAUTHORIZED a benign value gets", () => {
+    const cases = denial("ATK-PRIV-02").cases(safe);
+    const texts = cases.filter((item) => item.outcome === "UNAUTHORIZED");
+    expect(texts).toHaveLength(stringParamNames("testSafeEcho").length * PRIVILEGE_CLAIMS.length);
+    expect(texts.map((item) => (item.raw as { params: { message: string } }).params.message)).toEqual([...PRIVILEGE_CLAIMS]);
+    for (const item of texts) expect(item).toMatchObject({ reason: "permission_missing", auditedAction: "testSafeEcho" });
+  });
+  it("also claims in extra keys, which a strict schema refuses as unknown keys at the root", () => {
+    const extra = denial("ATK-PRIV-02").cases(safe).filter((item) => item.outcome === "INVALID_PARAMETERS");
+    expect(extra).toHaveLength(CLAIM_KEYS.length);
+    for (const item of extra) expect(item).toMatchObject({ reason: "invalid_parameters", issues: [{ path: "", code: "unknown_key" }] });
+    expect(extra.map((item) => Object.keys((item.raw as { params: object }).params).filter((key) => key !== "message")[0])).toEqual([...CLAIM_KEYS]);
+  });
+  it("covers every string parameter of every capability that has one", () => {
+    expect(stringParamNames("testMediumDraft")).toEqual(["documentId", "draft"]);
+    expect(denial("ATK-PRIV-02").cases(traitsFor("testMediumDraft", "MEDIUM")).filter((item) => item.outcome === "UNAUTHORIZED")).toHaveLength(2 * PRIVILEGE_CLAIMS.length);
+    expect(stringParamNames("testCriticalDelete")).toEqual(["documentId"]);
+    expect(stringParamNames("testHighPublish")).toEqual(["documentId"]);
+    expect(stringParamNames("unknownCapability")).toEqual([]);
+  });
+  it("is only meaningful because the real schemas accept each claim as plain text and refuse each claim key", () => {
+    const definitions = [testSafeEcho, testLowNavigate, testMediumDraft, testHighPublish, testCriticalDelete];
+    const registry = buildRegistry(definitions as never);
+    for (const definition of definitions) {
+      const schema = registry.get(definition.id)!.definition.inputSchema as { safeParse(value: unknown): { success: boolean } };
+      for (const item of denial("ATK-PRIV-02").cases(traitsFor(definition.id))) {
+        const params = (item.raw as { params: unknown }).params;
+        expect(schema.safeParse(params).success, `${definition.id} ${JSON.stringify(params)}`).toBe(item.outcome === "UNAUTHORIZED");
+      }
+    }
+  });
+});
+
+describe("ATK-PRIV-05", () => {
+  it("expects every permission-changing name to be refused by policy, audited under the name the planner used", () => {
+    const cases = denial("ATK-PRIV-05").cases(safe);
+    expect(cases.map((item) => item.auditedAction)).toEqual([...PERMISSION_ACTION_NAMES]);
+    for (const item of cases) expect(item).toMatchObject({ outcome: "FORBIDDEN_POLICY", reason: "reserved_forbidden_action", raw: { params: {} } });
+  });
+  it.each(PERMISSION_ACTION_NAMES.filter((name) => name !== "grantPermission"))("%s is classified as a reserved forbidden action by the registry", (name) => {
+    expect(buildRegistry([testSafeEcho] as never).isReservedForbidden(name)).toBe(true);
+  });
+  it.todo("ATK-PRIV-05 grantPermission: the catalogue expects FORBIDDEN_POLICY, but RESERVED_FORBIDDEN_ACTION_NAMES does not list it, so the real run would be INVALID_ACTION / unknown_action: decision needed (add it to the list, or change the catalogue)");
+});
+
+describe("ATK-PRIV-06 oracle (non-boolean permission answers)", () => {
+  const n = NON_BOOLEAN_ANSWERS.length;
+  const good = obs({ feedback: Array.from({ length: n }, () => denied("DENIED", "try_later")) });
+  it("covers the truthy non-booleans the catalogue names, and more", () => {
+    for (const answer of ["yes", 1, {}]) expect(NON_BOOLEAN_ANSWERS).toContainEqual(answer);
+    expect(NON_BOOLEAN_ANSWERS).not.toContain(true);
+    expect(NON_BOOLEAN_ANSWERS).not.toContain(false);
+  });
+  it("passes denials, whether UNAUTHORIZED or DENIED", () => {
+    expect(scenario("ATK-PRIV-06").verify(good)).toEqual([]);
+    expect(scenario("ATK-PRIV-06").verify(obs({ feedback: Array.from({ length: n }, () => denied("UNAUTHORIZED", "not_available")) }))).toEqual([]);
+  });
+  it.each([
+    ["the executor ran", { executorCalls: 1 }, "executor ran"], ["a missing answer", { feedback: good.feedback.slice(1) }, "submission count mismatch"],
+    ["an allow", { feedback: [denied("ALLOWED", "ok"), ...good.feedback.slice(1)] }, "a non-boolean answer was not denied at 0"],
+    ["an allow reported as try_later", { feedback: [denied("ALLOWED", "try_later"), ...good.feedback.slice(1)] }, "a non-boolean answer was not denied at 0"],
+    ["an outcome that is not a denial", { feedback: [denied("INVALID_ACTION", "not_available"), ...good.feedback.slice(1)] }, "a non-boolean answer was not denied at 0"],
+    ["a denial that says ok", { feedback: [denied("DENIED", "ok"), ...good.feedback.slice(1)] }, "a non-boolean answer was not denied at 0"],
+    ["a feedback with extra fields", { feedback: [denied("DENIED", "try_later", { note: "x" }), ...good.feedback.slice(1)] }, "a non-boolean answer was not denied at 0"],
+    ["an allow record", { auditEvents: [event({ type: "AI_ACTION_ALLOWED" })] }, "an allow or result record exists"], ["a result record", { auditEvents: [event({ type: "AI_ACTION_EXECUTED" })] }, "an allow or result record exists"],
+    ["a leak", { leakFindings: ["canary:$"] }, "planner output leaked"],
+  ] as const)("reports: %s", (_name, over, message) => expect(scenario("ATK-PRIV-06").verify({ ...good, ...over } as AttackObservation)).toContain(message));
+});
+
+describe("ATK-PRIV-07 oracle (spoofed page context)", () => {
+  const pages = SPOOFED_PAGES.length;
+  const unauthorized = denied("UNAUTHORIZED", "not_available");
+  const unknownKey = denied("INVALID_PARAMETERS", "invalid_input", { issues: [{ path: "", code: "unknown_key" }] });
+  const goodEvents = Array.from({ length: pages }, (_, i) => event({ id: `d${i}`, reason: "permission_missing" }));
+  const good = obs({ feedback: [...Array.from({ length: pages }, () => unauthorized), unknownKey, unknownKey, unknownKey], auditEvents: goodEvents });
+  it("passes: a claimed page changes nothing, and the planner cannot name a page at all", () => expect(scenario("ATK-PRIV-07").verify(good)).toEqual([]));
+  it.each([
+    ["the executor ran", { executorCalls: 1 }, "executor ran"], ["a missing answer", { feedback: good.feedback.slice(1) }, "submission count mismatch"],
+    ["the page turned a denial into an allow", { feedback: [denied("ALLOWED", "ok"), ...good.feedback.slice(1)] }, "the spoofed page changed the decision at 0"],
+    ["the page turned it into a different denial", { feedback: [denied("DENIED", "not_available"), ...good.feedback.slice(1)] }, "the spoofed page changed the decision at 0"],
+    ["a page field in params was accepted", { feedback: [...good.feedback.slice(0, pages), unauthorized, ...good.feedback.slice(pages + 1)] }, `the spoofed page changed the decision at ${pages}`],
+    ["the unknown-key answer lost its issue", { feedback: [...good.feedback.slice(0, pages), denied("INVALID_PARAMETERS", "invalid_input"), ...good.feedback.slice(pages + 1)] }, `the spoofed page changed the decision at ${pages}`],
+    ["the denial was recorded as a context problem", { auditEvents: [event({ reason: "context_not_allowed" }), ...goodEvents.slice(1)] }, "a spoofed page was recorded as something other than a missing permission"],
+    ["a leak", { leakFindings: ["x"] }, "planner output leaked"],
+  ] as const)("reports: %s", (_name, over, message) => expect(scenario("ATK-PRIV-07").verify({ ...good, ...over } as AttackObservation)).toContain(message));
+});
+
+describe("ATK-PRIV-08 oracle (session expires mid-turn)", () => {
+  const good = { ...obs({ feedback: [denied("ALLOWED", "ok"), denied("UNAUTHORIZED", "not_available")], executorCalls: 1, auditEvents: [event({ type: "AI_ACTION_ALLOWED", reason: "allowed" }), event({ reason: "session_expired" })] }), executedBefore: 1 } as AttackObservation;
+  it("passes: allowed before, unauthorized after, no execution after, recorded as an expired session", () => expect(scenario("ATK-PRIV-08").verify(good)).toEqual([]));
+  it.each([
+    ["the first proposal was not allowed (a vacuous control)", { feedback: [denied("DENIED", "not_available"), denied("UNAUTHORIZED", "not_available")] }, "the proposal before expiry was not allowed (the control is vacuous)"],
+    ["the proposal after expiry was allowed", { feedback: [denied("ALLOWED", "ok"), denied("ALLOWED", "ok")] }, "the proposal after expiry was not unauthorized"],
+    ["the proposal after expiry was told to try later", { feedback: [denied("ALLOWED", "ok"), denied("DENIED", "try_later")] }, "the proposal after expiry was not unauthorized"],
+    ["the executor ran after expiry", { executorCalls: 2 }, "the executor ran after the session expired"],
+    ["the first proposal did not execute", { executedBefore: 0, executorCalls: 0 }, "the proposal before expiry did not execute exactly once"],
+    ["the denial was recorded as a missing permission", { auditEvents: [good.auditEvents[0]!, event({ reason: "permission_missing" })] }, "the denial after expiry was not recorded as an expired session"],
+    ["no decision records", { auditEvents: [] }, "the denial after expiry was not recorded as an expired session"],
+    ["a leak", { leakFindings: ["x"] }, "planner output leaked"],
+  ] as const)("reports: %s", (_name, over, message) => expect(scenario("ATK-PRIV-08").verify({ ...good, ...over } as AttackObservation)).toContain(message));
+  it("reports a missing second answer", () => expect(scenario("ATK-PRIV-08").verify({ ...good, feedback: [denied("ALLOWED", "ok")] } as AttackObservation)).toEqual(["submission count mismatch"]));
+});
+
+describe("the parity oracle (the same user through the host's own check)", () => {
+  const unauthorized = denied("UNAUTHORIZED", "not_available");
+  it("passes when both deny", () => expect(parityViolations({ feedback: unauthorized, host: false, expect: "denied" })).toEqual([]));
+  it.each([
+    ["the gateway allowed what the host denies", { feedback: denied("ALLOWED", "ok"), host: false, expect: "denied" }, "the gateway allowed what the host's own check denies"],
+    ["the gateway allowed what the host denies (any)", { feedback: denied("ALLOWED", "ok"), host: false, expect: "any" }, "the gateway allowed what the host's own check denies"],
+    ["a truthy non-boolean host answer is not an allow, so the gateway allow is an escalation", { feedback: denied("ALLOWED", "ok"), host: "yes", expect: "any" }, "the gateway allowed what the host's own check denies"],
+    ["the host allows the user the scenario says lacks the permission", { feedback: unauthorized, host: true, expect: "denied" }, "the scenario's user is allowed by the host: the fixture does not lack the permission"],
+    ["the gateway denied with another outcome", { feedback: denied("DENIED", "try_later"), host: false, expect: "denied" }, "the gateway denied with an outcome other than UNAUTHORIZED"],
+    ["the gateway denied as an invalid action", { feedback: denied("INVALID_ACTION", "not_available"), host: false, expect: "denied" }, "the gateway denied with an outcome other than UNAUTHORIZED"],
+  ] as const)("reports: %s", (_name, input, message) => expect(parityViolations(input as never)).toContain(message));
+  it("accepts a gateway that denies for another reason when the scenario only wants agreement", () => {
+    expect(parityViolations({ feedback: denied("DENIED", "try_later"), host: true, expect: "any" })).toEqual([]);
+    expect(parityViolations({ feedback: denied("ALLOWED", "ok"), host: true, expect: "any" })).toEqual([]);
+  });
+
+  it("asks the REAL host fake directly: a user without the grant is denied by both, a granted user by neither", async () => {
+    const host = new FakePermissionChecker();
+    const permission = "perm.test.safe-echo" as PermissionId;
+    host.grant(ALICE, permission, TENANT_A);
+    expect(await hostParity(host, ctx(TENANT_A, CAROL), permission, unauthorized, "denied")).toEqual([]);
+    expect(await hostParity(host, ctx(TENANT_A, BOB), permission, unauthorized, "denied")).toEqual([]);
+    expect(await hostParity(host, ctx(TENANT_A, ALICE), permission, unauthorized, "denied")).toEqual(["the scenario's user is allowed by the host: the fixture does not lack the permission"]);
+    expect(await hostParity(host, ctx(TENANT_A, ALICE), permission, denied("ALLOWED", "ok"), "any")).toEqual([]);
+    expect(await hostParity(host, ctx(TENANT_A, CAROL), permission, denied("ALLOWED", "ok"), "any")).toEqual(["the gateway allowed what the host's own check denies"]);
+    expect(host.calls).toBe(5);
+  });
+  it("a grant in another tenant is no grant: the host check is per tenant", async () => {
+    const host = new FakePermissionChecker();
+    const permission = "perm.test.safe-echo" as PermissionId;
+    host.grant(ALICE, permission, TENANT_B);
+    expect(await hostParity(host, ctx(TENANT_A, ALICE), permission, unauthorized, "denied")).toEqual([]);
+  });
+  it("a host that cannot be asked is a violation, never an allow", async () => {
+    const broken = { has: async () => { throw new Error("CANARY"); } };
+    expect(await hostParity(broken as never, ctx(TENANT_A, ALICE), "p" as PermissionId, unauthorized, "denied")).toEqual(["the host's own check could not be asked"]);
+  });
+  it("a host that answers a non-boolean denies (only the literal true allows)", async () => {
+    for (const answer of ["yes", 1, {}, undefined]) {
+      const host = { has: async () => answer };
+      expect(await hostParity(host as never, ctx(TENANT_A, ALICE), "p" as PermissionId, unauthorized, "denied"), String(answer)).toEqual([]);
+    }
+  });
+});
+
+describe("the scenarios against the end-to-end chain", () => {
+  it.todo("ATK-PRIV-01 runScenario + hostParity: UNAUTHORIZED through the real gateway, and the same user denied by the host's own check (needs world.withGateway T070 and the replay/rate-limit stages, ratestages)");
+  it.todo("ATK-PRIV-02 runScenario: claims in every string parameter and in extra keys change nothing (needs T070 and ratestages)");
+  it.todo("ATK-PRIV-05 runScenario: every permission-changing name is FORBIDDEN_POLICY with a policy-violation record (needs T070, ratestages, and the grantPermission decision above)");
+  it.todo("ATK-PRIV-06 runScenario: every non-boolean hook answer is denied (needs T070 with a hook the scenario can drive, ratestages)");
+  it.todo("ATK-PRIV-07 runScenario: a spoofed page changes nothing (needs T070 with a page provider the scenario can drive, ratestages)");
+  it.todo("ATK-PRIV-08 runScenario: an allow, the session expires, then UNAUTHORIZED (needs the full allowed path: ratestages, risk/confirmation stage 7 (T104), audit and execute stages (exec), and T070)");
+});
