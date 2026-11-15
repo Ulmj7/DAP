@@ -5,9 +5,10 @@
  */
 import { describe, expect, it } from "vitest";
 import type { AttackObservation, AuditEvent, CapabilityTraits, PlannerFeedback, ReasonCode } from "@dap/contracts";
-import { denyDecision, toPlannerFeedback } from "@dap/security";
-import { NOT_AVAILABLE_BYTES, TENANT_B, TENANT_B_RESOURCES, byteIdentical, crossTenantScenarios, validParamsFor } from "@dap/testkit";
-import type { DenialScenario } from "@dap/testkit";
+import { DEFAULT_GATEWAY_CONFIG, denyDecision, toPlannerFeedback, validateGatewayConfig } from "@dap/security";
+import type { GatewayConfig } from "@dap/security";
+import { ALICE, NOT_AVAILABLE_BYTES, TENANT_A, TENANT_B, TENANT_B_RESOURCES, byteIdentical, crossTenantScenarios, runScenario, validParamsFor, withGateway } from "@dap/testkit";
+import type { DenialScenario, GatewayWorld, WorldUser } from "@dap/testkit";
 
 const scenario = (id: string) => crossTenantScenarios.find((entry) => entry.id === id)!;
 const traits = (over: Partial<CapabilityTraits> = {}): CapabilityTraits => ({ actionId: "testMediumDraft", risk: "MEDIUM", changesState: true, targetsResource: true, requiresConfirmation: true, ...over });
@@ -162,10 +163,106 @@ describe("how the scenarios drive the world (a scripted target that records, not
   });
 });
 
-describe("the scenarios against the end-to-end chain", () => {
-  it.todo("ATK-XTENANT-01 runScenario: other-tenant and nonexistent resources through the real gateway, byte-identical feedback (needs world.withGateway T070 with a resource authorizer the scenario can drive, and ratestages)");
-  it.todo("ATK-XTENANT-02 runScenario: a same-tenant resource the user may not use looks like another tenant's (needs T070 and ratestages)");
-  it.todo("ATK-XTENANT-03 runScenario: a tenant id in the envelope or parameters is rejected (needs T070 and ratestages: intake and validate already refuse it, but the denial oracle also requires the audit linkage written by the runner)");
-  it.todo("ATK-XTENANT-04 runScenario: a foreign resource returned by the host is a tenant_mismatch, indistinguishable to the planner (needs T070, ratestages, and a resource authorizer that can answer with a foreign resource)");
+/** Limits wide enough that the batch (eight tenant-id attempts in one turn) is never throttled, so every answer is the pipeline's own. */
+const WIDE: GatewayConfig = validateGatewayConfig({
+  ...DEFAULT_GATEWAY_CONFIG,
+  limits: {
+    ...DEFAULT_GATEWAY_CONFIG.limits, proposalsPerTurn: 500, perUserPerMinute: { limit: 5000, windowSeconds: 60 }, perTenantPerMinute: { limit: 50000, windowSeconds: 60 },
+    perUserPerCapabilityPerMinute: { limit: 5000, windowSeconds: 60 }, denialThrottle: { denials: 5000, windowSeconds: 60, blockSeconds: 300 },
+  },
+});
+const A_ALICE: WorldUser = { tenant: "A", user: ALICE };
+const B_ALICE: WorldUser = { tenant: "B", user: ALICE };
+const RESOURCE_CAPABILITIES = ["testMediumDraft", "testHighPublish", "testCriticalDelete"] as const;
+const KINDS = ["other-tenant", "nonexistent", "same-tenant-unauthorized"] as const;
+
+/** runScenario returns only feedback, executor calls, audit events and findings; the oracle also needs the names planted in the other tenant, which the world (not the scenario) states. */
+const withNames = (world: GatewayWorld, observation: AttackObservation): AttackObservation => ({ ...observation, foreignDisplayNames: world.foreignDisplayNames("A") }) as AttackObservation;
+
+describe("the scenarios against the REAL gateway, through withGateway() (T073, REQUIRED: ATK-XTENANT-01..03)", () => {
+  describe.each(RESOURCE_CAPABILITIES)("%s", (actionId) => {
+    it("ATK-XTENANT-01 runScenario: another tenant's resource and a nonexistent one get the same bytes, recorded as resource_not_available, executor at zero", async () => {
+      const world = withGateway({ config: WIDE });
+      const observation = withNames(world, await runScenario(scenario("ATK-XTENANT-01"), world.targetFor(actionId, A_ALICE)));
+      expect(scenario("ATK-XTENANT-01").verify(observation)).toEqual([]);
+      expect(observation.feedback.map((item) => JSON.stringify(item))).toEqual([NOT_AVAILABLE_BYTES, NOT_AVAILABLE_BYTES]);
+      expect(world.executorCalls()).toBe(0);
+    });
+    it("ATK-XTENANT-02 runScenario: a same-tenant resource the user may not use looks exactly like another tenant's", async () => {
+      const world = withGateway({ config: WIDE });
+      const observation = withNames(world, await runScenario(scenario("ATK-XTENANT-02"), world.targetFor(actionId, A_ALICE)));
+      expect(scenario("ATK-XTENANT-02").verify(observation)).toEqual([]);
+      expect(world.executorCalls()).toBe(0);
+    });
+    it("ATK-XTENANT-03 runScenario: a tenant id in the envelope or in the parameters is rejected, executor at zero", async () => {
+      const world = withGateway({ config: WIDE });
+      const target = world.targetFor(actionId, A_ALICE);
+      const observation = await runScenario(scenario("ATK-XTENANT-03"), target);
+      expect((scenario("ATK-XTENANT-03") as DenialScenario).verify(observation, target)).toEqual([]);
+      expect(observation.feedback).toHaveLength(8);
+      expect(world.executorCalls()).toBe(0);
+    });
+  });
+
+  it("all three kinds are externally indistinguishable: one submitted set, byte-identical feedback, and the same audit outcome, from either tenant", async () => {
+    for (const who of [A_ALICE, B_ALICE]) {
+      const world = withGateway({ config: WIDE });
+      const submitter = await world.submitterFor(who);
+      const answers = [];
+      for (const kind of KINDS) answers.push(JSON.stringify(await submitter.submit(world.resourceProposal("testMediumDraft", kind, who.tenant))));
+      expect(new Set(answers).size, who.tenant).toBe(1);
+      expect(answers[0]).toBe(NOT_AVAILABLE_BYTES);
+      const decisions = world.events().filter((entry) => entry.type !== "AI_ACTION_PROPOSED");
+      expect(decisions.map((entry) => [entry.type, entry.outcome, entry.reason])).toEqual(KINDS.map(() => ["AI_ACTION_DENIED", "DENIED", "resource_not_available"]));
+      expect(world.executorCalls()).toBe(0);
+    }
+  });
+
+  it("a resource that does exist for the user is allowed, so the three-way denial is not a world that denies everything", async () => {
+    const world = withGateway({ config: WIDE });
+    const alice = await world.submitterFor(A_ALICE);
+    // The user's own document resolves: the HIGH capability gets past resolve and authorize and reaches the confirmation step instead of "not available".
+    const answer = await alice.submit(world.proposal("testHighPublish"));
+    expect(answer.outcome).toBe("REQUIRES_CONFIRMATION");
+    expect(world.executorCalls()).toBe(0);
+  });
+
+  it("no foreign display name, resource id or tenant id reaches the planner or the audit events, for every kind and every resource capability", async () => {
+    for (const actionId of RESOURCE_CAPABILITIES) for (const who of [A_ALICE, B_ALICE]) {
+      const world = withGateway({ config: WIDE });
+      const target = world.targetFor(actionId, who);
+      const foreign = world.foreignDisplayNames(who.tenant);
+      const otherTenant = who.tenant === "A" ? TENANT_B : TENANT_A;
+      expect(foreign.length).toBeGreaterThan(0);
+      const answers = [];
+      for (const kind of KINDS) answers.push(await target.submit({ callId: `${actionId}-${kind}`, raw: target.resourceProposal(kind) }));
+      // the host returning the other tenant's resource (a buggy host) is recorded as a mismatch, and still shows the planner nothing
+      world.setResourceAnswer(target.foreignResource());
+      answers.push(await target.submit({ callId: `${actionId}-host`, raw: target.resourceProposal("other-tenant") }));
+      const text = JSON.stringify([answers, world.events()]);
+      for (const name of foreign) expect(text, `${actionId} ${who.tenant}: ${name}`).not.toContain(name);
+      expect(JSON.stringify(answers)).not.toContain(otherTenant);
+      expect(new Set(answers.map((item) => JSON.stringify(item))).size).toBe(1);
+      expect(world.executorCalls()).toBe(0);
+    }
+  });
+
+  it("a tenant id supplied in the envelope or the parameters has no effect: the same answer as the call without it, and no foreign data", async () => {
+    const world = withGateway({ config: WIDE });
+    const alice = await world.submitterFor(A_ALICE);
+    const baseline = JSON.stringify(await alice.submit(world.resourceProposal("testMediumDraft", "other-tenant", "A", "base")));
+    const claimed = JSON.stringify(await alice.submit({ callId: "claimed", raw: { action: "testMediumDraft", params: { ...validParamsFor("testMediumDraft"), documentId: "doc-b-1", tenantId: TENANT_B } } }));
+    expect(baseline).toBe(NOT_AVAILABLE_BYTES);
+    expect(claimed).toBe(JSON.stringify({ outcome: "INVALID_PARAMETERS", category: "invalid_input", issues: [{ path: "", code: "unknown_key" }] }));
+    expect(world.executorCalls()).toBe(0);
+    // the tenant the context carries is the only one in play: tenant B's own user sees tenant B's document, never tenant A's
+    const aliceInB = await world.submitterFor(B_ALICE);
+    expect(await aliceInB.submit(world.proposal("testHighPublish"))).toMatchObject({ outcome: "REQUIRES_CONFIRMATION" });
+    expect(JSON.stringify(world.events().filter((entry) => entry.tenantId === TENANT_A))).not.toContain(TENANT_B);
+  });
+});
+
+describe("the remaining scenarios against the end-to-end chain (OPTIONAL in M1)", () => {
+  it.todo("ATK-XTENANT-04 runScenario: a foreign resource returned by the host is a tenant_mismatch, indistinguishable to the planner (OPTIONAL; the control is already proven in test-world.gateway.test.ts)");
   it.todo("ATK-XTENANT-05..10 store isolation, same callId in two tenants, confirmations, rate counters, reviewer queries and display-name canaries: belong to the PostgreSQL, confirmation, limits and reader batches (T093/T094, T104/T105, T115-T119)");
 });
