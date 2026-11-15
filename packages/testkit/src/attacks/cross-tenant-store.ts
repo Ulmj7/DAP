@@ -10,7 +10,7 @@ function fixtureValue(column: Column, tenant: string): unknown {
   if (column.name === "tenant_id") return tenant;
   const text: Record<string, string> = {
     namespace: "proposal", outcome: "DENIED", reason: "permission_missing", risk: "HIGH",
-    event_type: "AI_ACTION_DENIED", status: "pending", execution_status: "not_started",
+    event_type: "AI_ACTION_PROPOSED", status: "pending", execution_status: "not_started",
     params_digest: "a".repeat(64), definition_hash: "b".repeat(64), model: "scripted",
   };
   if (column.enum_value !== null) return column.enum_value;
