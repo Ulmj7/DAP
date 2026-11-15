@@ -80,7 +80,7 @@ describe("the execution cap", () => {
     }
     h.world.setPermissionAnswer(false);
     for (let index = 0; index < CAP; index++) expect(await h.target.submitAs(actor(), safe(`unauthorized-${index}`))).toEqual({ outcome: "UNAUTHORIZED", category: "not_available" });
-    h.world.setPermissionAnswer(undefined);
+    h.world.clearPermissionAnswer();
     expect(h.target.executor.calls).toBe(0);
     const answers = await run(h, CAP, actor(), "good");
     expect(count(answers, allowed)).toBe(CAP);

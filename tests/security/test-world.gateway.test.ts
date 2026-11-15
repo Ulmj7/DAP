@@ -71,13 +71,34 @@ describe("a user lacking the permission is denied", () => {
     for (const answer of ["yes", 1, {}, [true], null, undefined, "true"]) {
       const world = withGateway();
       world.setPermissionAnswer(answer);
-      const carol = await world.submitterFor(A_CAROL);
-      expect((await carol.submit(world.proposal("testSafeEcho"))).outcome, JSON.stringify(answer)).not.toBe("ALLOWED");
+      const alice = await world.submitterFor(A_ALICE); // alice holds the permission for real, so only the override can deny her
+      expect((await alice.submit(world.proposal("testSafeEcho"))).outcome, JSON.stringify(answer)).not.toBe("ALLOWED");
       expect(world.executorCalls()).toBe(0);
     }
     const world = withGateway();
     world.setPermissionAnswer(true);
     expect((await (await world.submitterFor(A_CAROL)).submit(world.proposal("testSafeEcho"))).outcome).toBe("ALLOWED");
+  });
+});
+
+describe("host answer overrides are literal, and only a clear removes them", () => {
+  it("setPermissionAnswer(undefined) is the answer undefined (a denial), and clearPermissionAnswer gives the real grants back", async () => {
+    const world = withGateway();
+    const alice = await world.submitterFor(A_ALICE);
+    world.setPermissionAnswer(undefined);
+    expect(await alice.submit(world.proposal("testSafeEcho"))).toEqual({ outcome: "DENIED", category: "try_later" }); // a malformed host answer is a dependency failure: fail closed
+    expect(world.executorCalls()).toBe(0);
+    world.clearPermissionAnswer();
+    expect((await alice.submit(world.proposal("testSafeEcho"))).outcome).toBe("ALLOWED");
+  });
+  it("setResourceAnswer(undefined) is a host that answers undefined (a failure, fail closed), and clearResourceAnswer gives the real table back", async () => {
+    const world = withGateway();
+    const alice = await world.submitterFor(A_ALICE);
+    world.setResourceAnswer(undefined);
+    expect(await alice.submit(world.proposal("testHighPublish"))).toEqual({ outcome: "DENIED", category: "try_later" });
+    expect(world.executorCalls()).toBe(0);
+    world.clearResourceAnswer();
+    expect((await alice.submit(world.proposal("testHighPublish"))).outcome).toBe("REQUIRES_CONFIRMATION");
   });
 });
 

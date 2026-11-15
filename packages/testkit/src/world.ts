@@ -246,12 +246,16 @@ export interface GatewayWorld {
 
   grantPermission(who: WorldUser, permission: string): void;
   revokePermission(who: WorldUser, permission: string): void;
-  /** Make the host's permission hook answer exactly `answer` to every question (`undefined` removes the override). */
+  /** Make the host's permission hook answer exactly `answer` (any value, `undefined` included) to every question, until `clearPermissionAnswer`. */
   setPermissionAnswer(answer: unknown): void;
+  /** Remove the `setPermissionAnswer` override: the host's real grants answer again. */
+  clearPermissionAnswer(): void;
   /** Make the host's page provider report `page`. */
   setReportedPage(page: string | null): void;
-  /** Make the host's resource check answer `answer` (null, or a resolved resource) to every question (`undefined` removes the override). */
+  /** Make the host's resource check answer exactly `answer` (null, a resolved resource, or any other value) to every question, until `clearResourceAnswer`. */
   setResourceAnswer(answer: unknown): void;
+  /** Remove the `setResourceAnswer` override: the host's real resource table answers again. */
+  clearResourceAnswer(): void;
   /** Hide a resource from one user (or from everyone in the tenant when `user` is omitted) while it still exists in the tenant. */
   denyResource(tenant: WorldTenant, ref: ResourceRef, user?: string): void;
   /** What the host's resource check returns for a resource of the OTHER tenant: a resolved resource of that tenant. */
@@ -482,9 +486,11 @@ export function withGateway(options: GatewayWorldOptions = {}): GatewayWorld {
 
     grantPermission(who, permission) { state.permissions.grant(who.user as UserId, permission as PermissionId, tenantKey(who.tenant)); },
     revokePermission(who, permission) { state.permissions.revoke(who.user as UserId, permission as PermissionId, tenantKey(who.tenant)); },
-    setPermissionAnswer(answer) { state.controls.permissionOverride = answer !== undefined; state.controls.permissionAnswer = answer; },
+    setPermissionAnswer(answer) { state.controls.permissionOverride = true; state.controls.permissionAnswer = answer; },
+    clearPermissionAnswer() { state.controls.permissionOverride = false; state.controls.permissionAnswer = undefined; },
     setReportedPage(page) { state.pages.setPage(page as PageId | null); },
-    setResourceAnswer(answer) { state.controls.resourceOverride = answer !== undefined; state.controls.resourceAnswer = answer; },
+    setResourceAnswer(answer) { state.controls.resourceOverride = true; state.controls.resourceAnswer = answer; },
+    clearResourceAnswer() { state.controls.resourceOverride = false; state.controls.resourceAnswer = undefined; },
     denyResource(tenant, ref, user) { state.controls.denied.add(JSON.stringify([tenantKey(tenant), user ?? "*", ref.type, ref.id])); },
     foreignResource(from) { return structuredClone((from === "A" ? TENANT_B_RESOURCES : TENANT_A_RESOURCES)[0]!); },
     foreignDisplayNames(from) { return (from === "A" ? TENANT_B_RESOURCES : TENANT_A_RESOURCES).map((resource) => resource.displayName); },
