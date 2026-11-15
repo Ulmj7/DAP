@@ -1,9 +1,9 @@
-import { z } from "zod";
 import type {
   ActionId, ActionRegistry, AuditSink, Clock, ConfirmationChannel, ConfirmationService, ConfirmationStore, ExecutorTable, GatewayConfig, GatewayDependencies,
   IdGenerator, PageContextProvider, PermissionChecker, PolicyGateway, RateLimiter, ReplayGuard, ResourceAuthorizer,
   SecurityStateStore, TenantActionPolicyStore,
 } from "@dap/contracts";
+import { validateGatewayConfig } from "../limits/limit-config.js";
 import { snapshotAnswer } from "./answer-snapshot.js";
 import { createPipeline, type PipelineOptions, type StageMap } from "./pipeline.js";
 import { createProposalGateway } from "./submitter.js";
@@ -12,13 +12,6 @@ import { createAuthorizeStage } from "./stages/authorize.js";
 import { createValidateStage } from "./stages/validate.js";
 import { createContextStage } from "./stages/context.js";
 import { createResolveStage } from "./stages/resolve.js";
-
-const positive = z.number().int().positive();
-const rule = z.strictObject({ limit: positive, windowSeconds: positive });
-const configSchema = z.strictObject({
-  limits: z.strictObject({ proposalsPerTurn: positive, executionsPerTurn: positive, maxChainDepth: z.number().int().nonnegative(), turnBudgetMs: positive, perUserPerMinute: rule, perTenantPerMinute: rule, perUserPerCapabilityPerMinute: rule, highRiskPerUserPerHour: rule, denialThrottle: z.strictObject({ denials: positive, windowSeconds: positive, blockSeconds: positive }) }),
-  maxPayloadBytes: positive, maxJsonDepth: positive, replayRetentionSeconds: positive, confirmationDefaultTtlSeconds: positive.max(900), hookTimeoutMs: positive.max(0x7fff_ffff), proposalBudgetMs: positive.max(0x7fff_ffff).optional(),
-});
 
 /**
  * Compile-time exhaustive method lists: a method added to (or removed from) a contract port
@@ -70,10 +63,10 @@ function captureDependencies(source: GatewayDependencies): GatewayDependencies {
     const global = read(source, "globalAllowlist");
     if (!global || typeof global !== "object") throw new TypeError("Missing gateway dependency");
     const globalAllowlist: ReadonlySet<ActionId> = new Set(global as ReadonlySet<ActionId>);
-    const config = snapshotAnswer(read(source, "config"));
-    if (!configSchema.safeParse(config).success) throw new TypeError("Invalid gateway config");
+    // The one strict, frozen, detached configuration (T115): the same validator the host uses, never a looser copy.
+    const config = validateGatewayConfig(snapshotAnswer(read(source, "config")));
     return Object.freeze({
-      registry, globalAllowlist, config: config as GatewayConfig,
+      registry, globalAllowlist, config,
       executors: port<ExecutorTable>(source, "executors", executorMethods),
       hooks: Object.freeze({ permissions: port<PermissionChecker>(hooks, "permissions", permissionMethods), resources: port<ResourceAuthorizer>(hooks, "resources", resourceMethods), pages: port<PageContextProvider>(hooks, "pages", pageMethods) }),
       state: Object.freeze({

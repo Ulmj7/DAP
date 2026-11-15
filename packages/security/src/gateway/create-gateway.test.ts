@@ -97,3 +97,36 @@ describe("gateway composition and planner boundary", () => {
     expect(calls()).toBe(0);
   });
 });
+
+describe("the gateway accepts only a configuration the T115 validator accepts", () => {
+  const withConfig = (change: (config: Record<string, unknown>) => unknown) => {
+    const { deps } = dependencies();
+    const config = structuredClone(deps.config) as unknown as Record<string, unknown>;
+    return { ...deps, config: (change(config) ?? config) as never } as GatewayDependencies;
+  };
+  const limits = (config: Record<string, unknown>) => config.limits as Record<string, unknown>;
+
+  it("builds with the fixture configuration and with an explicit proposalBudgetMs", () => {
+    expect(() => createPolicyGateway(withConfig(() => undefined))).not.toThrow();
+    expect(() => createPolicyGateway(withConfig((config) => { config.proposalBudgetMs = 4000; }))).not.toThrow();
+  });
+  it.each([
+    ["maxChainDepth 0 (a chain of zero calls is not a limit)", (c: Record<string, unknown>) => { limits(c).maxChainDepth = 0; }],
+    ["a hook timeout above 60 s", (c: Record<string, unknown>) => { c.hookTimeoutMs = 60_001; }],
+    ["a hook timeout that fits a timer but not a sane deadline", (c: Record<string, unknown>) => { c.hookTimeoutMs = 0x7fff_ffff; }],
+    ["a payload cap above 1 MiB", (c: Record<string, unknown>) => { c.maxPayloadBytes = 1_048_577; }],
+    ["a per-turn proposal count above the ceiling", (c: Record<string, unknown>) => { limits(c).proposalsPerTurn = 1_000_001; }],
+    ["an unknown top-level key", (c: Record<string, unknown>) => { c.unlimited = true; }],
+    ["an unknown nested key", (c: Record<string, unknown>) => { (limits(c).denialThrottle as Record<string, unknown>).bypass = 1; }],
+    ["a missing limit", (c: Record<string, unknown>) => { delete limits(c).perTenantPerMinute; }],
+    ["a proposal budget of 0", (c: Record<string, unknown>) => { c.proposalBudgetMs = 0; }],
+    ["a string proposal budget", (c: Record<string, unknown>) => { c.proposalBudgetMs = "5000"; }],
+    ["a configuration that is not plain data", () => Object.create({}) as unknown],
+  ])("refuses %s", (_name, change) => {
+    expect(() => createPolicyGateway(withConfig(change))).toThrow(TypeError);
+  });
+  it("takes no field from the prototype chain", () => {
+    const { deps } = dependencies();
+    expect(() => createPolicyGateway({ ...deps, config: Object.create(deps.config) } as GatewayDependencies)).toThrow(TypeError);
+  });
+});

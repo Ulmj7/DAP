@@ -133,3 +133,29 @@ describe("T115 configuration is plain own data, never what an object merely expo
     expect(config.perTenantPerMinute.limit).toBe(1);
   });
 });
+
+describe("T115 proposalBudgetMs: the optional per-proposal deadline the runner enforces", () => {
+  const withBudget = (value: unknown) => ({ ...structuredClone(expected), proposalBudgetMs: value });
+
+  it("is accepted from 1 to 0x7fffffff milliseconds and kept in the frozen, detached snapshot", () => {
+    for (const value of [1, 10_000, 0x7fff_ffff]) {
+      const input = withBudget(value);
+      const config = validateGatewayConfig(input);
+      expect(config.proposalBudgetMs).toBe(value);
+      assertFrozen(config);
+      (input as { proposalBudgetMs: unknown }).proposalBudgetMs = 5;
+      expect(config.proposalBudgetMs).toBe(value);
+    }
+  });
+  it.each([0, -1, -0, NaN, Infinity, -Infinity, 1.5, 0x8000_0000, Number.MAX_SAFE_INTEGER, "10000", "", true, null, undefined, {}, [], [10_000], 10_000n])("is refused as %s", (value) => {
+    expect(() => validateGatewayConfig(withBudget(value))).toThrow(TypeError);
+  });
+  it("stays omitted when not configured: the runner's own default (10 000 ms) applies, never a silent value here", () => {
+    const config = validateGatewayConfig(structuredClone(expected));
+    expect(Object.hasOwn(config, "proposalBudgetMs")).toBe(false);
+    expect(Object.hasOwn(DEFAULT_GATEWAY_CONFIG, "proposalBudgetMs")).toBe(false);
+  });
+  it("is a gateway setting only: the limit-only configuration still rejects it as an unknown key", () => {
+    expect(() => validateLimitConfig({ ...structuredClone(expected.limits), proposalBudgetMs: 10_000 })).toThrow(TypeError);
+  });
+});
