@@ -64,6 +64,7 @@ describe("a recorded, consistent proposal is executed once, with exactly what it
     expect(call.params).toEqual({ projectId: "p1", note: "SECRET_NOTE" }); // validate's params, not intake's
     expect(JSON.stringify(call)).not.toContain("RAW_NOTE");
     expect(Object.isFrozen(call)).toBe(true);
+    expect(Object.isFrozen(call.params)).toBe(true); // the params are the executor's own deeply frozen copy, whatever the facts' freezing was
     expect(call.security).toBe(request.context);
     expect(call.resource).toEqual({ ref: { type: "project", id: "p1" }, tenantId: TENANT, displayName: "Project One" });
     expect(Object.isFrozen(call.resource)).toBe(true);

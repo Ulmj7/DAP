@@ -17,6 +17,7 @@
 import { z } from "zod";
 import { RISK_LEVELS } from "@dap/contracts";
 import type { JsonValue, RiskLevel } from "@dap/contracts";
+import { snapshotAnswer } from "../answer-snapshot.js";
 import type { PipelineRecord } from "../pipeline.js";
 
 const text = z.string().min(1);
@@ -45,6 +46,29 @@ export interface AllowFacts {
 }
 export interface AuditedFacts extends AllowFacts { readonly eventId: string }
 
+/**
+ * The facts stage 7 decides from: what intake, resolve, validate and authorize published, proven consistent with each other (the action intake
+ * read is the one resolve found; the resource validate extracted is the one authorize resolved). The risk class here is what RESOLVE found.
+ */
+export function readPreRiskFacts(facts: PipelineRecord["facts"]): { readonly actionId: string; readonly version: number; readonly risk: RiskLevel } | undefined {
+  const intake = SLOTS.intake.safeParse(facts.intake);
+  const resolve = SLOTS.resolve.safeParse(facts.resolve);
+  const validate = SLOTS.validate.safeParse(facts.validate);
+  const authorize = SLOTS.authorize.safeParse(facts.authorize);
+  if (!intake.success || !resolve.success || !validate.success || !authorize.success) return undefined;
+  const [i, r, v, a] = [intake.data, resolve.data, validate.data, authorize.data];
+  if (i.action !== r.id) return undefined;
+  if (v.resource === null ? a.resource !== null : a.resource === null || a.resource.type !== v.resource.type || a.resource.id !== v.resource.id) return undefined;
+  return Object.freeze({ actionId: r.id, version: r.version, risk: r.risk });
+}
+
+/** What the confirmation position reads back from the risk stage: a risk fact that says no confirmation was needed, for the class resolve found. */
+export function readNoConfirmationNeeded(facts: PipelineRecord["facts"]): boolean {
+  const pre = readPreRiskFacts(facts);
+  const risk = z.strictObject({ risk: allowedRisk, confirmation: z.literal("not_required") }).safeParse(facts.risk);
+  return pre !== undefined && risk.success && risk.data.risk === pre.risk;
+}
+
 /** The consistent facts an ALLOWED path rests on, or undefined if any slot is missing, malformed, or disagrees with another. */
 export function readAllowFacts(facts: PipelineRecord["facts"]): AllowFacts | undefined {
   const intake = SLOTS.intake.safeParse(facts.intake);
@@ -58,7 +82,7 @@ export function readAllowFacts(facts: PipelineRecord["facts"]): AllowFacts | und
   if (i.action !== r.id || r.risk !== k.risk) return undefined;
   if (k.confirmation !== c.state || (c.state === "accepted") !== (c.confirmationId !== null)) return undefined;
   if (v.resource === null ? a.resource !== null : a.resource === null || a.resource.type !== v.resource.type || a.resource.id !== v.resource.id) return undefined;
-  return Object.freeze({ actionId: r.id, version: r.version, risk: k.risk, definitionHash: r.definitionHash, params: v.params, paramsDigest: v.paramsDigest, resource: a.resource, confirmationId: c.confirmationId });
+  return Object.freeze({ actionId: r.id, version: r.version, risk: k.risk, definitionHash: r.definitionHash, params: snapshotAnswer(v.params) as AllowFacts["params"], paramsDigest: v.paramsDigest, resource: a.resource, confirmationId: c.confirmationId });
 }
 
 /** The same facts, plus the allow-event the audit stage wrote, proven to describe exactly this action, version, risk, digest and confirmation. */

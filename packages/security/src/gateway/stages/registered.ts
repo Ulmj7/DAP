@@ -6,7 +6,18 @@ export type ProvenDefinition = Pick<AnyActionDefinition, "id" | "version" | "inp
   readonly auditParams: readonly AuditParamRule[];
   /** Which executor runs it; read once, and checked by the stage that uses it. */
   readonly executorId: unknown;
+  /** The confirmation policy as two plain reads (`kind`, `justification`), copied once, or undefined when it is not an object. The risk stage interprets it. */
+  readonly confirmation: Readonly<{ kind: unknown; justification: unknown }> | undefined;
 };
+
+/** The capability's confirmation policy copied once; a throwing or non-object policy yields undefined (the risk stage then fails closed). */
+function confirmationPolicy(definition: object): ProvenDefinition["confirmation"] {
+  try {
+    // A policy that is not an object makes Reflect.get throw: that is the undefined below.
+    const policy = Reflect.get(definition, "confirmation") as object;
+    return Object.freeze({ kind: Reflect.get(policy, "kind"), justification: Reflect.get(policy, "justification") });
+  } catch { return undefined; }
+}
 
 /** The capability's audit allowlist as frozen plain rules; a malformed list or rule is dropped (fail closed: less is recorded, never more). */
 function auditRules(definition: object): readonly AuditParamRule[] {
@@ -53,5 +64,6 @@ export function provenDefinition(get: ActionRegistry["get"], resolved: Readonly<
     allowedPages: Reflect.get(definition, "allowedPages"),
     auditParams: auditRules(definition),
     executorId: Reflect.get(definition, "executorId"),
+    confirmation: confirmationPolicy(definition),
   }) as ProvenDefinition;
 }
