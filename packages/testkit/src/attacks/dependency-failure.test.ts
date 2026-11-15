@@ -56,7 +56,7 @@ describe("T123 dependency-failure definitions", () => {
     const definition = dependencyFailureScenarios[0]!;
     const proposal = { callId: "proof", raw: "{}" };
     for (const [before, after, valid] of [[0, 1, true], [2, 3, true], [0, 0, false], [2, 1, false], [-1, 1, false], [0, NaN, false], [0.5, 1, false], [0, Infinity, false]] as const) {
-      let observed = before;
+      let observed: number = before;
       const target: ScenarioTarget = { ...safe, planner: { script: [] }, executor: new RecordingExecutor({ id: "evidence-only", result: { status: "success", value: null } }), audit: new InMemoryAuditSink(), visibleOutput: null,
         submit: async () => { observed = after; return { outcome: "DENIED", category: "try_later" }; } };
       const scenario = definition.prepare({ validProposal: proposal, installFault: async () => {}, faultCalls: () => observed });

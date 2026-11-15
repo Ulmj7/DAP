@@ -22,6 +22,30 @@ describe("T124 store and resource isolation", () => {
     expect(report.tables).toEqual(catalog.rows.map((row) => `${row.schema}.${row.name}`));
     expect(report.violations).toEqual([]);
   });
+  it("discovers a future sec_* table from the real catalog, excludes a look-alike prefix, and refuses unsupported column types", async () => {
+    const suffix = randomUUID().replaceAll("-", "");
+    const future = `sec_probe_${suffix}`;
+    const lookalike = `secXprobe_${suffix}`;
+    try {
+      for (const table of [future, lookalike]) {
+        // Identifiers consist only of the fixed prefix and UUID hex from the test runner.
+        await owner.query(`CREATE TABLE public."${table}" (tenant_id uuid NOT NULL)`);
+        await owner.query(`ALTER TABLE public."${table}" ENABLE ROW LEVEL SECURITY`);
+        await owner.query(`ALTER TABLE public."${table}" FORCE ROW LEVEL SECURITY`);
+        await owner.query(`CREATE POLICY scoped ON public."${table}" USING (tenant_id = NULLIF(current_setting('app.tenant_id',true),'')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id',true),'')::uuid)`);
+        await owner.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON public."${table}" TO dap_app`);
+      }
+      const tenants = { tenantA: randomUUID(), tenantB: randomUUID() };
+      const report = await assertCrossTenantStores(app, tenants);
+      expect(report.tables).toContain(`public.${future}`);
+      expect(report.tables).not.toContain(`public.${lookalike}`);
+      expect(report.violations).toEqual([]);
+      await owner.query(`ALTER TABLE public."${future}" ADD COLUMN unsupported bytea NOT NULL`);
+      await expect(assertCrossTenantStores(app, tenants)).rejects.toThrow("fixture support for column unsupported (bytea)");
+    } finally {
+      for (const table of [future, lookalike]) await owner.query(`DROP TABLE IF EXISTS public."${table}"`);
+    }
+  });
   it("the probes leave NO residue: after the run neither tenant owns a row in any sec_* table", async () => {
     const a = randomUUID(); const b = randomUUID();
     const report = await assertCrossTenantStores(app, { tenantA: a, tenantB: b });
