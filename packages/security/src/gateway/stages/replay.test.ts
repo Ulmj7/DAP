@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { InMemoryReplayGuard } from "../../state/memory/replay.js";
 import { createReplayStage } from "./replay.js";
 import { context, input, run } from "../fixtures.test-support.js";
 import type { PipelineRecord } from "../pipeline.js";
@@ -10,6 +11,14 @@ describe("T117 replay stage", () => {
     const claim = vi.fn(async () => "claimed" as const); const request = record();
     expect(await createReplayStage({ replay: { claim }, retainSeconds: 86400 })(request)).toEqual({ kind: "continue", data: { claimed: true } });
     expect(claim).toHaveBeenCalledExactlyOnceWith(request.context, "ai-session:trusted-call", 86400);
+  });
+  it("distinct valid session/call pairs with separators never alias", async () => {
+    const stage = createReplayStage({ replay: new InMemoryReplayGuard({ now: () => run.turnStartedAt }), retainSeconds: 86400 });
+    for (const [session, callId] of [["a:b", "c"], ["a", "b:c"], ["a%3Ab", "c"]]) {
+      const request = record({ run: { ...run, aiSessionId: session! }, facts: { intake: { callId: callId! } } });
+      expect(await stage(request)).toMatchObject({ kind: "continue" });
+      expect(await stage(request)).toMatchObject({ decision: { reason: "replayed_request" } });
+    }
   });
   it("uses a non-default configured retention", async () => {
     const claim = vi.fn(async () => "claimed" as const); const request = record();

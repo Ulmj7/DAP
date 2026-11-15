@@ -5,7 +5,7 @@ import { denyDecision } from "./decision.js";
 
 describe("T117 rate-limit denial audit", () => {
   it("emits AI_RATE_LIMITED with trusted identity and no parameters", async () => {
-    const { deps } = dependencies(); const append = vi.fn(async (_event: unknown) => {});
+    const { deps } = dependencies(); const append = vi.fn(async (event: unknown) => { void event; });
     const request = input(); const decision = denyDecision({ decisionId: request.decisionId, requestId: request.requestId, stage: "rate_limit", reason: "rate_limited_user" });
     await auditRateDenial({ ...deps, audit: { append } }, request, decision);
     expect(append).toHaveBeenCalledTimes(1);

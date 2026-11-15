@@ -19,7 +19,7 @@ export function createReplayStage({ replay, retainSeconds }: { readonly replay: 
       if (typeof callId !== "string" || !callIdGrammar.test(callId) || typeof session !== "string" || !callIdGrammar.test(session)) return stop("dependency_failure");
       const left = Math.min(hookTimeoutMs, Math.floor(request.budget.remainingMs()));
       if (!(left >= 1)) return stop("dependency_failure");
-      const result = await underDeadline(() => claim(request.context!, `${session}:${callId}`, retainSeconds), (answer) => {
+      const result = await underDeadline(() => claim(request.context!, `${encodeURIComponent(session)}:${encodeURIComponent(callId)}`, retainSeconds), (answer) => {
         if (answer !== "claimed" && answer !== "duplicate") throw new TypeError("Invalid replay answer");
         return answer;
       }, () => null, left, timer);

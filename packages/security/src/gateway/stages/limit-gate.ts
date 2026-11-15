@@ -24,7 +24,7 @@ export function createLimitGate(limiter: Pick<Limiter, "recordDenial">, { hookTi
   return async (request: PipelineRecord, stage: PipelineStage, check: () => unknown): Promise<StageResult | null> => {
     const denial = (reason: "dependency_failure" | "rate_limited_turn" | "rate_limited_tenant" | "rate_limited_user" | "rate_limited_capability" | "rate_limited_risk" | "denial_throttle"): StageResult => ({ kind: "stop", decision: denyDecision({ decisionId: request.decisionId, requestId: request.requestId, stage, reason }) });
     const left = (): number => {
-      try { return Math.min(hookTimeoutMs, Math.floor(request.budget.remainingMs())); } catch { return 0; }
+      try { return Math.floor(request.budget.remainingMs()); } catch { return 0; }
     };
     const checkTimeout = left();
     if (!isMintedContext(request.context) || !(checkTimeout >= 1)) return denial("dependency_failure");
@@ -33,7 +33,7 @@ export function createLimitGate(limiter: Pick<Limiter, "recordDenial">, { hookTi
     if (verdict.allowed) return null;
     const result = denial(verdict.reason);
     // Local rejections, active blocks and faults deliberately make no shared throttle round trip.
-    const recordTimeout = left();
+    const recordTimeout = Math.min(2 * hookTimeoutMs, left());
     if (verdict.countsTowardThrottle && recordTimeout >= 1) {
       const record = async (): Promise<void> => {
         await underDeadline(() => recordDenial({ scope: request.context!, aiSessionId: request.run.aiSessionId }), () => undefined, () => undefined, recordTimeout, timer);

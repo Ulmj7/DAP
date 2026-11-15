@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { createLimiter } from "../../limits/limiter.js";
+import { DEFAULT_LIMIT_CONFIG } from "../../limits/limit-config.js";
 import type { LimitVerdict } from "../../limits/limiter.js";
 import type { PipelineRecord } from "../pipeline.js";
 import { context, input, run } from "../fixtures.test-support.js";
@@ -59,12 +61,27 @@ describe("T117 stage 2 rate limits", () => {
     vi.useFakeTimers();
     try {
       const test = fixture(); test.checkProposal.mockImplementation(() => new Promise(() => {}));
-      const pending = test.stage(record()); await vi.advanceTimersByTimeAsync(2000);
+      const pending = test.stage(record({ budget: { remainingMs: () => 2000 } })); await vi.advanceTimersByTimeAsync(2000);
       expect(await pending).toMatchObject({ decision: { reason: "dependency_failure" } });
       const rate = fixture(denied()); rate.recordDenial.mockImplementation(() => new Promise(() => {}));
-      const other = rate.stage(record()); await vi.advanceTimersByTimeAsync(2000);
+      const other = rate.stage(record()); await vi.advanceTimersByTimeAsync(4000);
       expect(await other).toMatchObject({ decision: { reason: "rate_limited_user" } });
       expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+  it("healthy sequential store calls may use the aggregate proposal budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const seen: string[] = [];
+      const pause = async (name: string) => { seen.push(name); await new Promise((resolve) => setTimeout(resolve, 600)); };
+      const limiter = createLimiter({ config: DEFAULT_LIMIT_CONFIG, clock: { now: () => run.turnStartedAt }, rateLimiter: {
+        async isBlocked() { await pause("blocked"); return false; },
+        async hit() { await pause("hit"); return { allowed: true, retryAfterSeconds: 0 }; }, async block() {},
+      } });
+      const pending = createRateLimitStage(limiter)(record());
+      await vi.advanceTimersByTimeAsync(2400);
+      expect(await pending).toEqual({ kind: "continue", data: {} });
+      expect(seen).toEqual(["blocked", "hit", "hit", "hit"]);
     } finally { vi.useRealTimers(); }
   });
   it("finalizes denial recording outside the pipeline deadline and preserves the rate reason", async () => {
