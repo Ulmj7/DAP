@@ -24,6 +24,22 @@ function cruise(cwd: string): Graph {
   return JSON.parse(result.stdout) as Graph;
 }
 
+/** Every module reachable from the modules under `prefix` by following resolved imports (direct or transitive), the starting modules included. */
+function reachableFrom(graph: Graph, prefix: string): ReadonlySet<string> {
+  const byName = new Map(graph.modules.map((module) => [module.source, module]));
+  const seen = new Set<string>();
+  const pending = graph.modules.filter((module) => module.source.startsWith(prefix)).map((module) => module.source);
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (seen.has(next)) continue;
+    seen.add(next);
+    for (const dependency of byName.get(next)?.dependencies ?? []) pending.push(dependency.resolved);
+  }
+  return seen;
+}
+const MINT_ENTRY = "packages/contracts/src/mint/index.ts";
+/** What the AI layer may reach at all among the workspace's own modules (node built-ins and external libraries are not packages of ours): itself and the contracts' public root with whatever the root re-exports. Executors (actions), the Gateway (security), the mint entry, the testkit and the apps are not on the list. */
+const outsideAiBoundary = (reached: ReadonlySet<string>): string[] => [...reached].filter((source) => /^(packages|apps)\//.test(source)).filter((source) => !source.startsWith("packages/ai/") && !source.startsWith("packages/contracts/src/") || source === MINT_ENTRY).sort();
+
 /** plan.md "Allowed dependency edges", as manifest dependencies. */
 const ALLOWED_MANIFEST_EDGES: Readonly<Record<string, readonly string[]>> = {
   "packages/contracts": [],
@@ -48,6 +64,43 @@ describe("the real repository", () => {
   it("resolves every workspace import it follows (an unresolved edge could hide a violation)", () => {
     const unresolved = graph.modules.flatMap((module) => module.dependencies.filter((dep) => dep.couldNotResolve).map(() => module.source));
     expect(unresolved).toEqual([]);
+  });
+});
+
+describe("the AI layer has no path to executors, the mint entry or the Gateway's internals (ATK-ARCH-01, 05)", () => {
+  const graph = cruise(ROOT);
+  const reached = reachableFrom(graph, "packages/ai/");
+  it("follows the real import graph, transitively: everything the AI layer can reach is the AI layer itself or the contracts' public root and what it re-exports", () => {
+    expect([...reached].filter((source) => source.startsWith("packages/ai/")).length, "the walk starts inside the AI layer").toBeGreaterThan(0);
+    expect([...reached].some((source) => source.startsWith("packages/contracts/src/")), "and it does follow the edge into contracts (a vacuous walk would pass anything)").toBe(true);
+    expect(outsideAiBoundary(reached)).toEqual([]);
+  });
+  it("never reaches packages/actions (the executors), packages/security (the Gateway and the minters), the testkit, an app, or the mint entry", () => {
+    for (const forbidden of ["packages/actions/", "packages/security/", "packages/testkit/", "apps/", MINT_ENTRY]) expect([...reached].filter((source) => source.startsWith(forbidden)), forbidden).toEqual([]);
+  });
+  it("is stated by the graph itself: the AI layer's own modules have no resolved import into any of them either", () => {
+    const direct = graph.modules.filter((module) => module.source.startsWith("packages/ai/")).flatMap((module) => module.dependencies.map((dependency) => dependency.resolved));
+    expect(direct.filter((target) => /^(packages\/(actions|security|testkit)|apps)\//.test(target) || target === MINT_ENTRY)).toEqual([]);
+  });
+  it("the only way the AI layer meets the Gateway is the type of the submit surface in contracts: no AI module names a Gateway factory or a minter", () => {
+    const sources = fs.readdirSync(path.join(ROOT, "packages/ai/src")).filter((name) => name.endsWith(".ts")).map((name) => fs.readFileSync(path.join(ROOT, "packages/ai/src", name), "utf8")).join("\n");
+    expect(sources).not.toMatch(/createPolicyGateway|bindExecutors|mintContext|mintGrant|registerGrant|registerContext/);
+    expect(sources).not.toMatch(/@dap\/(security|actions|testkit)|@dap\/contracts\/mint/);
+  });
+  it("is proven able to fail: the same walk over a graph with a planted AI -> mint edge, and one through an intermediate module, reports them", () => {
+    const planted: Graph = {
+      summary: { violations: [] },
+      modules: [
+        { source: "packages/ai/src/a.ts", dependencies: [{ couldNotResolve: false, resolved: "packages/ai/src/b.ts" }] },
+        { source: "packages/ai/src/b.ts", dependencies: [{ couldNotResolve: false, resolved: "packages/contracts/src/index.ts" }] },
+        { source: "packages/contracts/src/index.ts", dependencies: [{ couldNotResolve: false, resolved: MINT_ENTRY }] },
+        { source: MINT_ENTRY, dependencies: [] },
+      ],
+    };
+    expect(outsideAiBoundary(reachableFrom(planted, "packages/ai/"))).toEqual([MINT_ENTRY]);
+    planted.modules[1]!.dependencies.push({ couldNotResolve: false, resolved: "packages/security/src/gateway/create-gateway.ts" });
+    planted.modules.push({ source: "packages/security/src/gateway/create-gateway.ts", dependencies: [] });
+    expect(outsideAiBoundary(reachableFrom(planted, "packages/ai/"))).toEqual([MINT_ENTRY, "packages/security/src/gateway/create-gateway.ts"]);
   });
 });
 
@@ -105,6 +158,9 @@ describe("planted edges in a disposable workspace", () => {
     // The app has no package entry to import by name, so edges into it are written as the relative path a developer would type.
     const specifier = (file: string, to: string) => (to === "reference-host" ? path.posix.relative(path.posix.dirname(file), "apps/reference-host/src/index.ts").replace(/\.ts$/, ".js") : `@dap/${to}`);
     for (const { file, to } of planted) put(file, `import { marker } from ${JSON.stringify(specifier(file, to))};\nexport const planted = marker;\n`);
+    // The AI layer reaching the mint entry: contracts exposes it as a subpath, so it resolves in the workspace too.
+    put("packages/contracts/src/mint/index.ts", "export const mintMarker = 1;\n");
+    put("packages/ai/src/planted_mint.ts", 'import { mintMarker } from "@dap/contracts/mint";\nexport const plantedMint = mintMarker;\n');
     // A two-file cycle inside the AI layer.
     put("packages/ai/src/cycle_a.ts", 'import { b } from "./cycle_b.js";\nexport const a = () => b;\n');
     put("packages/ai/src/cycle_b.ts", 'import { a } from "./cycle_a.js";\nexport const b = () => a;\n');
@@ -129,6 +185,13 @@ describe("planted edges in a disposable workspace", () => {
     const rules = graph.summary.violations.filter((violation) => violation.from === item.file).map((violation) => violation.rule.name);
     if (item.rule === null) expect(rules).toEqual([]);
     else expect(rules).toContain(item.rule);
+  });
+
+  it("ai -> @dap/contracts/mint is a violation of mint-entry-restricted, and the transitive reach walk of the AI layer names the mint entry", () => {
+    const dependencies = graph.modules.find((module) => module.source === "packages/ai/src/planted_mint.ts")?.dependencies ?? [];
+    expect(dependencies.map((dependency) => [dependency.couldNotResolve, dependency.resolved])).toEqual([[false, MINT_ENTRY]]);
+    expect(graph.summary.violations.filter((violation) => violation.from === "packages/ai/src/planted_mint.ts").map((violation) => violation.rule.name)).toContain("mint-entry-restricted");
+    expect(outsideAiBoundary(reachableFrom(graph, "packages/ai/"))).toContain(MINT_ENTRY);
   });
 
   it("a cycle between two modules is a violation", () => {
