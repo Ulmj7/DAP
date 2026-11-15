@@ -124,16 +124,17 @@ describe("T118 purge: deletes only expired rows, across tenants, through the own
     const tenant = newTenant();
     await seed(tenant, "locked", EXPIRED); await seed(tenant, "free", EXPIRED);
     const holder = await owner.connect();
+    const purger = new Pool({ connectionString: process.env.DAP_MIGRATE_DATABASE_URL, max: 1, statement_timeout: 1000 });
     try {
       await holder.query("BEGIN");
       await holder.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
       for (const [table, column] of [["sec_replay_claims", "claim_key"], ["sec_rate_counters", "bucket_key"], ["sec_rate_blocks", "bucket_key"]] as const) {
         expect((await holder.query(`SELECT 1 FROM public.${table} WHERE tenant_id=$1 AND ${column}='locked' FOR UPDATE`, [tenant])).rowCount).toBe(1);
       }
-      await drain(tenant);
+      expect(await purgeExpiredState(purger, { batchSize: 10_000, tenantIds: [tenant] })).toEqual({ replayClaims: 1, rateCounters: 1, rateBlocks: 1 });
       expect(await present(tenant, "locked")).toEqual({ claims: 1, counters: 1, blocks: 1 });
       expect(await present(tenant, "free")).toEqual({ claims: 0, counters: 0, blocks: 0 });
-    } finally { await holder.query("ROLLBACK"); holder.release(); }
+    } finally { await holder.query("ROLLBACK"); holder.release(); await purger.end(); }
     await drain(tenant);
     expect(await present(tenant, "locked")).toEqual({ claims: 0, counters: 0, blocks: 0 });
   });
@@ -154,6 +155,16 @@ describe("T118 purge: privileges stay minimal", () => {
         { tablename, policyname: "tenant_select", cmd: "SELECT", roles: "{public}", qual: isolation, with_check: null },
       ] : [{ tablename, policyname: "tenant_isolation", cmd: "ALL", roles: "{public}", qual: isolation, with_check: isolation }]),
     ]));
+  });
+
+  it("the SQL expiry predicate also protects live rate rows when an owner connection already has tenant scope", async () => {
+    const tenant = newTenant(); await seed(tenant, "live-scoped", LIVE); await seed(tenant, "dead-scoped", EXPIRED);
+    const scoped = new Pool({ connectionString: process.env.DAP_MIGRATE_DATABASE_URL, max: 1, connectionTimeoutMillis: 2000 });
+    try {
+      await scoped.query("SELECT set_config('app.tenant_id',$1,false)", [tenant]);
+      expect(await purgeExpiredState(scoped, { tenantIds: [tenant] })).toEqual({ replayClaims: 1, rateCounters: 1, rateBlocks: 1 });
+      expect(await present(tenant, "live-scoped")).toEqual({ claims: 1, counters: 1, blocks: 1 });
+    } finally { await scoped.query("RESET app.tenant_id"); await scoped.end(); }
   });
 
   it("the owner path cannot read, change or delete live rows, or insert without a tenant", async () => {
