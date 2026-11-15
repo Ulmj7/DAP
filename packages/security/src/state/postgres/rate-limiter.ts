@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import type { RateLimiter, RateLimitResult, RateLimitRule, TenantScope } from "@dap/contracts";
 import { withTenant } from "./tenant-tx.js";
+import { snapshotAnswer } from "../../gateway/answer-snapshot.js";
 import { captureStateInput, checkedDate, resolveStateClock, stateInteger, type PostgresStateTestOptions } from "./state-runtime.js";
 
 export class PostgresRateLimiter implements RateLimiter {
@@ -16,7 +17,9 @@ export class PostgresRateLimiter implements RateLimiter {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [JSON.stringify([input.tenantId, input.key])]);
       const now = checkedDate(await this.now(client));
       const live = await client.query("SELECT limit_count,window_seconds FROM public.sec_rate_counters WHERE tenant_id=$1 AND bucket_key=$2 AND expires_at > $3", [input.tenantId, input.key, now]);
-      if (live.rowCount !== live.rows.length || live.rows.length > 1 || live.rows.some((row) => row.limit_count !== limit || row.window_seconds !== windowSeconds)) throw new TypeError("Cannot change a live rate limit rule");
+      const { command: liveCommand, rowCount: liveCount, rows: rawLiveRows } = live;
+      const liveRows = snapshotAnswer(rawLiveRows);
+      if (liveCommand !== "SELECT" || !Array.isArray(liveRows) || liveCount !== liveRows.length || liveRows.length > 1 || liveRows.some((row) => row.limit_count !== limit || row.window_seconds !== windowSeconds)) throw new TypeError("Cannot change a live rate limit rule");
       const windowMs = windowSeconds * 1000;
       const start = new Date(Math.floor(now.getTime() / windowMs) * windowMs);
       const expiresAt = new Date(start.getTime() + windowMs);
@@ -31,8 +34,9 @@ export class PostgresRateLimiter implements RateLimiter {
          RETURNING count`,
         [input.tenantId, input.key, start, expiresAt, limit, windowSeconds, now],
       );
-      const raw: unknown = result.rows[0]?.count;
-      if (result.command !== "INSERT" || result.rowCount !== 1 || typeof raw !== "string" || !/^[1-9][0-9]*$/.test(raw)) throw new TypeError("Invalid rate count result");
+      const { command, rowCount, rows } = result;
+      const raw: unknown = Array.isArray(rows) && rows.length === 1 ? rows[0]?.count : undefined;
+      if (command !== "INSERT" || rowCount !== 1 || typeof raw !== "string" || !/^[1-9][0-9]*$/.test(raw)) throw new TypeError("Invalid rate count result");
       const allowed = BigInt(raw) <= BigInt(limit);
       return Object.freeze({ allowed, retryAfterSeconds: allowed ? 0 : Math.ceil((expiresAt.getTime() - now.getTime()) / 1000) });
     });
@@ -43,8 +47,9 @@ export class PostgresRateLimiter implements RateLimiter {
     return withTenant(this.pool, input.tenantId, async (client) => {
       const now = checkedDate(await this.now(client));
       const result = await client.query("SELECT EXISTS (SELECT 1 FROM public.sec_rate_blocks WHERE tenant_id=$1 AND bucket_key=$2 AND expires_at > $3) AS blocked", [input.tenantId, input.key, now]);
-      const blocked: unknown = result.rows[0]?.blocked;
-      if (result.command !== "SELECT" || result.rowCount !== 1 || typeof blocked !== "boolean") throw new TypeError("Invalid rate block result");
+      const { command, rowCount, rows } = result;
+      const blocked: unknown = Array.isArray(rows) && rows.length === 1 ? rows[0]?.blocked : undefined;
+      if (command !== "SELECT" || rowCount !== 1 || typeof blocked !== "boolean") throw new TypeError("Invalid rate block result");
       return blocked;
     });
   }

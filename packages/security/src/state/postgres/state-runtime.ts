@@ -36,8 +36,9 @@ export function resolveStateClock(options: unknown): StateClock {
 }
 export async function databaseNow(client: PoolClient): Promise<Date> {
   const result = await client.query("SELECT clock_timestamp() AS now");
-  if (result.command !== "SELECT" || result.rowCount !== 1) throw new TypeError("Invalid database clock result");
-  return checkedDate(result.rows[0]?.now);
+  const { command, rowCount, rows } = result;
+  if (command !== "SELECT" || rowCount !== 1 || !Array.isArray(rows) || rows.length !== 1) throw new TypeError("Invalid database clock result");
+  return checkedDate(rows[0]?.now);
 }
 export function checkedDate(value: unknown): Date {
   if (!(value instanceof Date) || !Number.isFinite(value.getTime())) throw new TypeError("Invalid database clock");

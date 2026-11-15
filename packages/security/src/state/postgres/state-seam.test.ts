@@ -39,6 +39,13 @@ describe("the clock seam", () => {
     expect(() => build({ clock: async () => FIXED })).toThrow(TypeError);
     expect(() => build(JSON.parse('{"__proto__":{"now":1}}'))).toThrow(TypeError);
     expect(() => build({})).not.toThrow();
+    expect(() => build(Object.create(null) as object)).not.toThrow();
+    expect(() => build(new (class Options {})())).toThrow("Invalid state options");
+    expect(() => build(Object.create({}) as object)).toThrow("Invalid state options");
+    for (const value of [null, [], 1, "options"]) {
+      expect(() => build(value as never)).toThrow("Invalid state options");
+    }
+    for (const value of [null, 1, "clock", {}]) expect(() => build({ [TEST_CLOCK]: value })).toThrow("Invalid state clock");
   });
   it("uses the injected clock only through the symbol key", async () => {
     const injected = recordingPool();

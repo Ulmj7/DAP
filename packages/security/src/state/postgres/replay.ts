@@ -21,8 +21,9 @@ export class PostgresReplayGuard implements ReplayGuard {
          ON CONFLICT (tenant_id,namespace,claim_key) DO NOTHING`,
         [input.tenantId, input.key, now, seconds],
       );
-      if (result.command !== "INSERT" || (result.rowCount !== 0 && result.rowCount !== 1)) throw new TypeError("Invalid replay claim result");
-      return result.rowCount === 1 ? "claimed" : "duplicate";
+      const { command, rowCount, rows } = result;
+      if (command !== "INSERT" || (rowCount !== 0 && rowCount !== 1) || !Array.isArray(rows) || rows.length !== 0) throw new TypeError("Invalid replay claim result");
+      return rowCount === 1 ? "claimed" : "duplicate";
     });
   }
 }
