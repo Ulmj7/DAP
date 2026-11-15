@@ -22,3 +22,5 @@ export * from "./hostile-planner.js";
 export * from "./oracle.js";
 export * from "./attacks/cross-tenant-store.js";
 export * from "./attacks/dependency-failure.js";
+export * from "./attacks/sequence-scenario.js";
+export * from "./attacks/replay.js";
