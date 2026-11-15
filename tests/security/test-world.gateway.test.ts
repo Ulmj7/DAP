@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import type { GatewayConfig } from "@dap/security";
+import { DEFAULT_GATEWAY_CONFIG, type GatewayConfig } from "@dap/security";
 import { ALICE, BOB, CAROL, TENANT_A, TENANT_B, VALID_PARAMS, WIDE_GATEWAY_CONFIG, isMintedWorldContext, withGateway } from "@dap/testkit";
 import type { GatewayWorld, WorldUser } from "@dap/testkit";
 
@@ -121,6 +121,49 @@ describe("world controls added for the denial scenarios", () => {
     expect((await world.submit(A_ALICE, { callId: "long", raw: { action: "testSafeEcho", params: { message: "four" } } })).outcome).toBe("INVALID_PARAMETERS");
     expect((await world.submit(A_ALICE, { callId: "short", raw: { action: "testSafeEcho", params: { message: "ok" } } })).outcome).toBe("ALLOWED");
     expect((await world.submit(A_ALICE, world.proposal("testLowNavigate"))).outcome).toBe("ALLOWED");
+  });
+  it("global changes rebuild both replicas, preserve old snapshots and survive restart; reset restores the initial allowlist", async () => {
+    const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+    const previous = await Promise.all([1, 2].map((instance) => world.submitterFor(A_ALICE, { instance })));
+    world.setGloballyEnabled("testSafeEcho", false);
+    // An already bound door uses the real Gateway's captured startup allowlist, not a mutable test-only policy.
+    for (const old of previous) expect(await old.submit(world.proposal("testSafeEcho"))).toEqual({ outcome: "ALLOWED", category: "ok" });
+    for (const instance of [1, 2]) {
+      expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"), { instance })).toEqual({ outcome: "DENIED", category: "not_available" });
+      world.restart(instance);
+      expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"), { instance })).toEqual({ outcome: "DENIED", category: "not_available" });
+    }
+    expect(world.executorCalls()).toBe(2);
+    world.reset();
+    for (const instance of [1, 2]) expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"), { instance })).toEqual({ outcome: "ALLOWED", category: "ok" });
+    expect(world.executorCalls()).toBe(2);
+  });
+  it("schema overrides change the real definition hash without mutating other worlds, and reset retains the original override", async () => {
+    const ordinary = withGateway();
+    const hash = ordinary.deps.registry.get("testSafeEcho")!.definitionHash;
+    const changed = withGateway({ inputSchemas: { testSafeEcho: z.strictObject({ message: z.string().max(3) }) } });
+    const changedHash = changed.deps.registry.get("testSafeEcho")!.definitionHash;
+    expect(changedHash).not.toBe(hash);
+    expect(changed.deps.registry.fingerprint).not.toBe(ordinary.deps.registry.fingerprint);
+    expect(changed.deps.registry.get("testLowNavigate")!.definitionHash).toBe(ordinary.deps.registry.get("testLowNavigate")!.definitionHash);
+    for (const world of [ordinary, withGateway()]) {
+      expect(world.deps.registry.get("testSafeEcho")!.definitionHash).toBe(hash);
+      expect(await world.submit(A_ALICE, { callId: "original", raw: { action: "testSafeEcho", params: { message: "four" } } })).toEqual({ outcome: "ALLOWED", category: "ok" });
+      expect(world.executorCalls()).toBe(1);
+    }
+    changed.reset();
+    expect(changed.deps.registry.get("testSafeEcho")!.definitionHash).toBe(changedHash);
+    expect((await changed.submit(A_ALICE, { callId: "replaced", raw: { action: "testSafeEcho", params: { message: "four" } } })).outcome).toBe("INVALID_PARAMETERS");
+    expect(changed.executorCalls()).toBe(0);
+    expect(await changed.submit(A_ALICE, { callId: "valid", raw: { action: "testSafeEcho", params: { message: "ok" } } })).toEqual({ outcome: "ALLOWED", category: "ok" });
+    expect(changed.executorCalls()).toBe(1);
+    expect(() => withGateway({ inputSchemas: { testSafeEcho: z.object({ message: z.string().max(3) }) } })).toThrow();
+  });
+  it("the shared wide configuration preserves every non-rate security bound", () => {
+    const { limits: widened, ...security } = WIDE_GATEWAY_CONFIG;
+    const { limits: defaults, ...originalSecurity } = DEFAULT_GATEWAY_CONFIG;
+    expect(security).toEqual(originalSecurity);
+    for (const key of ["executionsPerTurn", "maxChainDepth", "turnBudgetMs", "highRiskPerUserPerHour"] as const) expect(widened[key]).toEqual(defaults[key]);
   });
   it("WIDE_GATEWAY_CONFIG does not throttle a long run of denials, where the default configuration does", async () => {
     const denials = async (config?: GatewayConfig) => {
