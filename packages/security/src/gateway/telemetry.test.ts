@@ -28,7 +28,7 @@ describe("the no-op default", () => {
 describe("safeTelemetry passes what happened, with labels from closed vocabularies", () => {
   it("forwards each signal to the host's own method, with the host's receiver", () => {
     const { calls, target } = recorder();
-    const telemetry = safeTelemetry(target);
+    const telemetry = safeTelemetry(target, new Set(["openProject"]));
     telemetry.decision(sample); telemetry.auditWriteFailed("allowed"); telemetry.dependencyFailed("permissions"); telemetry.rateLimited("tenant");
     expect(calls.map((call) => [call.method, call.args])).toEqual([["decision", [sample]], ["auditWriteFailed", ["allowed"]], ["dependencyFailed", ["permissions"]], ["rateLimited", ["tenant"]]]);
     for (const call of calls) expect(call.receiver).toBe(target);
