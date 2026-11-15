@@ -1,11 +1,11 @@
 import type { Pool } from "pg";
 import type { ReplayGuard, TenantScope } from "@dap/contracts";
 import { withTenant } from "./tenant-tx.js";
-import { captureStateInput, checkedDate, databaseNow, stateInteger, type PostgresStateOptions } from "./state-runtime.js";
+import { captureStateInput, checkedDate, resolveStateClock, stateInteger, type PostgresStateTestOptions } from "./state-runtime.js";
 
 export class PostgresReplayGuard implements ReplayGuard {
-  private readonly now: NonNullable<PostgresStateOptions["now"]>;
-  constructor(private readonly pool: Pool, options: PostgresStateOptions = {}) { this.now = options.now ?? databaseNow; }
+  private readonly now: ReturnType<typeof resolveStateClock>;
+  constructor(private readonly pool: Pool, options: PostgresStateTestOptions = {}) { this.now = resolveStateClock(options); }
 
   async claim(scope: TenantScope, key: string, retainSeconds: number): Promise<"claimed" | "duplicate"> {
     const input = captureStateInput(scope, key);

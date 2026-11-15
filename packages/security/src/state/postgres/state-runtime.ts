@@ -16,8 +16,24 @@ export function stateInteger(value: unknown, maximum: number): number {
   return value;
 }
 
-/** Trusted composition-root seam for deterministic tests, never a model/SQL-callable override. */
-export interface PostgresStateOptions { readonly now?: (client: PoolClient) => Promise<Date> }
+/**
+ * TEST seam for a deterministic clock. It is a symbol that the package barrel does not export, so a production
+ * composition root, a configuration object or anything a model or tenant influences cannot reach it by name; an ordinary
+ * `now` option, or any other unknown key, is refused rather than quietly honoured.
+ */
+export const TEST_CLOCK: unique symbol = Symbol("dap.postgres-state.test-clock");
+export interface PostgresStateTestOptions { readonly [TEST_CLOCK]?: (client: PoolClient) => Promise<Date> }
+type StateClock = (client: PoolClient) => Promise<Date>;
+export function resolveStateClock(options: unknown): StateClock {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) throw new TypeError("Invalid state options");
+  const prototype: unknown = Object.getPrototypeOf(options);
+  if (prototype !== Object.prototype && prototype !== null) throw new TypeError("Invalid state options");
+  for (const key of Reflect.ownKeys(options)) if (key !== TEST_CLOCK) throw new TypeError("Unknown state option");
+  const injected: unknown = Reflect.get(options, TEST_CLOCK);
+  if (injected === undefined) return databaseNow;
+  if (typeof injected !== "function") throw new TypeError("Invalid state clock");
+  return injected as StateClock;
+}
 export async function databaseNow(client: PoolClient): Promise<Date> {
   const result = await client.query("SELECT clock_timestamp() AS now");
   if (result.command !== "SELECT" || result.rowCount !== 1) throw new TypeError("Invalid database clock result");

@@ -1,11 +1,11 @@
 import type { Pool } from "pg";
 import type { RateLimiter, RateLimitResult, RateLimitRule, TenantScope } from "@dap/contracts";
 import { withTenant } from "./tenant-tx.js";
-import { captureStateInput, checkedDate, databaseNow, stateInteger, type PostgresStateOptions } from "./state-runtime.js";
+import { captureStateInput, checkedDate, resolveStateClock, stateInteger, type PostgresStateTestOptions } from "./state-runtime.js";
 
 export class PostgresRateLimiter implements RateLimiter {
-  private readonly now: NonNullable<PostgresStateOptions["now"]>;
-  constructor(private readonly pool: Pool, options: PostgresStateOptions = {}) { this.now = options.now ?? databaseNow; }
+  private readonly now: ReturnType<typeof resolveStateClock>;
+  constructor(private readonly pool: Pool, options: PostgresStateTestOptions = {}) { this.now = resolveStateClock(options); }
 
   async hit(scope: TenantScope, bucketKey: string, rule: RateLimitRule): Promise<RateLimitResult> {
     const input = captureStateInput(scope, bucketKey);

@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import type { TenantScope } from "@dap/contracts";
 import { PostgresReplayGuard } from "../postgres/replay.js";
 import { PostgresRateLimiter } from "../postgres/rate-limiter.js";
+import { TEST_CLOCK } from "../postgres/state-runtime.js";
 import { withTenant } from "../postgres/tenant-tx.js";
 import { runReplayConformance } from "./replay.conformance.js";
 import { runRateLimiterConformance } from "./rate-limiter.conformance.js";
@@ -37,13 +38,13 @@ afterAll(async () => {
 
 describe("PostgreSQL state shared conformance", () => {
   runReplayConformance(async () => {
-    let now = Date.parse("2026-01-01T00:00:00Z");
-    const store = new PostgresReplayGuard(app, { now: async () => new Date(now) });
+    let now = Date.parse("2020-01-01T00:00:00Z");
+    const store = new PostgresReplayGuard(app, { [TEST_CLOCK]: async () => new Date(now) });
     return { store: { claim: (scope, key, seconds) => { if (scope?.tenantId && typeof key === "string") track(scope, key); return store.claim(scope, key, seconds); } }, advanceSeconds: async (seconds) => { now += seconds * 1000; } };
   });
   runRateLimiterConformance(async () => {
-    let now = Date.parse("2026-01-01T00:00:00Z");
-    const store = new PostgresRateLimiter(app, { now: async () => new Date(now) });
+    let now = Date.parse("2020-01-01T00:00:00Z");
+    const store = new PostgresRateLimiter(app, { [TEST_CLOCK]: async () => new Date(now) });
     return {
       store: {
         hit: (scope, key, rule) => { if (scope?.tenantId && typeof key === "string") track(scope, key); return store.hit(scope, key, rule); },
@@ -57,8 +58,8 @@ describe("PostgreSQL state shared conformance", () => {
 
 describe("T114 PostgreSQL durability and isolation", () => {
   it("claims survive a new adapter instance; one winner on expired-key reclamation", async () => {
-    let now = Date.parse("2026-01-01T00:00:00Z");
-    const options = { now: async () => new Date(now) };
+    let now = Date.parse("2020-01-01T00:00:00Z");
+    const options = { [TEST_CLOCK]: async () => new Date(now) };
     const key = randomUUID(); track(a, key);
     const first = new PostgresReplayGuard(app, options); const second = new PostgresReplayGuard(app, options);
     expect(await first.claim(a, key, 10)).toBe("claimed");
@@ -79,8 +80,8 @@ describe("T114 PostgreSQL durability and isolation", () => {
     expect(row.current).toBe(true);
   });
   it("allows a rule change after expiry even when the larger window reuses a historical primary key", async () => {
-    let now = Date.parse("2026-01-01T00:00:00Z");
-    const store = new PostgresRateLimiter(app, { now: async () => new Date(now) });
+    let now = Date.parse("2020-01-01T00:00:00Z");
+    const store = new PostgresRateLimiter(app, { [TEST_CLOCK]: async () => new Date(now) });
     const key = randomUUID(); track(a, key);
     expect((await store.hit(a, key, { limit: 1, windowSeconds: 1 })).allowed).toBe(true);
     now += 1000;
