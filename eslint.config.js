@@ -116,6 +116,9 @@ export default tseslint.config(
       "no-new-func": "error",
       "no-restricted-syntax": ["error", ...SYNTAX_OUTSIDE],
       "no-restricted-imports": ["error", MINT_AND_DEEP],
+      // Not in typescript-eslint's presets, and its defaults skip strings, templates, regexes and comments, which is
+      // exactly where an invisible character hides. (tests/architecture/source-hygiene.test.ts also covers bidi controls.)
+      "no-irregular-whitespace": ["error", { skipStrings: false, skipComments: false, skipRegExps: false, skipTemplates: false }],
     },
   },
   {

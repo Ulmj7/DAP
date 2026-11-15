@@ -372,7 +372,7 @@ describe("parseEnvelope: attemptedAction (audit only)", () => {
   });
 
   it("only ever contains printable ASCII, whatever the input", () => {
-    for (const name of ["", "plain", "\u0000\u001f\u007f\u0080", "  ﻿", "\ud800", "é".repeat(200), "x".repeat(10_000), "\\".repeat(100)]) {
+    for (const name of ["", "plain", "\u0000\u001f\u007f\u0080", "\u2028\u2029\ufeff", "\ud800", "é".repeat(200), "x".repeat(10_000), "\\".repeat(100)]) {
       const out = auditableName(name);
       expect(out, name.slice(0, 8)).toMatch(/^[\x20-\x7e]*$/);
       expect(out.length).toBeLessThanOrEqual(ATTEMPTED_ACTION_MAX);
