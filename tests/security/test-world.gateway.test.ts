@@ -4,7 +4,9 @@
  * execute all run; only the host ports and the in-memory adapters are fakes.
  */
 import { describe, expect, it } from "vitest";
-import { ALICE, BOB, CAROL, TENANT_A, TENANT_B, VALID_PARAMS, isMintedWorldContext, withGateway } from "@dap/testkit";
+import { z } from "zod";
+import type { GatewayConfig } from "@dap/security";
+import { ALICE, BOB, CAROL, TENANT_A, TENANT_B, VALID_PARAMS, WIDE_GATEWAY_CONFIG, isMintedWorldContext, withGateway } from "@dap/testkit";
 import type { GatewayWorld, WorldUser } from "@dap/testkit";
 
 const A_ALICE: WorldUser = { tenant: "A", user: ALICE };
@@ -99,6 +101,36 @@ describe("host answer overrides are literal, and only a clear removes them", () 
     expect(world.executorCalls()).toBe(0);
     world.clearResourceAnswer();
     expect((await alice.submit(world.proposal("testHighPublish"))).outcome).toBe("REQUIRES_CONFIRMATION");
+  });
+});
+
+describe("world controls added for the denial scenarios", () => {
+  it("setGloballyEnabled(false) removes a capability from the global allowlist even for a Gateway already built, and true restores it", async () => {
+    const world = withGateway();
+    expect((await world.submit(A_ALICE, world.proposal("testSafeEcho"))).outcome).toBe("ALLOWED"); // the Gateway exists now
+    world.setGloballyEnabled("testSafeEcho", false);
+    expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"))).toEqual({ outcome: "DENIED", category: "not_available" });
+    expect(world.executor("testSafeEcho").calls).toBe(1);
+    expect(world.events().at(-1)).toMatchObject({ reason: "action_not_enabled" });
+    expect((await world.submit(A_ALICE, world.proposal("testLowNavigate"))).outcome).toBe("ALLOWED"); // only the named capability
+    world.setGloballyEnabled("testSafeEcho", true);
+    expect((await world.submit(A_ALICE, world.proposal("testSafeEcho"))).outcome).toBe("ALLOWED");
+  });
+  it("inputSchemas replaces the named capability's schema in the registry the Gateway enforces, and no other", async () => {
+    const world = withGateway({ inputSchemas: { testSafeEcho: z.strictObject({ message: z.string().max(3) }) } });
+    expect((await world.submit(A_ALICE, { callId: "long", raw: { action: "testSafeEcho", params: { message: "four" } } })).outcome).toBe("INVALID_PARAMETERS");
+    expect((await world.submit(A_ALICE, { callId: "short", raw: { action: "testSafeEcho", params: { message: "ok" } } })).outcome).toBe("ALLOWED");
+    expect((await world.submit(A_ALICE, world.proposal("testLowNavigate"))).outcome).toBe("ALLOWED");
+  });
+  it("WIDE_GATEWAY_CONFIG does not throttle a long run of denials, where the default configuration does", async () => {
+    const denials = async (config?: GatewayConfig) => {
+      const world = withGateway(config === undefined ? {} : { config });
+      const outcomes = new Set<string>();
+      for (let index = 0; index < 20; index++) outcomes.add(JSON.stringify(await world.submit(A_CAROL, world.proposal("testSafeEcho"))));
+      return outcomes;
+    };
+    expect([...(await denials(WIDE_GATEWAY_CONFIG))]).toEqual([JSON.stringify({ outcome: "UNAUTHORIZED", category: "not_available" })]);
+    expect((await denials()).size).toBeGreaterThan(1);
   });
 });
 

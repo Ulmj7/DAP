@@ -31,6 +31,7 @@ import type {
   TenantId,
   UserId,
 } from "@dap/contracts";
+import type { ZodType } from "zod";
 import { isMintedContext, mintAuthorizationContext } from "@dap/contracts/mint";
 import {
   bindExecutors, buildRegistry, createPolicyGateway, createSecurityContextFactory, DEFAULT_GATEWAY_CONFIG, InMemoryRateLimiter, InMemoryReplayGuard, validateGatewayConfig,
@@ -176,6 +177,8 @@ export interface GatewayWorldOptions {
   readonly startAt?: string;
   /** Default length of an authenticated session in seconds (default 3600). */
   readonly sessionSeconds?: number;
+  /** Replace the input schema of named test capabilities (for example the PARAMS fixture schema with nesting). The sample parameters of `proposal()` must still parse. */
+  readonly inputSchemas?: Readonly<Record<string, ZodType>>;
   /** Every user holds every permission (default false: only the users listed in `WORLD_PERMISSIONS`). */
   readonly openPermissions?: boolean;
   /** A replay guard to use instead of the in-memory one (for example the PostgreSQL guard); it is built from the world's clock when given as a factory. */
@@ -262,6 +265,11 @@ export interface GatewayWorld {
   foreignResource(from: WorldTenant): ResolvedResource;
   /** Display names planted in the other tenant's resources. */
   foreignDisplayNames(from: WorldTenant): readonly string[];
+  /**
+   * Remove (or restore) a capability from the GLOBAL allowlist. The Gateway reads the allowlist when it is built, so every Gateway replica is dropped;
+   * a submitter bound before the call keeps the old Gateway, so bind again (a target's `submit` always does).
+   */
+  setGloballyEnabled(actionId: string, enabled: boolean): void;
   /** Disable (or re-enable) a capability for one tenant. */
   disableCapability(tenant: WorldTenant, actionId: string, disabled?: boolean): void;
   /** Move the clock past the end of this user's session (and of every session established so far). */
@@ -279,6 +287,18 @@ export interface GatewayWorld {
   /** One capability and one user as a scenario target, with the method names of the attack scenarios' PrivilegeTarget and TenantAttackTarget. */
   targetFor(actionId: string, who?: WorldUser, options?: WorldSubmitterOptions): WorldTarget;
 }
+
+/**
+ * Limits wide enough that a batch scenario (dozens of denials in one turn) is never throttled, so every answer is the pipeline's own.
+ * The default denial throttle is 5 denials per 60 seconds. Pass it as `withGateway({ config: WIDE_GATEWAY_CONFIG })`.
+ */
+export const WIDE_GATEWAY_CONFIG: GatewayConfig = validateGatewayConfig({
+  ...DEFAULT_GATEWAY_CONFIG,
+  limits: {
+    ...DEFAULT_GATEWAY_CONFIG.limits, proposalsPerTurn: 500, perUserPerMinute: { limit: 5000, windowSeconds: 60 }, perTenantPerMinute: { limit: 50000, windowSeconds: 60 },
+    perUserPerCapabilityPerMinute: { limit: 5000, windowSeconds: 60 }, denialThrottle: { denials: 5000, windowSeconds: 60, blockSeconds: 300 },
+  },
+});
 
 /** What each default user holds in each tenant: alice everything, bob the SAFE, LOW and MEDIUM capabilities, carol nothing. */
 export const WORLD_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Object.freeze({
@@ -371,13 +391,17 @@ export function withGateway(options: GatewayWorldOptions = {}): GatewayWorld {
     const tenantPolicyPort = { async isDisabled(scope: { tenantId: TenantId }, actionId: ActionId): Promise<boolean> { return controls.disabled.has(JSON.stringify([scope.tenantId, actionId])); } };
     const unused = async (): Promise<never> => { throw new Error("world: the confirmation store is unused until the confirmation service exists"); };
 
-    const definitions = ALL_TEST_CAPABILITIES;
+    const definitions = ALL_TEST_CAPABILITIES.map((definition) => {
+      const schema = options.inputSchemas?.[definition.id as string];
+      return schema === undefined ? definition : { ...definition, inputSchema: schema };
+    }) as unknown as typeof ALL_TEST_CAPABILITIES;
     const registry = buildRegistry(definitions);
     const executable = definitions.filter((definition) => definition.risk !== "FORBIDDEN");
     const recorders = new Map<string, RecordingExecutor>(executable.map((definition) => [definition.id as string, new RecordingExecutor({ id: definition.executorId, result: options.executorResult ?? { status: "success" } })]));
+    const globalAllowlist = new Set(executable.map((definition) => definition.id as ActionId));
     const deps: GatewayDependencies = {
       registry, executors: bindExecutors(registry, [...recorders.values()].map((recorder) => recorder.executor)),
-      globalAllowlist: new Set(executable.map((definition) => definition.id as ActionId)),
+      globalAllowlist,
       hooks: {
         permissions: { has: through("permissions", permissionPort, "has") as never },
         resources: { resolve: through("resources", resourcePort, "resolve") as never },
@@ -411,7 +435,7 @@ export function withGateway(options: GatewayWorldOptions = {}): GatewayWorld {
       authentication: { authenticate: through("authentication", authenticationPort, "authenticate") as never },
       clock: { now: through("clock", { now: () => clock.now() }, "now") as never },
     });
-    return { clock, audit, ids, permissions, pages, stats, controls, deps, recorders, factory, gateways: new Map<number, PolicyGateway>(), contexts: new Map<string, AuthorizationContext>(), turns: new Map<string, string>(), counter: { calls: 0 }, latestEnd: { ms: 0 } };
+    return { clock, audit, ids, globalAllowlist, permissions, pages, stats, controls, deps, recorders, factory, gateways: new Map<number, PolicyGateway>(), contexts: new Map<string, AuthorizationContext>(), turns: new Map<string, string>(), counter: { calls: 0 }, latestEnd: { ms: 0 } };
   }
 
   let state = build();
@@ -494,6 +518,10 @@ export function withGateway(options: GatewayWorldOptions = {}): GatewayWorld {
     denyResource(tenant, ref, user) { state.controls.denied.add(JSON.stringify([tenantKey(tenant), user ?? "*", ref.type, ref.id])); },
     foreignResource(from) { return structuredClone((from === "A" ? TENANT_B_RESOURCES : TENANT_A_RESOURCES)[0]!); },
     foreignDisplayNames(from) { return (from === "A" ? TENANT_B_RESOURCES : TENANT_A_RESOURCES).map((resource) => resource.displayName); },
+    setGloballyEnabled(actionId, enabled) {
+      if (enabled) state.globalAllowlist.add(actionId as ActionId); else state.globalAllowlist.delete(actionId as ActionId);
+      state.gateways.clear();
+    },
     disableCapability(tenant, actionId, disabled = true) {
       const key = JSON.stringify([tenantKey(tenant), actionId]);
       if (disabled) state.controls.disabled.add(key); else state.controls.disabled.delete(key);

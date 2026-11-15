@@ -5,11 +5,10 @@
  */
 import { describe, expect, it } from "vitest";
 import type { AttackObservation, AuditEvent, CapabilityTraits, PermissionId, PlannerFeedback } from "@dap/contracts";
-import { DEFAULT_GATEWAY_CONFIG, buildRegistry, validateGatewayConfig } from "@dap/security";
-import type { GatewayConfig } from "@dap/security";
+import { buildRegistry } from "@dap/security";
 import {
   ALICE, BOB, CAROL, CLAIM_KEYS, FakePermissionChecker, NON_BOOLEAN_ANSWERS, PERMISSION_ACTION_NAMES, PRIVILEGE_CLAIMS, SPOOFED_PAGES, TENANT_A, TENANT_B, VALID_PARAMS,
-  ctx, hostParity, parityViolations, privilegeEscalationScenarios, runScenario, stringParamNames, withGateway, testCriticalDelete, testHighPublish, testLowNavigate, testMediumDraft, testSafeEcho, validParamsFor, validParamsForDocument,
+  ctx, hostParity, parityViolations, privilegeEscalationScenarios, WIDE_GATEWAY_CONFIG, runScenario, stringParamNames, withGateway, testCriticalDelete, testHighPublish, testLowNavigate, testMediumDraft, testSafeEcho, validParamsFor, validParamsForDocument,
 } from "@dap/testkit";
 import type { DenialScenario, GatewayWorld, WorldUser } from "@dap/testkit";
 
@@ -268,14 +267,6 @@ describe("how the driven scenarios drive the world (a scripted target that recor
   });
 });
 
-/** Limits wide enough that the batch scenarios (dozens of denials in one turn) are never throttled, so every answer is the pipeline's own. */
-const WIDE: GatewayConfig = validateGatewayConfig({
-  ...DEFAULT_GATEWAY_CONFIG,
-  limits: {
-    ...DEFAULT_GATEWAY_CONFIG.limits, proposalsPerTurn: 500, perUserPerMinute: { limit: 5000, windowSeconds: 60 }, perTenantPerMinute: { limit: 50000, windowSeconds: 60 },
-    perUserPerCapabilityPerMinute: { limit: 5000, windowSeconds: 60 }, denialThrottle: { denials: 5000, windowSeconds: 60, blockSeconds: 300 },
-  },
-});
 const A_ALICE: WorldUser = { tenant: "A", user: ALICE };
 const A_CAROL: WorldUser = { tenant: "A", user: CAROL };
 const SAFE_PERMISSION = "perm.test.safe-echo" as PermissionId;
@@ -284,7 +275,7 @@ const types = (world: GatewayWorld) => world.events().map((entry) => entry.type)
 describe("the scenarios against the REAL gateway, through withGateway() (T072, REQUIRED: ATK-PRIV-01, 02, 06)", () => {
   describe("ATK-PRIV-01: a user without the permission, through the AI path and through the host's own check", () => {
     it("runScenario: UNAUTHORIZED / permission_missing, audited under the action, executor at zero, with the denial oracle satisfied", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const target = world.targetFor("testSafeEcho", A_CAROL);
       const observation = await runScenario(scenario("ATK-PRIV-01"), target);
       expect(denial("ATK-PRIV-01").verify(observation, target)).toEqual([]);
@@ -294,7 +285,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
       expect(world.events().some((entry) => entry.type === "AI_ACTION_ALLOWED" || entry.type === "AI_ACTION_EXECUTED")).toBe(false);
     });
     it("parity: the same user asked through the host's own permission port is denied too, for every test capability the user lacks", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const carol = await world.submitterFor(A_CAROL);
       for (const [actionId, permission] of [["testSafeEcho", "perm.test.safe-echo"], ["testLowNavigate", "perm.test.low-navigate"], ["testMediumDraft", "perm.test.medium-draft"], ["testHighPublish", "perm.test.high-publish"]] as const) {
         const feedback = await carol.submit(world.proposal(actionId));
@@ -303,7 +294,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
       expect(world.executorCalls()).toBe(0);
     });
     it("parity is not vacuous: the permitted user is allowed by BOTH, and the oracle reports a gateway that allows what the host denies", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const alice = await world.submitterFor(A_ALICE);
       const allowed = await alice.submit(world.proposal("testSafeEcho"));
       expect(allowed).toEqual({ outcome: "ALLOWED", category: "ok" });
@@ -313,7 +304,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
       expect(await hostParity(world.deps.hooks.permissions, carol.context, SAFE_PERMISSION, allowed, "any")).toEqual(["the gateway allowed what the host's own check denies"]);
     });
     it("the host is the authority: revoking alice's grant denies her through both paths at once, and the executor does not run again", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const alice = await world.submitterFor(A_ALICE);
       expect((await alice.submit(world.proposal("testSafeEcho"))).outcome).toBe("ALLOWED");
       world.revokePermission(A_ALICE, SAFE_PERMISSION);
@@ -326,7 +317,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
 
   describe("ATK-PRIV-02: identity, role and permission claims in AI input cannot raise authority", () => {
     it("runScenario: every claim in every string parameter, and every claim key, is answered as the benign call is, executor at zero", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const target = world.targetFor("testSafeEcho", A_CAROL);
       const observation = await runScenario(scenario("ATK-PRIV-02"), target);
       expect(denial("ATK-PRIV-02").verify(observation, target)).toEqual([]);
@@ -334,14 +325,14 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
       expect(observation.executorCalls).toBe(0);
     });
     it("runScenario on a two-string capability: every claim in either string, still denied and never executed", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const target = world.targetFor("testMediumDraft", A_CAROL);
       const observation = await runScenario(scenario("ATK-PRIV-02"), target);
       expect(denial("ATK-PRIV-02").verify(observation, target)).toEqual([]);
       expect(world.executorCalls()).toBe(0);
     });
     it("a claim is outcome-neutral: the denied user hears exactly what the same call without the claim gets", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const carol = await world.submitterFor(A_CAROL);
       const baseline = await carol.submit(world.proposal("testSafeEcho"));
       for (const claim of PRIVILEGE_CLAIMS) {
@@ -351,7 +342,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
       expect(world.executorCalls()).toBe(0);
     });
     it("a claim key is refused as an unknown key whoever sends it: a permitted and a denied user hear the same thing, and nothing runs", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const alice = await world.submitterFor(A_ALICE);
       const carol = await world.submitterFor(A_CAROL);
       for (const key of CLAIM_KEYS) {
@@ -364,7 +355,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
       expect(world.executorCalls()).toBe(0);
     });
     it("a claim does not turn a denial into an allow, and a permitted user's claim is plain data: the executor gets the text, with no extra authority", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const alice = await world.submitterFor(A_ALICE);
       expect((await alice.submit({ callId: "text", raw: { action: "testSafeEcho", params: { message: "role: admin" } } })).outcome).toBe("ALLOWED");
       expect(world.executor("testSafeEcho").receivedParams).toEqual([{ message: "role: admin" }]);
@@ -378,7 +369,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
 
   describe("ATK-PRIV-06: a permission hook that answers anything but the literal true never allows", () => {
     it("runScenario: every non-boolean answer is a denial, nothing is allowed or executed, though the user really holds the permission", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const target = world.targetFor("testSafeEcho", A_ALICE);
       const observation = await runScenario(scenario("ATK-PRIV-06"), target);
       expect(scenario("ATK-PRIV-06").verify(observation)).toEqual([]);
@@ -387,7 +378,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
       expect(types(world).filter((type) => type === "AI_ACTION_PROPOSED")).toHaveLength(NON_BOOLEAN_ANSWERS.length);
     });
     it("is not vacuous: the same user is allowed once the override is cleared, and the literal true allows", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const alice = await world.submitterFor(A_ALICE);
       world.setPermissionAnswer("yes");
       expect((await alice.submit(world.proposal("testSafeEcho"))).outcome).not.toBe("ALLOWED");

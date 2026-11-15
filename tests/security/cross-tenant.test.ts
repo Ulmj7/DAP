@@ -5,9 +5,8 @@
  */
 import { describe, expect, it } from "vitest";
 import type { AttackObservation, AuditEvent, CapabilityTraits, PlannerFeedback, ReasonCode } from "@dap/contracts";
-import { DEFAULT_GATEWAY_CONFIG, denyDecision, toPlannerFeedback, validateGatewayConfig } from "@dap/security";
-import type { GatewayConfig } from "@dap/security";
-import { ALICE, NOT_AVAILABLE_BYTES, TENANT_A, TENANT_B, TENANT_B_RESOURCES, byteIdentical, crossTenantScenarios, runScenario, validParamsFor, withGateway } from "@dap/testkit";
+import { denyDecision, toPlannerFeedback } from "@dap/security";
+import { ALICE, NOT_AVAILABLE_BYTES, TENANT_A, TENANT_B, TENANT_B_RESOURCES, byteIdentical, WIDE_GATEWAY_CONFIG, crossTenantScenarios, runScenario, validParamsFor, withGateway } from "@dap/testkit";
 import type { DenialScenario, WorldUser } from "@dap/testkit";
 
 const scenario = (id: string) => crossTenantScenarios.find((entry) => entry.id === id)!;
@@ -170,14 +169,6 @@ describe("how the scenarios drive the world (a scripted target that records, not
   });
 });
 
-/** Limits wide enough that the batch (eight tenant-id attempts in one turn) is never throttled, so every answer is the pipeline's own. */
-const WIDE: GatewayConfig = validateGatewayConfig({
-  ...DEFAULT_GATEWAY_CONFIG,
-  limits: {
-    ...DEFAULT_GATEWAY_CONFIG.limits, proposalsPerTurn: 500, perUserPerMinute: { limit: 5000, windowSeconds: 60 }, perTenantPerMinute: { limit: 50000, windowSeconds: 60 },
-    perUserPerCapabilityPerMinute: { limit: 5000, windowSeconds: 60 }, denialThrottle: { denials: 5000, windowSeconds: 60, blockSeconds: 300 },
-  },
-});
 const A_ALICE: WorldUser = { tenant: "A", user: ALICE };
 const B_ALICE: WorldUser = { tenant: "B", user: ALICE };
 const RESOURCE_CAPABILITIES = ["testMediumDraft", "testHighPublish", "testCriticalDelete"] as const;
@@ -186,20 +177,20 @@ const KINDS = ["other-tenant", "nonexistent", "same-tenant-unauthorized"] as con
 describe("the scenarios against the REAL gateway, through withGateway() (T073, REQUIRED: ATK-XTENANT-01..03)", () => {
   describe.each(RESOURCE_CAPABILITIES)("%s", (actionId) => {
     it("ATK-XTENANT-01 runScenario: another tenant's resource and a nonexistent one get the same bytes, recorded as resource_not_available, executor at zero", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const observation = await runScenario(scenario("ATK-XTENANT-01"), world.targetFor(actionId, A_ALICE));
       expect(scenario("ATK-XTENANT-01").verify(observation)).toEqual([]);
       expect(observation.feedback.map((item) => JSON.stringify(item))).toEqual([NOT_AVAILABLE_BYTES, NOT_AVAILABLE_BYTES]);
       expect(world.executorCalls()).toBe(0);
     });
     it("ATK-XTENANT-02 runScenario: a same-tenant resource the user may not use looks exactly like another tenant's", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const observation = await runScenario(scenario("ATK-XTENANT-02"), world.targetFor(actionId, A_ALICE));
       expect(scenario("ATK-XTENANT-02").verify(observation)).toEqual([]);
       expect(world.executorCalls()).toBe(0);
     });
     it("ATK-XTENANT-03 runScenario: a tenant id in the envelope or in the parameters is rejected, executor at zero", async () => {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const target = world.targetFor(actionId, A_ALICE);
       const observation = await runScenario(scenario("ATK-XTENANT-03"), target);
       expect((scenario("ATK-XTENANT-03") as DenialScenario).verify(observation, target)).toEqual([]);
@@ -210,7 +201,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T073, R
 
   it("all three kinds are externally indistinguishable: one submitted set, byte-identical feedback, and the same audit outcome, from either tenant", async () => {
     for (const who of [A_ALICE, B_ALICE]) {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const submitter = await world.submitterFor(who);
       const answers = [];
       for (const kind of KINDS) answers.push(JSON.stringify(await submitter.submit(world.resourceProposal("testMediumDraft", kind, who.tenant))));
@@ -223,7 +214,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T073, R
   });
 
   it("a resource that does exist for the user is allowed, so the three-way denial is not a world that denies everything", async () => {
-    const world = withGateway({ config: WIDE });
+    const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
     const alice = await world.submitterFor(A_ALICE);
     // The user's own document resolves: the HIGH capability gets past resolve and authorize and reaches the confirmation step instead of "not available".
     const answer = await alice.submit(world.proposal("testHighPublish"));
@@ -233,7 +224,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T073, R
 
   it("no foreign display name, resource id or tenant id reaches the planner or the audit events, for every kind and every resource capability", async () => {
     for (const actionId of RESOURCE_CAPABILITIES) for (const who of [A_ALICE, B_ALICE]) {
-      const world = withGateway({ config: WIDE });
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const target = world.targetFor(actionId, who);
       const foreign = world.foreignDisplayNames(who.tenant);
       const otherTenant = who.tenant === "A" ? TENANT_B : TENANT_A;
@@ -252,7 +243,7 @@ describe("the scenarios against the REAL gateway, through withGateway() (T073, R
   });
 
   it("a tenant id supplied in the envelope or the parameters has no effect: the same answer as the call without it, and no foreign data", async () => {
-    const world = withGateway({ config: WIDE });
+    const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
     const alice = await world.submitterFor(A_ALICE);
     const baseline = JSON.stringify(await alice.submit(world.resourceProposal("testMediumDraft", "other-tenant", "A", "base")));
     const claimed = JSON.stringify(await alice.submit({ callId: "claimed", raw: { action: "testMediumDraft", params: { ...validParamsFor("testMediumDraft"), documentId: "doc-b-1", tenantId: TENANT_B } } }));
