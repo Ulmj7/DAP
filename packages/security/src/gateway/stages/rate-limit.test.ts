@@ -104,15 +104,22 @@ describe("T117 stage 2 rate limits", () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it("a countable final denial is not starved when less than one millisecond remains", async () => {
-    const test = fixture(denied()); let reads = 0;
-    await withDeferredLimitDenials(async () => {
-      const result = await test.stage(record({ budget: { remainingMs: () => ++reads === 1 ? 100 : 0.5 } }));
-      if (result.kind !== "stop") throw new Error("Expected denial");
-      return result.decision;
-    });
-    expect(test.recordDenial).toHaveBeenCalledTimes(1);
+  it("a countable final denial gets a real recording budget when less than one millisecond remains", async () => {
+    vi.useFakeTimers();
+    try {
+      const test = fixture(denied()); let reads = 0; let returned = false;
+      test.recordDenial.mockImplementation(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); return { recorded: true, throttled: false }; });
+      const pending = withDeferredLimitDenials(async () => {
+        const result = await test.stage(record({ budget: { remainingMs: () => ++reads === 1 ? 100 : 0.5 } }));
+        if (result.kind !== "stop") throw new Error("Expected denial");
+        return result.decision;
+      }).then((decision) => { returned = true; return decision; });
+      await vi.advanceTimersByTimeAsync(1); expect(returned).toBe(false);
+      await vi.advanceTimersByTimeAsync(10); expect(await pending).toMatchObject({ reason: "rate_limited_user" });
+      expect(test.recordDenial).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
   });
+
   it("does not record an abandoned countable verdict when another final decision won", async () => {
     for (const alternate of [{ stage: "rate_limit", reason: "dependency_failure" }, { stage: "authorize", reason: "rate_limited_user" }] as const) {
       const test = fixture(denied()); const request = record();

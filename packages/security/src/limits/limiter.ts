@@ -110,7 +110,7 @@ function boundedInteger(value: unknown, maximum: number, minimum: number): numbe
   return value;
 }
 
-interface LocalCount { count: number; readonly expiresAt: number; denial?: LimitVerdict }
+interface LocalCount { count: number; pending: number; readonly expiresAt: number; denial?: LimitVerdict }
 /** Keep active counts through the whole turn, including an epoch-window rollover. Full capacity fails closed. */
 class LocalCounts {
   private readonly counts = new Map<string, LocalCount>();
@@ -124,7 +124,7 @@ class LocalCounts {
     const existing = this.counts.get(id);
     if (existing) return existing;
     if (this.counts.size >= this.capacity) throw new Error("Local turn capacity exhausted");
-    const entry: LocalCount = { count: 0, expiresAt: now + this.lifetimeMs };
+    const entry: LocalCount = { count: 0, pending: 0, expiresAt: now + this.lifetimeMs };
     this.counts.set(id, entry);
     return entry;
   }
@@ -158,7 +158,10 @@ export function createLimiter(options: LimiterOptions): Limiter {
   let lastNow = Number.NEGATIVE_INFINITY;
   function now(): number {
     const raw: unknown = clockPort.now();
-    if (!instant.safeParse(raw).success) throw new TypeError("Invalid limiter clock");
+    if (!instant.safeParse(raw).success) {
+      void Promise.resolve(raw).catch(() => undefined);
+      throw new TypeError("Invalid limiter clock");
+    }
     const ms = Date.parse(raw as string);
     if (!Number.isFinite(ms) || ms < lastNow) throw new TypeError("Invalid limiter clock");
     lastNow = ms;
@@ -206,21 +209,26 @@ export function createLimiter(options: LimiterOptions): Limiter {
       if (elapsed < 0) return FAULT_VERDICT;
       if (elapsed > config.turnBudgetMs) return deny("rate_limited_turn", "turn_budget");
       const local = proposalCounts.get(localKey, time);
+      // A shared block or fault remains fail-closed for this turn; a new turn retries the store.
       if (local.denial) return local.denial;
-      if (local.count >= config.proposalsPerTurn) return deny("rate_limited_turn", "turn_proposals");
 
-      const throttled = await blocked(scope, denyBucket);
-      if (throttled === FAULT) return local.denial = FAULT_VERDICT;
-      if (throttled) return local.denial = deny("denial_throttle", "denial_throttle");
-      // Reserve and issue the shared hit in one synchronous step; an active local count is never evicted.
-      if (local.count >= config.proposalsPerTurn) return deny("rate_limited_turn", "turn_proposals");
-      local.count++;
-      const verdict = await consume(scope, turnBucket, turnProposalRule, "rate_limited_turn", "turn_proposals")
-        ?? await consume(scope, "tenant", tenantRule, "rate_limited_tenant", "tenant")
-        ?? await consume(scope, userBucket, userRule, "rate_limited_user", "user")
-        ?? ALLOW;
-      if (!verdict.allowed && verdict.reason === "dependency_failure") local.denial = verdict;
-      return verdict.allowed && now() - startedAt > config.turnBudgetMs ? deny("rate_limited_turn", "turn_budget") : verdict;
+      if (local.count + local.pending >= config.proposalsPerTurn) return deny("rate_limited_turn", "turn_proposals");
+      local.pending++;
+      let pending = true;
+      try {
+        const throttled = await blocked(scope, denyBucket);
+        if (throttled === FAULT) return local.denial = FAULT_VERDICT;
+        if (throttled) return local.denial = deny("denial_throttle", "denial_throttle");
+        // Reserve and issue the shared hit in one synchronous step; an active local count is never evicted.
+        local.pending--; pending = false;
+        local.count++;
+        const verdict = await consume(scope, turnBucket, turnProposalRule, "rate_limited_turn", "turn_proposals")
+          ?? await consume(scope, "tenant", tenantRule, "rate_limited_tenant", "tenant")
+          ?? await consume(scope, userBucket, userRule, "rate_limited_user", "user")
+          ?? ALLOW;
+        if (!verdict.allowed && verdict.reason === "dependency_failure") local.denial = verdict;
+        return verdict.allowed && now() - startedAt > config.turnBudgetMs ? deny("rate_limited_turn", "turn_budget") : verdict;
+      } finally { if (pending) local.pending--; }
     } catch { return FAULT_VERDICT; }
   }
 
