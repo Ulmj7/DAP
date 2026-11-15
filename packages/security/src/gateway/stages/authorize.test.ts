@@ -304,6 +304,16 @@ describe("what the stage refuses to work from", () => {
     await refuse(test, test.record(facts));
   });
 
+  it("names the attempted action in a denial only when resolve published one", async () => {
+    const test = harness();
+    const without = decisionOf(await test.stage(test.record({ validate: good().validate })));
+    expect(Object.hasOwn(without, "attemptedAction")).toBe(false);
+    const withName = decisionOf(await test.stage(test.record({ ...good(), resolve: { ...good().resolve, version: 9 } })));
+    expect(withName).toMatchObject({ attemptedAction: "openProject" });
+    const notText = decisionOf(await test.stage(test.record({ ...good(), resolve: { ...good().resolve, id: 7 } })));
+    expect(Object.hasOwn(notText, "attemptedAction")).toBe(false);
+  });
+
   it("a context that is not minted (a plain look-alike) and a request without one", async () => {
     const test = harness();
     await refuse(test, test.record(good(), { context: { ...context() } }));
