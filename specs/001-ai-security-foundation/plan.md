@@ -382,11 +382,16 @@ What remains:
     text by audit reviewers; it is never returned in planner feedback. M1 does not promise secrecy
     for arbitrary secrets the planner itself embeds in an attempted action name.
 
-13. **Outstanding audit timeout cancellation (QA #14)**: the Gateway hook deadline returns a denial
-    without cancelling a blocked PostgreSQL append. Once a lock clears, ALLOWED can commit after
-    the action was denied and never executed. The audit-postgres blocked-write regression is
-    intentionally failing until the Gateway/writer cancellation contract is resolved; do not ship
-    the persistent sink as satisfying that failure case.
+13. **Audit append cancellation window (QA #14, closed except for one window)**: when the audit
+    writer gives up on an append (timeout, rejection, wrong-shaped or late answer) it aborts that
+    attempt's `AuditAppendOptions.signal`. The PostgreSQL sink does not start once the signal is
+    aborted, rolls back instead of committing if it is aborted before COMMIT, and the database
+    itself bounds a blocked or slow statement (`lock_timeout`, `statement_timeout`,
+    `writeTimeoutMs`, default 1500 ms). The unavoidable window is a COMMIT already in flight when
+    the writer gives up: its outcome is uncertain, so an ALLOWED row may exist for a request that
+    was denied and never executed. The trail then truthfully shows ALLOWED without EXECUTED; it
+    never shows an execution that did not happen. A sink that ignores the signal keeps the old
+    behaviour and the same residual risk.
 14. **Audit time and sequence precision**: the current Gateway clock supplies millisecond instants;
     PostgreSQL preserves microseconds. Finer nonzero fractions are rejected rather than silently
     aliased. Sequence allocation is a deterministic insertion tie-break, not evidence of commit
