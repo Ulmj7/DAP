@@ -212,8 +212,7 @@ describe("T107 replay attacks against the real guards (ReplayGuard level)", () =
 });
 
 describe("T107 end-to-end replay attacks (pending)", () => {
-  const waiting = "needs the real gateway with stage 3 (replay, T117), the full intake-to-execute path and a SequenceTarget harness binding Actors to two gateway instances over shared state (T119)";
+  const waiting = "full catalogue verify() needs complete audit linkage and risk/execute stages; stage-3 real-gateway controls run in rate-replay.gateway.test.ts";
   for (const scenario of replayScenarios) it.todo(`${scenario.id} ${scenario.title}: run against the real gateway and verify(); ${waiting}`);
   it.todo("ATK-REPLAY-05 replay of a consumed confirmation: covered by ATK-CONFIRM-05 (needs ConfirmationService and the confirmation stage)");
-  it.todo("ATK-REPLAY-02 on PostgreSQL: a second gateway instance created after the first one's process restarted (needs composition-root wiring of PostgresReplayGuard into the gateway, T117/T119)");
 });

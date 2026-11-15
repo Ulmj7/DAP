@@ -341,8 +341,8 @@ describe.each(harnesses)("T108 direct limiter attacks over the %s adapter", (_na
 });
 
 describe("T108 end-to-end rate attacks (pending)", () => {
-  const waiting = "needs the real gateway with stages 2/3 wired (T117), the full intake-to-execute path and a SequenceTarget harness with limiter fault injection (T119)";
+  const waiting = "full catalogue verify() needs complete audit linkage and risk/execute stages; rate/replay gateway controls and limiter faults run in rate-replay.gateway.test.ts";
   for (const scenario of rateAbuseScenarios) it.todo(`${scenario.id} ${scenario.title}: run against the real gateway and verify(); ${waiting}`);
   it.todo("ATK-RATE-01 database round trips measured on the real PostgreSQL adapter through the gateway (SequenceTarget.sharedStoreCalls)");
-  it.todo("ATK-DEP limiter/replay rows: every failure mode of the rate limiter and replay ports through the gateway (needs T117 and the dependency-failure matrix)");
+  it.todo("ATK-DEP full dependency-failure matrix with audit linkage: limiter gateway faults already run in rate-replay.gateway.test.ts; remaining rows need the dependency-failure harness");
 });
