@@ -24,25 +24,61 @@ Technical approach (details in [research.md](./research.md)):
   tenant narrowing) with forced row-level security, atomic single-statement transitions, and the
   database clock, so controls hold across restarts and replicas.
 - Authentication and authorization are **host-implemented ports**. This feature builds neither.
-- A scripted hostile planner and an attack catalogue of 102 scenarios (plus a 36-case
-  dependency-failure matrix and property-based invariants) prove each control with no LLM.
+- A scripted hostile planner and a focused set of representative security scenarios prove each
+  control with no LLM (Milestone M1). The 102-scenario catalogue, the 36-case dependency-failure
+  matrix, and mutation testing are Future Work; code already built for them is retained.
 
 The requested pipeline is preserved: *AI Planner, Action Proposal, Schema Validation, Policy
 Gateway, Authorization, Confirmation if required, Action Executor.* Research D6 makes it precise
 and explains three ordering choices (trusted context first, cheap shared-state checks early,
 durable audit before any execution).
 
+## Scope and Milestone M1 (Constitution 2.0.0)
+
+This plan was written under Constitution 1.0.0 and is **reconciled, not restarted**, with
+Constitution 2.0.0 (see the Scope Declaration in [spec.md](./spec.md)). All implemented work stays.
+Items are classified **REQUIRED**, **OPTIONAL**, or **FUTURE** (Principles XVIII and XIX).
+
+**M1 vertical slice (independently demonstrable):**
+
+```text
+Registered SAFE/LOW proposal
+  -> Gateway (context, intake, rate limit, replay)
+  -> validation (registered capability, strict parameters)
+  -> authorization (session, permission, page, resource)
+  -> risk decision
+  -> audit (durable before execution)
+  -> trusted executor (single-use grant, validated frozen parameters, user's own context)
+  -> deterministic success
+```
+
+| Stage / piece | Status | Scope |
+|---------------|--------|-------|
+| Context, intake, rate-limit, replay, resolve, validate, authorize | merged | REQUIRED, retained |
+| Audit stage and execute stage, `evaluate()` runner result | built on branch `exec`, QA pending | REQUIRED (T089, T090) |
+| Risk decision stage (no confirmation records) | not built | REQUIRED (T104a) |
+| Gateway test world with the real chain | not built | REQUIRED (T070) |
+| Persistent audit sink and migration | not built | REQUIRED, minimal (T093, T094) |
+| Representative security scenarios | partly built (`attacks2`) | REQUIRED, reduced |
+| Composition root, development authentication, one integration test | not built | REQUIRED (T131, T132, T136 reduced) |
+| Confirmation store, binding, service, endpoints | store built on branch `confirm-store` | OPTIONAL, parked |
+| Coverage gate, double-run, dependency matrix, mutation testing, metrics, Kubernetes | partly built (`tooling`) | FUTURE, parked |
+
+Branch handling: `exec` is critical path; `attacks2` is merged only for the representative
+trust-boundary tests; `confirm-store` and `tooling` are preserved but do not block M1. No branch is
+merged merely because the old task list marked it mandatory.
+
 ## Technical Context
 
 **Language/Version**: TypeScript (strict, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`) on Node.js 22
 
-**Primary Dependencies**: Zod 4 (4.6.7 verified); `pg` (node-postgres, explicit parameterized SQL, no ORM); Fastify (reference host only); `prom-client`; `pino`. Dev: Vitest, fast-check, dependency-cruiser, ESLint with typescript-eslint, Stryker (nightly, optional). Versions other than Zod are pinned by the lockfile at implementation time
+**Primary Dependencies**: Zod 4 (4.6.7 verified); `pg` (node-postgres, explicit parameterized SQL, no ORM); Fastify (reference host only); `pino` (`prom-client` and metrics are FUTURE). Dev: Vitest, fast-check, dependency-cruiser, ESLint with typescript-eslint, Stryker (FUTURE: nightly, optional). Versions other than Zod are pinned by the lockfile at implementation time
 
 **Storage**: PostgreSQL 16 or newer (confirmations, replay claims, rate counters, audit events, tenant action policy) with forced row-level security; in-memory adapter for fast tests
 
 **Testing**: Vitest (unit, contract, conformance, attack suites), fast-check (property tests), real PostgreSQL for shared-state scenarios, dependency-cruiser (architecture)
 
-**Target Platform**: Linux containers (Docker, Docker Compose, Kubernetes validated on Minikube)
+**Target Platform**: Linux, single-process modular monolith. Docker and Docker Compose are OPTIONAL; Kubernetes and Minikube are FUTURE
 
 **Project Type**: TypeScript library monorepo plus one thin, non-production reference service
 
@@ -50,7 +86,7 @@ durable audit before any execution).
 
 **Constraints**: Fail closed everywhere; Gateway decisions deterministic and LLM-free; no general execution capability of any kind (FR-050); all shared state tenant-partitioned and database-clock based; metrics and logs carry no tenant, user, secret, or raw DOM data
 
-**Scale/Scope**: Course-project scale (tens of tenants, hundreds of users) with a design that does not preclude several service replicas. Scope: 6 risk classes, 7 outcome types, 9 audit event types, 5 shared-state tables, 12 registration rules, 102 catalogued attack scenarios plus a 36-case dependency-failure matrix (9 ports x 4 failure modes)
+**Scale/Scope**: Course-project scale (tens of tenants, hundreds of users) with a design that does not preclude several service replicas. Scope: 6 risk classes, 7 outcome types, 9 audit event types, 5 shared-state tables, 12 registration rules, 102 catalogued (the exhaustive set is FUTURE; M1 uses a representative subset) attack scenarios plus a 36-case dependency-failure matrix (9 ports x 4 failure modes)
 
 **Existing stack and authentication**: None exists (repo contains documentation only). Nothing is replaced. Authentication and authorization are ports the host application will implement; the reference host ships only a development-only stub that refuses to run in production
 
@@ -58,55 +94,67 @@ durable audit before any execution).
 
 ## Constitution Check
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+*GATE: re-evaluated on 2026-11-16 against Constitution 2.0.0 (tiered). Result: **PASS**. The
+earlier check against 1.0.0 (Principles I-XVII, all universal) is superseded.*
 
-Evaluated twice: once on the spec and constitution before research, once against the finished
-design. Result both times: **PASS, no violations.** Items needing attention are listed after the table.
+### Tier A: mandatory invariants
 
-| # | Principle | Design response | Pre | Post |
-|---|-----------|-----------------|-----|------|
-| I | LLM is an untrusted planner | AI layer holds only a `ProposalSubmitter` bound to a session. Identity, tenant, run metadata, and `callId` come from trusted code (D5, D11) | PASS | PASS |
-| II | LLM output never authorizes | Claims in text or parameters are unknown keys or ignored. Confirmation is a separate door (`ConfirmationService`) the AI layer cannot reach. Tests ATK-CONFIRM-02/03, ATK-PRIV-02 | PASS | PASS |
-| III | Deterministic Policy Gateway | Single chokepoint; executors need a single-use grant minted by the Gateway; no LLM in the decision path. Static graph, types, and runtime grant checks (D4, D5) | PASS | PASS |
-| IV | Default deny, allowlists | Global allowlist empty by default; exact-match registry; strict schemas; reserved-forbidden list is supplementary only (D3, D6) | PASS | PASS |
-| V | AI never receives secrets | The AI layer sees only `PlannerFeedback`; audit records only allowlisted parameters; canary tests on every planner-visible output (D13, D17) | PASS | PASS |
-| VI | Sensitive DOM removed client-side | **Out of scope** for this feature by spec. No conflict. Dependency: the planner feature must not ship before the privacy layer exists | n/a | n/a |
-| VII | No arbitrary execution | Reserved FORBIDDEN names, no generic execution path, lint bans `eval`/`new Function`, static scan for process, VM, and HTTP-client use (ATK-ARCH-06/10); browser is display-only (D15) | PASS | PASS |
-| VIII | Registered typed capabilities | `ActionDefinition` with rules R1-R12 enforced at startup; immutable registry with no mutators | PASS | PASS |
-| IX | Backend authorization authoritative | Permissions checked live through host ports; resources resolved server-side; AI-supplied ids are untrusted lookup keys; errors never reach the AI (D7) | PASS | PASS |
-| X | No privilege amplification | Context carries the user's own authority into every executor; parity oracle compares AI path to direct path. See attention item 4 | PASS | PASS |
-| XI | Tenant isolation | One active tenant per context; every store operation takes a `TenantScope`; forced row-level security; cross-tenant scenarios ATK-XTENANT-01..10 (D8, D9) | PASS | PASS |
-| XII | RAG content is untrusted data | **Out of scope** (no RAG here). Prepared by the envelope having no free-text decision channel and by the metamorphic injection test | n/a | n/a |
-| XIII | Server-verified confirmation | Server-created, single-use, time-limited, bound to action, parameters, resource, user, and tenant; trusted consequence text; re-authorization on accept (D10) | PASS | PASS |
-| XIV | Auditable state changes | Nine event types; durable allow-event before any execution; allowlist parameter projection; append-only table (D13) | PASS | PASS |
-| XV | Survives full LLM compromise | Controls live outside the model; hostile-planner tests run without any LLM; limits enforced server-side (D12, D17) | PASS | PASS |
-| XVI | Least privilege, strict schemas, minimal context, fail closed | Every port wrapped with timeout and shape check; any failure denies; the AI sees a closed-set category only (D14) | PASS | PASS |
-| XVII | Security tests mandatory | Catalogue plus coverage gate that fails CI on any uncovered, unwaived scenario (FR-048) | PASS | PASS |
+| # | Principle | Design response (evidence) | Status |
+|---|-----------|----------------------------|--------|
+| I | LLM is an untrusted planner | AI layer holds only a `ProposalSubmitter`; identity, tenant, run metadata, and `callId` come from trusted code | PASS, implemented |
+| II | LLM output never authorizes | Claims in text or parameters are unknown keys or ignored; confirmation is never taken from the model | PASS, implemented |
+| III | Deterministic Policy Gateway | Single chokepoint; executors need a single-use grant only the Gateway mints; no LLM in the decision path; static graph, types, runtime grant checks | PASS, implemented (audit/execute stages on `exec`) |
+| IV | Default deny, allowlists | Exact-match registry, default-deny enablement, strict schemas, reserved names | PASS, implemented |
+| V | No secrets to the AI | Planner feedback is outcome, category, and field paths only; audit scrubber; canary test is an M1 test (T082) | PASS; canary test pending |
+| VI | Client-side redaction | Out of scope for this feature (a later UI feature); this feature accepts no DOM data | N/A here |
+| VII | No arbitrary execution | No `eval`, shell, network, or selector capability; static scan and graph tests | PASS, implemented |
+| VIII | Typed registered capabilities | `buildRegistry` rules R1-R12; executor binding | PASS, implemented |
+| IX | Backend authorization authoritative | Authorize stage re-judges session, permission, page, and resource against host ports | PASS, implemented |
+| X | No privilege amplification | Executors receive the requesting user's own minted context; parity test in M1 (T072) | PASS; parity test pending |
+| XII | RAG is untrusted data | No RAG in this feature; feedback and audit never echo model text | N/A here |
+| XIV | Auditability | Audit builder, projection, scrubber, writer; audit succeeds before execution; persistent sink in M1 | PASS; stages on `exec`, sink pending |
+| XV | Survives LLM compromise | Hostile planner; bounded per-turn execution and per-proposal budget | PASS, implemented |
+| XVI | Least privilege, strict schemas, minimal context, fail closed | Strict schemas at every boundary; every fault is a denial | PASS, implemented |
+| XVII | Focused security tests | Representative M1 set (see spec Scope Declaration); exhaustive catalogue is Future | PASS for scope; tests pending (T052 to T054, T072, T073, T082 to T084) |
 
-**Workflow gates (constitution Section 3)**: feature branches and pull-request review, CI on every
-push and pull request, Arrange-Act-Assert tests with mocks for external ports, linter and
-dependency scanning in CI, secret scanning, AI-assistance disclosure, Docker with cache-ordered
-layers, Kubernetes manifests on Minikube, Prometheus and Grafana with security metrics, DORA
-metrics and retrospectives. All are planned in research D17-D19. Architecture documentation
-requirements are met below (trust boundary and data flows). **Phase gate**: this feature is Phase 1
-(Security Foundation); it adds no autonomous actions.
+### Tier B: conditional controls and their triggers
 
-**Attention items (none block planning)**:
+| Principle | Trigger | Present? | Consequence |
+|-----------|---------|----------|-------------|
+| XI Tenant isolation | A feature stores or retrieves tenant-owned data | Yes (audit, tenant policy) | Tenant-ready: tenant from the trusted context, tenant-scoped data, forced RLS (built). Demo may run one tenant |
+| XIII Confirmation | HIGH/CRITICAL capability, or MEDIUM requiring confirmation, delivered | No (test-only SAFE/LOW capabilities executed in M1) | Only the risk decision is REQUIRED (T104a). Store and binding retained on `confirm-store` |
+| Replay protection | Retry-sensitive or state-changing actions | Yes (one state-changing test capability) | Replay guard and stage built, retained |
+| Shared state across copies | More than one copy runs | No (single process) | In-memory adapters allowed, documented; Postgres adapters retained |
 
-1. **Provisional answers.** Five spec ambiguities are assumed, not confirmed (table below). One
-   `/speckit-clarify` question is still unanswered.
-2. **Task template conflict.** `.specify/templates/tasks-template.md` treats tests as optional.
-   Constitution Principle XVII overrides that for every task in this feature. `/speckit-tasks`
-   must generate the security tests as required tasks.
-3. **Audit is stricter than the spec.** FR-040 requires durable audit before state-changing
-   execution; the plan requires it before **every** execution, following Principle XVI (D13). A
-   long audit outage therefore denies even SAFE actions. That is intentional.
-4. **Delegated authority is a convention at the executor edge.** The contract passes each executor
-   the user's own context, but an executor that then calls downstream systems with a service
-   credential would reintroduce the confused deputy. The platform cannot detect that in general;
-   it is a mandatory review item and a parity test per capability.
-5. **Principle XI wording.** It lists "action definitions" as tenant-owned. The plan treats
-   per-tenant *enablement* as tenant state and the *definitions* as global (D16). Confirm.
+### Tier C: Future Work (not prerequisites)
+
+Exhaustive attack catalogue and coverage gate; mutation testing; independent oracle frameworks beyond
+existing code; double-run determinism script; 36-case dependency-failure matrix; 10,000-proposal
+flood suites; multi-replica guarantees and distributed rate limiting; Prometheus, Grafana,
+Kubernetes, Minikube, distributed tracing, SIEM, and enterprise deployment hardening.
+
+### Principles XVIII and XIX: delivery scope and scope discipline
+
+| Check | Result |
+|-------|--------|
+| Bounded vertical slice, independently demonstrable (XVIII) | M1 defined in the Scope Declaration; P1 stories complete before P2 hardening |
+| No infrastructure beyond what the feature needs (XVIII) | Kubernetes, Prometheus, Grafana, and enterprise observability removed from the critical path |
+| Future Work recorded explicitly (XVIII) | Yes: spec "Future Work" section and the Tier C list above |
+| Minimum architecture for the invariants; reuse existing (XIX) | All built components reused; nothing replaced |
+| REQUIRED / OPTIONAL / FUTURE classification (XIX) | Present in spec, this plan, and every open task |
+| Deferred hardening never blocks product work (XIX) | Confirmation service and Tier C work are non-blocking |
+
+### Items needing attention
+
+1. **Audit is stricter than the spec.** FR-040 requires durable audit before state-changing
+   execution; the implementation requires it before **every** execution (D13). A long audit outage
+   therefore denies even SAFE actions. This is retained as built. Relaxing it for purely visual
+   guidance is Future Work.
+2. **Delegated authority is a convention at the executor edge.** The contract passes each executor
+   the user's own context; an executor that calls downstream systems with a service credential
+   would reintroduce the confused deputy. A mandatory review item and a parity test per capability.
+3. **Principle XI wording.** Per-tenant *enablement* is tenant state; capability *definitions* are
+   global (D16, resolved).
 
 ## Architecture
 
@@ -204,7 +252,7 @@ packages/
 │       ├── registry/           # buildRegistry, rules R1-R12, reserved names, hashing
 │       ├── validation/         # strict intake, envelope, parameters, digest
 │       ├── gateway/            # pipeline stages, decisions, feedback mapping, hook wrapper
-│       ├── confirmation/       # ConfirmationService
+│       ├── confirmation/       # binding and ConfirmationService (OPTIONAL; store and binding built on `confirm-store`, parked)
 │       ├── limits/             # limit orchestration over the RateLimiter port
 │       ├── audit/              # projection, scrubber, event builder
 │       └── state/              # postgres/ and memory/ adapters, conformance suite
@@ -215,15 +263,15 @@ packages/
                coverage, test-capabilities/ }
 apps/
 └── reference-host/             # composition root and thin Fastify service (non-production)
-    └── src/ { compose.ts, http/, dev-auth/, metrics.ts }
+    └── src/ { compose.ts, dev-auth/ (REQUIRED, M1); http/ (OPTIONAL); metrics.ts (FUTURE) }
 db/
 └── migrations/                 # tables, forced RLS, privileges, audit append-only trigger
 deploy/
-├── docker/                     # Dockerfile (multi-stage, non-root)
-├── compose.yaml                # host, postgres, prometheus, grafana
-├── k8s/                        # Deployment (2+ replicas) and Service
-├── prometheus/                 # scrape config and alert rules
-└── grafana/                    # dashboard
+├── docker/                     # OPTIONAL: Dockerfile (multi-stage, non-root)
+├── compose.yaml                # postgres (REQUIRED for the audit sink); host (OPTIONAL); prometheus, grafana (FUTURE)
+├── k8s/                        # FUTURE: Deployment (2+ replicas) and Service
+├── prometheus/                 # FUTURE: scrape config and alert rules
+└── grafana/                    # FUTURE: dashboard
 tests/
 ├── architecture/               # import graph, manifests, no mutators, static scans
 ├── security/                   # runs the catalogue against every test capability
@@ -272,30 +320,36 @@ security package.
 
 ## Delivery Increments (input for `/speckit-tasks`)
 
-Each increment lands together with the catalogue scenarios for what it adds.
+Each increment lands together with the representative scenarios for what it adds. Classification
+follows Principles XVIII and XIX.
 
-| # | Increment | Stories |
-|---|-----------|---------|
-| 1 | Workspace, TypeScript, lint rules, dependency-cruiser, contracts package, Zod behavior pins | foundation |
-| 2 | Registry (R1-R12), strict intake, parameter validation and digest | US1, US2 |
-| 3 | Context factory, host ports, Gateway pipeline on the in-memory adapter | US1, US3 |
-| 4 | Audit projection, scrubber, durable-before-execute, grant minting and executor wrapper | US4 |
-| 5 | PostgreSQL adapters, migrations, forced RLS, privileges, conformance suite | US3, US4 |
-| 6 | Confirmation service, replay guard, rate limits and denial throttle | US5, US6 |
-| 7 | Testkit completion, full catalogue, coverage gate, property and fault-injection suites | US7 |
-| 8 | Reference host, metrics, Dockerfile, compose, Kubernetes manifests, CI workflow | delivery |
+| # | Increment | Stories | Scope | Status |
+|---|-----------|---------|-------|--------|
+| 1 | Workspace, TypeScript, lint rules, dependency-cruiser, contracts, Zod behavior pins | foundation | REQUIRED | done |
+| 2 | Registry (R1-R12), strict intake, parameter validation and digest | US1, US2 | REQUIRED | done |
+| 3 | Context factory, host ports, Gateway pipeline, authorize stage | US1, US3 | REQUIRED | done |
+| 4 | Audit projection, scrubber, writer; audit and execute stages; grant minting | US4 | REQUIRED | primitives done; stages on `exec` (QA pending) |
+| 5 | PostgreSQL adapters: tenant policy, replay, rate counters | US3, US6 | REQUIRED (retained) | done |
+| 5b | Persistent audit sink and migration (minimal) | US4 | REQUIRED | not built (T093, T094) |
+| 6 | Risk decision stage (no confirmation records) | US1, US5 | REQUIRED | not built (T104a) |
+| 6b | Confirmation store, binding, service, endpoints | US5 | OPTIONAL | store and binding on `confirm-store`, parked |
+| 7 | Gateway test world and representative scenarios | US1, US3, US4 | REQUIRED | partly built (T070 pending) |
+| 7b | Coverage gate, double-run, dependency matrix, mutation testing | US7 | FUTURE | partly built on `tooling`, parked |
+| 8a | Composition root, minimal development authentication, one integration path, minimal CI | delivery | REQUIRED | not built |
+| 8b | Dockerfile, readiness endpoint, PR template | delivery | OPTIONAL | not built |
+| 8c | Prometheus, Grafana, Kubernetes, Minikube, enterprise hardening | delivery | FUTURE | not built |
 
 ## Provisional Decisions and Open Clarifications
 
 | Topic | Plan assumption | Status | If the answer differs |
 |-------|-----------------|--------|-----------------------|
-| Browser trust boundary | Display-only browser; server decides and executes everything (research D15) | `/speckit-clarify` question asked, **unanswered** | Execution model and trusted-input list change; re-plan |
-| What constitutes a tenant | One active tenant per session context (D8) | Not asked | Context and every store key change; re-plan |
-| Do denied calls reach the model | Only outcome type, category, and field paths (D14) | Not asked | Change `toPlannerFeedback` and its tests |
-| Tenant-configurable definitions | No; per-tenant narrowing only (D16) | Not asked | Registry and enablement model change |
-| Confirmation validity | 300 s default, 900 s maximum, may only shorten (D10) | Not asked | Configuration value only |
+| Browser trust boundary | Display-only browser; server decides and executes everything (research D15) | **Resolved 2026-11-16**: confirmed | Execution model and trusted-input list change; re-plan |
+| What constitutes a tenant | One active tenant per session context (D8) | **Resolved 2026-11-16**: confirmed; the demo may run one active tenant | Context and every store key change; re-plan |
+| Do denied calls reach the model | Only outcome type, category, and field paths (D14) | **Resolved 2026-11-16**: confirmed | Change `toPlannerFeedback` and its tests |
+| Tenant-configurable definitions | No; per-tenant narrowing only (D16) | **Resolved 2026-11-16**: confirmed (narrowing only) | Registry and enablement model change |
+| Confirmation validity | 300 s default, 900 s maximum, may only shorten (D10) | OPTIONAL (confirmation is conditional); value retained | Configuration value only |
 
-Recommended: run `/speckit-clarify` again to settle these before `/speckit-tasks`.
+All five decisions are settled as of 2026-11-16, so none blocks M1.
 
 ## Remaining Risks and Known Limitations
 
@@ -317,9 +371,14 @@ What remains:
 8. **Executor authority** (attention item 4) depends on executor implementations and review.
 9. **Reference host** includes a development-only authentication stub; mitigated by explicit
    opt-in and a production refusal, but it is attack surface in any shared environment.
-10. **Unconfirmed assumptions** above.
+10. **Assumptions** are settled as of 2026-11-16 (see Provisional Decisions).
+11. **Retained but not required code** (confirmation store, extended limiter and replay scenarios,
+    coverage tooling) is not exercised end to end. It MUST NOT be wired into a production path until
+    its trigger exists.
 
 ## Complexity Tracking
 
-No constitution violations to justify, so there are no entries. The five-package split is a
-deliberate enforcement mechanism for Principle III and is explained under **Structure Decision**.
+No constitution violations to justify. The five-package split is a deliberate enforcement mechanism
+for Principle III and is explained under **Structure Decision**. Code already built for Tier B
+(confirmation store) and Tier C (coverage and mutation tooling) work is retained as Future Work; it
+adds no obligation to M1 and is tracked under "Scope and Milestone M1".
