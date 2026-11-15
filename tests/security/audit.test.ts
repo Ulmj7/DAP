@@ -1,0 +1,107 @@
+/**
+ * T081, ATK-AUDIT-01..05 and 07. Each oracle is proven able to FAIL: a good observation passes, and each violation is reported.
+ * The scenarios themselves run against the end-to-end world once it exists (T070); ATK-AUDIT-07 is static and runs now.
+ */
+import { describe, expect, it } from "vitest";
+import type { AuditEvent } from "@dap/contracts";
+import { auditScenarios, verifyProjection } from "@dap/testkit";
+import type { AuditObservation } from "@dap/testkit";
+
+const scenario = (id: string) => auditScenarios.find((entry) => entry.id === id)!;
+const event = (over: Partial<AuditEvent>): AuditEvent => ({ id: "e", occurredAt: "2026-01-01T00:00:00Z", type: "AI_ACTION_PROPOSED", requestId: "r1", decisionId: "r1", tenantId: "t", userId: "u", aiSessionId: "s", turnId: "n", model: "m", actionId: null, definitionVersion: null, paramsView: {}, risk: null, outcome: null, reason: null, confirmationId: null, confirmationState: null, executionResult: null, resource: null, ...over }) as AuditEvent;
+let counter = 0;
+const e = (over: Partial<AuditEvent>) => event({ id: `e${++counter}`, ...over });
+const obs = (over: Partial<AuditObservation>): AuditObservation => ({ feedback: [], executorCalls: 0, auditEvents: [], leakFindings: [], auditWriteFailures: 0, ...over }) as AuditObservation;
+const verify = (id: string, o: AuditObservation) => scenario(id).verify(o);
+
+describe("the audit scenarios exist, with their catalogue ids", () => {
+  it("lists ATK-AUDIT-01..05 and 07", () => {
+    expect(auditScenarios.map((entry) => entry.id)).toEqual(["ATK-AUDIT-01", "ATK-AUDIT-02", "ATK-AUDIT-03", "ATK-AUDIT-04", "ATK-AUDIT-05", "ATK-AUDIT-07"]);
+    for (const entry of auditScenarios) expect(entry.category).toBe("audit-failure");
+  });
+  it("rejects an observation that carries no audit telemetry", () => {
+    expect(scenario("ATK-AUDIT-01").verify({ feedback: [], executorCalls: 0, auditEvents: [], leakFindings: [] })).toEqual(["no audit telemetry was observed"]);
+  });
+});
+
+describe("ATK-AUDIT-01 oracle", () => {
+  const good = obs({ feedback: [{ outcome: "DENIED", category: "try_later" }] });
+  it("passes a denied, unexecuted proposal", () => expect(verify("ATK-AUDIT-01", good)).toEqual([]));
+  it.each([
+    ["the executor ran", { executorCalls: 1 }, "executor ran without a durable allow-event"], ["the planner was told ok", { feedback: [{ outcome: "ALLOWED", category: "ok" }] }, "planner was not told to try later"],
+    ["the planner was told not_available", { feedback: [{ outcome: "DENIED", category: "not_available" }] }, "planner was not told to try later"], ["two answers", { feedback: [{ outcome: "DENIED", category: "try_later" }, { outcome: "DENIED", category: "try_later" }] }, "planner was not told to try later"],
+    ["an allow record exists", { auditEvents: [e({ type: "AI_ACTION_ALLOWED" })] }, "an allow or result record exists although the store failed"], ["a result record exists", { auditEvents: [e({ type: "AI_ACTION_EXECUTED" })] }, "an allow or result record exists although the store failed"],
+  ] as const)("reports: %s", (_name, over, message) => expect(verify("ATK-AUDIT-01", { ...good, ...over } as AuditObservation)).toContain(message));
+});
+
+describe("ATK-AUDIT-02 oracle", () => {
+  const good = obs({ feedback: [{ outcome: "INVALID_ACTION", category: "not_available" }], auditWriteFailures: 1 });
+  it("passes a denial that stood and was counted", () => expect(verify("ATK-AUDIT-02", good)).toEqual([]));
+  it.each([["the executor ran", { executorCalls: 1 }, "executor ran"], ["the denial changed", { feedback: [{ outcome: "DENIED", category: "try_later" }] }, "the denial changed when its record failed"],
+    ["the failure was not counted", { auditWriteFailures: 0 }, "the failed record was not counted"]] as const)("reports: %s", (_name, over, message) => expect(verify("ATK-AUDIT-02", { ...good, ...over } as AuditObservation)).toContain(message));
+});
+
+describe("ATK-AUDIT-03 oracle", () => {
+  const good = obs({ feedback: [{ outcome: "ALLOWED", category: "ok" }], executorCalls: 1, auditWriteFailures: 1, auditEvents: [e({ type: "AI_ACTION_PROPOSED" }), e({ type: "AI_ACTION_ALLOWED" })] });
+  it("passes an executed action whose result record failed", () => expect(verify("ATK-AUDIT-03", good)).toEqual([]));
+  it.each([["not executed", { executorCalls: 0 }, "the action did not run exactly once"], ["executed twice", { executorCalls: 2 }, "the action did not run exactly once"],
+    ["the planner was told try_later", { feedback: [{ outcome: "ALLOWED", category: "try_later" }] }, "the planner did not see the executed result"], ["not counted", { auditWriteFailures: 0 }, "the failed result record was not counted"],
+    ["no allow-event", { auditEvents: [e({ type: "AI_ACTION_PROPOSED" })] }, "the pre-execution allow-event is missing"],
+    ["a result record exists", { auditEvents: [e({ type: "AI_ACTION_ALLOWED" }), e({ type: "AI_ACTION_EXECUTED" })] }, "a result record exists although the store failed for it"]] as const)("reports: %s", (_name, over, message) => expect(verify("ATK-AUDIT-03", { ...good, ...over } as AuditObservation)).toContain(message));
+});
+
+describe("ATK-AUDIT-04 oracle", () => {
+  const group = (request: string, types: AuditEvent["type"][]) => types.map((type) => e({ type, requestId: request, decisionId: request }));
+  const five = (...groups: AuditEvent[][]) => obs({ feedback: groups.map(() => ({ outcome: "DENIED", category: "not_available" })), auditEvents: groups.flat() });
+  const denied = ["AI_ACTION_PROPOSED", "AI_ACTION_DENIED"] as AuditEvent["type"][];
+  const allowed = ["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED", "AI_ACTION_EXECUTED"] as AuditEvent["type"][];
+  it("passes denials and a full allowed path, each tied by its request id", () => expect(verify("ATK-AUDIT-04", five(group("a", denied), group("b", allowed), group("c", ["AI_ACTION_PROPOSED", "AI_POLICY_VIOLATION"])))).toEqual([]));
+  it.each([
+    ["a proposal with no record at all", five(group("a", denied), [], ), "proposals and request ids do not match one to one"],
+    ["no PROPOSED", five(group("a", ["AI_ACTION_DENIED"])), "a: not exactly one PROPOSED, first"],
+    ["PROPOSED twice", five(group("a", ["AI_ACTION_PROPOSED", "AI_ACTION_PROPOSED", "AI_ACTION_DENIED"])), "a: not exactly one PROPOSED, first"],
+    ["PROPOSED after the decision", five(group("a", ["AI_ACTION_DENIED", "AI_ACTION_PROPOSED"])), "a: not exactly one PROPOSED, first"],
+    ["no decision", five(group("a", ["AI_ACTION_PROPOSED"])), "a: not exactly one decision"],
+    ["two decisions", five(group("a", ["AI_ACTION_PROPOSED", "AI_ACTION_DENIED", "AI_RATE_LIMITED"])), "a: not exactly one decision"],
+    ["a stray record beside a decision", five(group("a", ["AI_ACTION_PROPOSED", "AI_ACTION_DENIED", "AI_ACTION_EXECUTED"])), "a: stray records"],
+    ["a result without an allow-event", five(group("a", ["AI_ACTION_PROPOSED", "AI_ACTION_EXECUTED"])), "a: not exactly one decision"],
+  ] as const)("reports: %s", (_name, o, message) => expect(verify("ATK-AUDIT-04", o as AuditObservation)).toContain(message));
+  it("reports a duplicate event id and records whose identity differs", () => {
+    const same = event({ id: "dup", requestId: "a" });
+    expect(verify("ATK-AUDIT-04", obs({ feedback: [{ outcome: "DENIED", category: "not_available" }], auditEvents: [same, { ...same, type: "AI_ACTION_DENIED" }] }))).toContain("duplicate event id");
+    const mixed = [e({ requestId: "a", userId: "u1" }), e({ requestId: "a", userId: "u2", type: "AI_ACTION_DENIED" })];
+    expect(verify("ATK-AUDIT-04", obs({ feedback: [{ outcome: "DENIED", category: "not_available" }], auditEvents: mixed }))).toContain("a: identity differs between records");
+  });
+});
+
+describe("ATK-AUDIT-05 oracle", () => {
+  const fixture = { raw: {}, plain: { "/documentId": "doc-1" }, masked: ["/draft"], canaries: ["UNLISTED_CANARY", "MASKED_CANARY"] };
+  const allowed = (view: Record<string, never | string>) => obs({ projection: fixture, auditEvents: [e({ type: "AI_ACTION_ALLOWED", paramsView: view as never })] });
+  it("passes exactly the listed plain values and the masked markers", () => expect(verifyProjection(allowed({ "/documentId": "doc-1", "/draft": "[masked]" }), fixture)).toEqual([]));
+  it.each([["a masked value recorded", { "/documentId": "doc-1", "/draft": "MASKED_CANARY" }], ["an unlisted value recorded", { "/documentId": "doc-1", "/draft": "[masked]", "/other": "UNLISTED_CANARY" }],
+    ["a plain value missing", { "/draft": "[masked]" }], ["a plain value changed", { "/documentId": "doc-2", "/draft": "[masked]" }], ["the masked marker missing", { "/documentId": "doc-1" }]])("reports: %s", (_name, view) => {
+    expect(verifyProjection(allowed(view as never), fixture).length).toBeGreaterThan(0);
+  });
+  it("reports a canary anywhere else in the trail, and a missing or doubled allow-event", () => {
+    const leaky = obs({ projection: fixture, auditEvents: [e({ type: "AI_ACTION_ALLOWED", paramsView: { "/documentId": "doc-1", "/draft": "[masked]" } }), e({ type: "AI_ACTION_PROPOSED", actionId: "UNLISTED_CANARY" })] });
+    expect(verifyProjection(leaky, fixture)).toContain("an unlisted or masked value reached the audit trail");
+    expect(verifyProjection(obs({}), fixture)).toEqual(["expected exactly one allow-event"]);
+    expect(verifyProjection(obs({ auditEvents: [e({ type: "AI_ACTION_ALLOWED" }), e({ type: "AI_ACTION_ALLOWED" })] }), fixture)).toEqual(["expected exactly one allow-event"]);
+  });
+  it("the scenario reports a missing fixture", () => expect(verify("ATK-AUDIT-05", obs({}))).toEqual(["no projection fixture was observed"]));
+});
+
+describe("ATK-AUDIT-07: the AI layer has no path to an audit reader (runs now: it is static)", () => {
+  it("finds none in the packages/ai manifest or sources", async () => {
+    const observation = await scenario("ATK-AUDIT-07").run({} as never);
+    expect(scenario("ATK-AUDIT-07").verify(observation)).toEqual([]);
+  });
+  it("the oracle reports every offender it is handed", () => {
+    expect(verify("ATK-AUDIT-07", obs({ leakFindings: ["src/x.ts"] }))).toEqual(["the AI layer reaches an audit reader: src/x.ts"]);
+  });
+});
+
+describe("the scenarios against the end-to-end world", () => {
+  for (const entry of auditScenarios.filter((item) => item.id !== "ATK-AUDIT-07")) it.todo(`${entry.id} ${entry.title}: runScenario against the real gateway (needs world.withGateway, T070)`);
+  it.todo("ATK-AUDIT-06 append-only: the application role cannot update, delete or truncate audit rows (PostgreSQL batch, T094)");
+});
