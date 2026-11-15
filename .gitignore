@@ -7,3 +7,4 @@ coverage
 
 # Not part of the project: course material kept next to it
 *.pdf
+.coverage

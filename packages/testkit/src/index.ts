@@ -22,3 +22,5 @@ export * from "./hostile-planner.js";
 export * from "./oracle.js";
 export * from "./attacks/cross-tenant-store.js";
 export * from "./attacks/dependency-failure.js";
+export * from "./attacks/hidden-data.js";
+export * from "./coverage.js";

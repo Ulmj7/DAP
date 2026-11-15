@@ -1,0 +1,10 @@
+{
+  "waivers": [
+    {
+      "actionId": "*",
+      "scenarioId": "ATK-HIDDEN",
+      "justification": "ATK-HIDDEN (hidden-data exposure) is reserved for the client-side privacy feature. This feature ships no client rendering, so there is nothing to attack; the cell stays in the report so a later feature cannot forget it. Revisit when that feature lands.",
+      "reviewedBy": "Tech Lead (Orca workflow); standing waiver named in the catalogue, human sign-off pending"
+    }
+  ]
+}
