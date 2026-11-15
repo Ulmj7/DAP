@@ -66,13 +66,27 @@ export interface AuditEvent {
 }
 
 /**
+ * Cancellation of one append. Structural, so a real `AbortSignal` fits without any DOM library.
+ * `aborted` only ever goes from false to true, and the writer sets it at most once per attempt.
+ */
+export interface AuditAppendOptions {
+  readonly signal?: { readonly aborted: boolean };
+}
+
+/**
  * `append` resolves ONLY after the event is durably committed. A rejected promise means
  * "not recorded". For allowed actions the Gateway then refuses to execute (research D13).
  * For denials the denial stands regardless. `append` MUST be idempotent on `event.id`: a retry of
  * an event that was in fact committed leaves one row (the same id with different content is an error).
+ *
+ * Cancellation: the writer aborts `options.signal` when it gives up on an append (timeout, rejection,
+ * wrong-shaped or late answer). A sink MUST NOT commit after `signal.aborted`: an aborted append that has not
+ * committed must roll back and leave no row. If COMMIT has already been issued the outcome is uncertain
+ * (documented residual risk: the trail may then show an ALLOWED event for a request that was denied and never executed).
+ * A sink that cannot cancel may ignore the second argument.
  */
 export interface AuditSink {
-  append(event: AuditEvent): Promise<void>;
+  append(event: AuditEvent, options?: AuditAppendOptions): Promise<void>;
 }
 
 export interface AuditQuery {

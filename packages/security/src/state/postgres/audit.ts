@@ -12,13 +12,18 @@
  *   level security enforces it again in the database.
  * - FAIL CLOSED: any database failure (connection, timeout, constraint, permission) rejects with a generic error that carries no
  *   driver text, host, database, user or SQL. The audit writer then treats the write as failed (an allow is not executed).
+ * - CANCELLATION: the audit writer aborts `options.signal` when it gives up on an append (timeout and the like). An abandoned append never
+ *   commits: it does not start once the signal is aborted (before a connection is taken and again right after), and inside the transaction the
+ *   signal is read live just before COMMIT, ROLLBACK replacing it when aborted. As a second, independent bound the DATABASE cancels a blocked
+ *   or slow statement itself (`lock_timeout` and `statement_timeout`, `writeTimeoutMs`). Residual risk: once COMMIT has been issued its
+ *   outcome is uncertain if the writer gives up at that moment.
  * - `occurredAt` is stored as given by the event (the host clock reading made by the Gateway's event factory) and comes back as a
  *   normalized UTC instant without losing PostgreSQL microseconds. Finer nonzero fractions are refused, never silently rounded.
  */
 import { z } from "zod";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { AUDIT_EVENT_TYPES, OUTCOMES, REASON_CODES, RISK_LEVELS } from "@dap/contracts";
-import type { AuditEvent, AuditQuery, AuditSink, JsonValue } from "@dap/contracts";
+import type { AuditAppendOptions, AuditEvent, AuditQuery, AuditSink, JsonValue } from "@dap/contracts";
 import { isBuiltAuditEvent } from "../../audit/event-builder.js";
 import { MAX_AUDIT_QUERY_LIMIT } from "../../audit/audit-reader.js";
 import type { AuditEventSource } from "../../audit/audit-reader.js";
@@ -63,8 +68,18 @@ function toEvent(r: Record<string, unknown>): AuditEvent {
   return Object.freeze({ ...event, resource: event.resource === null ? null : Object.freeze(event.resource) }) as unknown as AuditEvent;
 }
 
+export interface PostgresAuditStoreOptions {
+  /** Database-side bound on each statement of an append (lock wait and run time), 1 to 10000 ms. Default 1500: below the writer's default hook timeout of 2000. */
+  readonly writeTimeoutMs?: number;
+}
+const DEFAULT_WRITE_TIMEOUT_MS = 1500;
+
 export class PostgresAuditStore implements AuditSink, AuditEventSource {
-  constructor(private readonly pool: Pool) {
+  private readonly writeTimeoutMs: number;
+  constructor(private readonly pool: Pool, options: PostgresAuditStoreOptions = {}) {
+    const timeout: unknown = options?.writeTimeoutMs === undefined ? DEFAULT_WRITE_TIMEOUT_MS : options.writeTimeoutMs;
+    if (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 10_000) throw new RangeError("Invalid audit write timeout");
+    this.writeTimeoutMs = timeout;
     if (!OBSERVED_POOLS.has(pool)) {
       // pg already removes broken idle clients; an unhandled pool error would otherwise terminate the process.
       pool.on("error", () => {});
@@ -72,27 +87,48 @@ export class PostgresAuditStore implements AuditSink, AuditEventSource {
     }
   }
 
-  async append(event: AuditEvent): Promise<void> {
+  async append(event: AuditEvent, options?: AuditAppendOptions): Promise<void> {
     // Validation errors are the caller's programming errors and name no value; database errors become one generic error.
     if (!isBuiltAuditEvent(event)) throw new TypeError("Only built audit events can be appended");
     const checked = row.safeParse(event);
     if (!checked.success) throw new TypeError("Invalid audit event");
     const e = checked.data;
     const tenantId = e.tenantId.toLowerCase();
+    // Read live every time: the writer may abort at any moment while this append is blocked in the database.
+    const signal: unknown = options?.signal;
+    const abandoned = (): boolean => typeof signal === "object" && signal !== null && Reflect.get(signal, "aborted") === true;
+    let client: PoolClient | undefined;
+    let discard = false;
     try {
-      await withTenant(this.pool, tenantId, async (client) => {
+      if (abandoned()) throw new Error("abandoned");
+      client = await this.pool.connect();
+      if (abandoned()) throw new Error("abandoned"); // nothing has been sent on this connection
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+        // The database bounds a blocked or slow statement by itself, even when nobody aborts.
+        await client.query("SELECT set_config('lock_timeout', $1, true), set_config('statement_timeout', $1, true)", [`${this.writeTimeoutMs}ms`]);
         const inserted = await client.query(
           `INSERT INTO public.sec_audit_events (${COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18,$19,$20,$21) ON CONFLICT (id) DO NOTHING`,
           [e.id, tenantId, e.occurredAt, e.type, e.requestId, e.decisionId, e.userId, e.aiSessionId, e.turnId, e.model, e.actionId, e.definitionVersion, JSON.stringify(e.paramsView satisfies Record<string, JsonValue>),
             e.risk, e.outcome, e.reason, e.confirmationId, e.confirmationState, e.executionResult, e.resource?.type ?? null, e.resource?.id ?? null],
         );
         if (inserted.command !== "INSERT" || (inserted.rowCount !== 0 && inserted.rowCount !== 1)) throw new TypeError("Invalid insert result");
-        if (inserted.rowCount === 1) return;
-        // The id exists: only the very same event is a success. An id held by another tenant is invisible here, so it is not found, and refused.
-        const existing = await client.query(`SELECT ${READ_COLUMNS} FROM public.sec_audit_events WHERE id=$1 AND params_view=$2::jsonb`, [e.id, JSON.stringify(e.paramsView)]);
-        if (existing.rowCount !== 1 || normalized(toEvent(existing.rows[0] as Record<string, unknown>)) !== normalized(e as unknown as AuditEvent)) throw new TypeError("An audit event id cannot be reused with different content");
-      });
+        if (inserted.rowCount === 0) {
+          // The id exists: only the very same event is a success. An id held by another tenant is invisible here, so it is not found, and refused.
+          const existing = await client.query(`SELECT ${READ_COLUMNS} FROM public.sec_audit_events WHERE id=$1 AND params_view=$2::jsonb`, [e.id, JSON.stringify(e.paramsView)]);
+          if (existing.rowCount !== 1 || normalized(toEvent(existing.rows[0] as Record<string, unknown>)) !== normalized(e as unknown as AuditEvent)) throw new TypeError("An audit event id cannot be reused with different content");
+        }
+        // The point of no return: an append the writer has given up on must not become a row. ROLLBACK (in the catch) replaces COMMIT.
+        if (abandoned()) throw new Error("abandoned");
+        const commit = await client.query("COMMIT");
+        if (commit.command !== "COMMIT") throw new Error("not committed");
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { discard = true; }
+        throw error;
+      }
     } catch { throw new Error(UNAVAILABLE); }
+    finally { client?.release(discard); }
   }
 
   /** Full-history source compatibility. Reviewers use queryForTenant, which is bounded in SQL. */

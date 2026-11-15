@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { mintAuthorizationContext } from "@dap/contracts/mint";
 import { createAuditReader } from "../../audit/audit-reader.js";
+import { createAuditWriter } from "../../audit/audit-writer.js";
 import { PostgresAuditStore } from "../postgres/audit.js";
 import { withTenant } from "../postgres/tenant-tx.js";
 import { auditEvent, runAuditConformance } from "./audit.conformance.js";
@@ -180,5 +181,136 @@ describe("T094 PostgreSQL audit store: append-only and tenant isolation at the d
         for (const secret of ["canary_user_x", "canary_pw_x", "canary_db_x", "127.0.0.1", "ECONNREFUSED", "sec_audit_events", "INSERT"]) expect(text, secret).not.toContain(secret);
       }
     } finally { await dead.end().catch(() => undefined); }
+  });
+});
+
+/**
+ * Cancellation (QA #14): an append the writer gave up on must never become a row. These blocks use a targeted blocker, never a table lock, so parallel tests
+ * are not disturbed: another transaction holds an UNCOMMITTED row with the very same event id, and an INSERT of that id waits for that transaction to end.
+ */
+describe("T094 PostgreSQL audit store: an abandoned append never commits", () => {
+  const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const countRows = async (tenantId: string, id: string) => (await withTenant(owner, tenantId, (client) => client.query("SELECT 1 FROM public.sec_audit_events WHERE id=$1", [id]))).rowCount;
+  /** Another session that has inserted the event's id but not committed: until it ends, an insert of the same id waits. */
+  async function blocker(event: ReturnType<typeof auditEvent>) {
+    const client = await owner.connect();
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id',$1,true)", [event.tenantId]);
+    await client.query("INSERT INTO public.sec_audit_events (id,tenant_id,occurred_at,event_type,request_id,decision_id,user_id,ai_session_id,turn_id,model,params_view,outcome,reason) VALUES ($1,$2,now(),'AI_ACTION_DENIED','blocker','d','u','s','t','m','{}','DENIED','permission_missing')", [event.id, event.tenantId]);
+    return { release: async (how: "COMMIT" | "ROLLBACK") => { await client.query(how); client.release(); } };
+  }
+  /** A pool that records every statement each of its connections is asked to run (a SQL spy), and can react to one. */
+  function spied(max: number, after?: (sql: string) => void) {
+    const statements: string[] = [];
+    const pool = new Pool({ connectionString: process.env.DAP_DATABASE_URL, max, connectionTimeoutMillis: 5000 });
+    pool.on("connect", (client) => {
+      const original = client.query.bind(client) as (...args: unknown[]) => unknown;
+      (client as unknown as { query: unknown }).query = (...args: unknown[]) => {
+        const sql = typeof args[0] === "string" ? args[0] : "";
+        statements.push(sql);
+        const result = original(...args);
+        return after === undefined || !(result instanceof Promise) ? result : result.then((value) => { after(sql); return value; });
+      };
+    });
+    return { pool, statements };
+  }
+  const generic = async (promise: Promise<unknown>) => {
+    const error = await promise.then(() => undefined, (thrown: unknown) => thrown as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error!.message).toBe("Audit store unavailable");
+    return error!;
+  };
+
+  it("success path is unaffected: with a signal that is never aborted it commits once, and replaying the event is a no-op", async () => {
+    const t = randomUUID(); const event = auditEvent(t); const signal = { aborted: false };
+    const store = new PostgresAuditStore(app);
+    await store.append(event, { signal }); await store.append(event, { signal });
+    expect(signal.aborted).toBe(false);
+    expect(await store.listForTenant(t)).toEqual([event]);
+    await store.append(auditEvent(t), undefined); // no options at all still works
+  });
+
+  it("aborted before it starts: no connection is used and NO statement is ever sent, even after the pool frees up", async () => {
+    const { pool, statements } = spied(1);
+    try {
+      const t = randomUUID(); const event = auditEvent(t); const signal = { aborted: false };
+      const store = new PostgresAuditStore(pool);
+      const held = await pool.connect(); // the pool's only connection: the append has to wait for it
+      const before = statements.length;
+      const waiting = generic(store.append(event, { signal }));
+      await settle(50);
+      signal.aborted = true; // the writer gave up while the append was still waiting for a connection
+      held.release();
+      await waiting;
+      expect(statements.length).toBe(before); // not even BEGIN
+      expect(await countRows(t, event.id)).toBe(0);
+      // the same store works afterwards (the connection went back to the pool, not lost)
+      await store.append(auditEvent(t), { signal: { aborted: false } });
+      expect(statements.length).toBeGreaterThan(before);
+      // and an append whose signal is already aborted never takes a connection at all
+      const mark = statements.length;
+      await generic(store.append(auditEvent(t), { signal: { aborted: true } }));
+      expect(statements.length).toBe(mark);
+    } finally { await pool.end(); }
+  });
+
+  it("aborted after the INSERT and before COMMIT: ROLLBACK replaces COMMIT and no row exists (deterministic: the signal flips right after the INSERT returns)", async () => {
+    const signal = { aborted: false };
+    const { pool, statements } = spied(2, (sql) => { if (sql.startsWith("INSERT")) signal.aborted = true; });
+    try {
+      const t = randomUUID(); const event = auditEvent(t);
+      await generic(new PostgresAuditStore(pool).append(event, { signal }));
+      expect(statements.some((sql) => sql.startsWith("INSERT"))).toBe(true); // it really got that far
+      expect(statements).toContain("ROLLBACK");
+      expect(statements).not.toContain("COMMIT");
+      expect(await countRows(t, event.id)).toBe(0);
+    } finally { await pool.end(); }
+  });
+
+  it("a signal that flips while the append is blocked in the database is honored when the block ends: the INSERT completes, sees the flag and rolls back", async () => {
+    const t = randomUUID(); const event = auditEvent(t); const signal = { aborted: false };
+    const hold = await blocker(event);
+    const pending = generic(new PostgresAuditStore(app, { writeTimeoutMs: 10_000 }).append(event, { signal }));
+    await settle(150);
+    signal.aborted = true;
+    await hold.release("ROLLBACK"); // the blocked INSERT now proceeds
+    await pending;
+    expect(await countRows(t, event.id)).toBe(0);
+  });
+
+  it("the database bounds a blocked append by itself: with NO signal and writeTimeoutMs of 150 it is cancelled by the database, generically, and no row follows the release", async () => {
+    const t = randomUUID(); const event = auditEvent(t);
+    const hold = await blocker(event);
+    const started = Date.now();
+    const error = await generic(new PostgresAuditStore(app, { writeTimeoutMs: 150 }).append(event));
+    expect(Date.now() - started).toBeLessThan(1500); // bounded by the database, not by waiting for the blocker
+    expect(`${error.message} ${error.stack ?? ""}`).not.toMatch(/lock_timeout|statement_timeout|canceling|sec_audit_events/);
+    await hold.release("ROLLBACK");
+    await settle(100);
+    expect(await countRows(t, event.id)).toBe(0);
+  });
+
+  it("validates writeTimeoutMs: an integer from 1 to 10000", () => {
+    for (const bad of [0, -1, 1.5, 10_001, NaN, Infinity, "100", null]) expect(() => new PostgresAuditStore(app, { writeTimeoutMs: bad as number }), String(bad)).toThrow(RangeError);
+    for (const good of [1, 1500, 10_000]) expect(() => new PostgresAuditStore(app, { writeTimeoutMs: good })).not.toThrow();
+  });
+
+  it("through the writer, retried: attempt 1 is abandoned (and rolls back), attempt 2 uses a new signal and the same event, and exactly one row exists", async () => {
+    const t = randomUUID(); const event = auditEvent(t, { type: "AI_ACTION_ALLOWED", outcome: "ALLOWED", reason: "allowed" });
+    const hold = await blocker(event);
+    const seen: { aborted: boolean }[] = [];
+    const store = new PostgresAuditStore(app, { writeTimeoutMs: 10_000 });
+    const sink = { append: (e: typeof event, options?: { signal?: { aborted: boolean } }) => { seen.push(options!.signal!); return store.append(e, options); } };
+    const writer = createAuditWriter({ sink }, { attempts: 2, hookTimeoutMs: 300 });
+    const result = writer.recordAllowedDurably(event);
+    await settle(400); // attempt 1 gave up at 300 ms and attempt 2 is waiting on the same blocker
+    await hold.release("ROLLBACK");
+    expect(await result).toEqual({ ok: true });
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).not.toBe(seen[1]);
+    expect(seen[0]!.aborted).toBe(true);
+    expect(seen[1]!.aborted).toBe(false);
+    expect(await countRows(t, event.id)).toBe(1);
+    expect(await store.listForTenant(t)).toEqual([event]);
   });
 });

@@ -8,7 +8,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
-import type { AuditEvent, AuditSink } from "@dap/contracts";
+import type { AuditAppendOptions, AuditEvent, AuditSink } from "@dap/contracts";
 import { PostgresAuditStore, createAuditReader } from "@dap/security";
 import { ALICE, SECRET_CANARIES, TENANT_A, TENANT_B, WIDE_GATEWAY_CONFIG, secretFindings, withGateway } from "@dap/testkit";
 import type { GatewayWorld, WorldUser } from "@dap/testkit";
@@ -68,7 +68,7 @@ describe("P2 chain B: a genuine PostgreSQL write failure fails closed and execut
     try {
       let current: AuditSink = new PostgresAuditStore(broken);
       const attempted: AuditEvent[] = [];
-      const { world } = fresh({ append: (event: AuditEvent) => { attempted.push(event); return current.append(event); } }, { mediumConfirmationJustification: JUSTIFICATION });
+      const { world } = fresh({ append: (event: AuditEvent, options?: AuditAppendOptions) => { attempted.push(event); return current.append(event, options); } }, { mediumConfirmationJustification: JUSTIFICATION });
       let mutations = 0;
       world.executor("testMediumDraft").onRun(() => { mutations++; });
       expect(world.deps.registry.get("testMediumDraft" as never)!.definition.changesState).toBe(true);
@@ -101,13 +101,13 @@ describe("P2 chain B: a genuine PostgreSQL write failure fails closed and execut
     const attempted: AuditEvent[] = [];
     let locked = false;
     await locker.query("BEGIN");
-    const sink: AuditSink = { append: async (event) => {
+    const sink: AuditSink = { append: async (event, options) => {
       attempted.push(event);
       if (event.type === "AI_ACTION_ALLOWED" && !locked) {
         await locker.query("LOCK TABLE public.sec_audit_events IN ACCESS EXCLUSIVE MODE");
         locked = true;
       }
-      const writing = store.append(event); writes.push(writing); return writing;
+      const writing = store.append(event, options); writes.push(writing); return writing;
     } };
     const { world } = fresh(sink, { mediumConfirmationJustification: JUSTIFICATION, config: { ...WIDE_GATEWAY_CONFIG, hookTimeoutMs: 50, proposalBudgetMs: 200 } });
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -124,6 +124,11 @@ describe("P2 chain B: a genuine PostgreSQL write failure fails closed and execut
     // A timeout is not cancellation: this must stay empty even after the database lock is released.
     const rows = await rowsOf(TENANT_A, [...new Set(attempted.map((event) => event.requestId))]);
     expect(rows.filter((row) => row.event_type === "AI_ACTION_ALLOWED" || row.event_type === "AI_ACTION_EXECUTED")).toEqual([]);
+    // Every attempted event is accounted for: one request; a PROPOSED that committed, the ALLOWED that was abandoned, and the audit_unavailable denial the Gateway then
+    // tried to record (also under the lock, also abandoned). So PROPOSED is the only row of the request.
+    expect(new Set(attempted.map((event) => event.requestId)).size).toBe(1);
+    expect(attempted.map((event) => event.type)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED", "AI_ACTION_DENIED"]);
+    expect(rows.map((row) => row.event_type)).toEqual(["AI_ACTION_PROPOSED"]);
   });
 
   it("a denial still stands when only the denial's own record fails: the planner hears the denial, not the failure", async () => {

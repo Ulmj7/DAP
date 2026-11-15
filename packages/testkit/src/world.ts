@@ -7,6 +7,7 @@
  * FakeClock so the world is fully deterministic.
  */
 import type {
+  AuditAppendOptions,
   AuditSink,
   ActionId,
   AuditEvent,
@@ -430,7 +431,7 @@ export function withGateway(options: GatewayWorldOptions = {}): GatewayWorld {
         confirmations: { create: unused, get: unused, listPending: unused, tryAccept: unused, tryReject: unused, invalidate: unused, recordExecution: unused } as never,
         ping: async () => true,
       },
-      audit: { append: through("audit", { append: async (event: AuditEvent) => { if (options.auditSink !== undefined) await options.auditSink.append(event); await audit.append(event); } }, "append") as never },
+      audit: { append: through("audit", { append: async (event: AuditEvent, appendOptions?: AuditAppendOptions) => { if (options.auditSink !== undefined) await options.auditSink.append(event, appendOptions); await audit.append(event); } }, "append") as never },
       confirmationChannel: { deliver: unused },
       clock: { now: through("clock", { now: () => clock.now() }, "now") as never },
       ids, config,

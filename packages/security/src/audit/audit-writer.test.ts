@@ -59,7 +59,7 @@ describe("a healthy sink", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]!.event).toBe(event);
     expect(seen[0]!.receiver).toBe(sink);
-    expect(seen[0]!.count).toBe(1);
+    expect(seen[0]!.count).toBe(2); // the event and the abandonment options, nothing else
   });
 
   it("returns frozen results", async () => {
@@ -228,6 +228,83 @@ describe("retries never duplicate rows", () => {
   it("accepts 1 and 5 attempts", () => {
     expect(() => createAuditWriter({ sink: new InMemoryAuditStore() }, { attempts: 1 })).not.toThrow();
     expect(() => createAuditWriter({ sink: new InMemoryAuditStore() }, { attempts: 5 })).not.toThrow();
+  });
+});
+
+describe("the abandonment signal: an append the writer gave up on is told so, and a confirmed commit is never aborted", () => {
+  /** A sink that records the signal of every call and the value of `aborted` at the end of each, and answers as `answer` says. */
+  function spy(answer: (call: number, event: AuditEvent) => unknown) {
+    const calls: { options: { signal?: { aborted: boolean } } | undefined; event: AuditEvent }[] = [];
+    const sink = { append: (event: AuditEvent, options?: { signal?: { aborted: boolean } }) => { calls.push({ event, options }); return answer(calls.length, event); } } as unknown as AuditSink;
+    return { calls, sink };
+  }
+  it("passes the sink an options object with a signal that starts not aborted", async () => {
+    const { calls, sink } = spy(async () => undefined);
+    expect(await createAuditWriter({ sink }).recordAllowedDurably(allowed())).toEqual({ ok: true });
+    expect(calls).toHaveLength(1);
+    expect(Object.keys(calls[0]!.options!)).toEqual(["signal"]);
+    expect(typeof calls[0]!.options!.signal!.aborted).toBe("boolean");
+  });
+  it("does NOT abort after a confirmed commit, for every kind of record", async () => {
+    const { calls, sink } = spy(async () => undefined);
+    const writer = createAuditWriter({ sink });
+    await writer.recordProposed(proposed()); await writer.recordDecision(denied()); await writer.recordAllowedDurably(allowed()); await writer.recordExecuted(executed());
+    expect(calls).toHaveLength(4);
+    for (const call of calls) expect(call.options!.signal!.aborted).toBe(false);
+  });
+  it("aborts on a timeout (the append is still pending when the writer gives up)", async () => {
+    const timer = new ManualTimer();
+    const { calls, sink } = spy(() => new Promise(() => {}));
+    const pending = createAuditWriter({ sink }, { timer, hookTimeoutMs: 50 }).recordAllowedDurably(allowed());
+    await flush();
+    expect(calls[0]!.options!.signal!.aborted).toBe(false); // not before the writer gives up
+    timer.advance(50);
+    expect(await pending).toEqual({ ok: false, reason: "audit_unavailable" });
+    expect(calls[0]!.options!.signal!.aborted).toBe(true);
+  });
+  it("aborts on a late answer: the commit that arrives after the deadline is already told to roll back", async () => {
+    const timer = new ManualTimer();
+    let release!: () => void;
+    const { calls, sink } = spy(() => new Promise<void>((resolve) => { release = resolve; }));
+    const pending = createAuditWriter({ sink }, { timer, hookTimeoutMs: 50 }).recordAllowedDurably(allowed());
+    await flush(); timer.advance(50); release();
+    expect(await pending).toEqual({ ok: false, reason: "audit_unavailable" });
+    expect(calls[0]!.options!.signal!.aborted).toBe(true);
+  });
+  it.each<[string, () => unknown]>([["a rejection", () => Promise.reject(new Error("x"))], ["a synchronous throw", () => { throw new Error("x"); }], ["a wrong-shaped answer", () => Promise.resolve("committed")], ["a non-promise answer", () => "committed"]])("aborts on %s", async (_name, answer) => {
+    const { calls, sink } = spy(answer);
+    expect(await createAuditWriter({ sink }).recordAllowedDurably(allowed())).toEqual({ ok: false, reason: "audit_unavailable" });
+    expect(calls[0]!.options!.signal!.aborted).toBe(true);
+  });
+  it("a sink that ignores the second argument works exactly as before", async () => {
+    const store = new InMemoryAuditStore();
+    const ignoring: AuditSink = { append: async (event) => { await store.append(event); } };
+    expect(await createAuditWriter({ sink: ignoring }).recordAllowedDurably(allowed())).toEqual({ ok: true });
+    expect(store.size).toBe(1);
+  });
+  it("a retry gets a NEW signal and the SAME event: the abandoned first attempt stays aborted, the committed second never is, and there is one row", async () => {
+    const store = new InMemoryAuditStore();
+    const timer = new ManualTimer();
+    const { calls, sink } = spy((call, event) => call === 1 ? new Promise(() => {}) : store.append(event));
+    const pending = createAuditWriter({ sink }, { attempts: 2, timer, hookTimeoutMs: 20 }).recordAllowedDurably(allowed());
+    await flush(); timer.advance(20); await flush();
+    expect(await pending).toEqual({ ok: true });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.event).toBe(calls[1]!.event);
+    expect(calls[0]!.options!.signal).not.toBe(calls[1]!.options!.signal);
+    expect([calls[0]!.options!.signal!.aborted, calls[1]!.options!.signal!.aborted]).toEqual([true, false]);
+    expect(store.size).toBe(1);
+  });
+  it("a sink that honors the signal never commits an abandoned append (the in-memory model of the PostgreSQL rule)", async () => {
+    const store = new InMemoryAuditStore();
+    const timer = new ManualTimer();
+    let release!: () => void;
+    const honoring: AuditSink = { append: async (event, options) => { await new Promise<void>((resolve) => { release = resolve; }); if (options?.signal?.aborted === true) throw new Error("rolled back"); await store.append(event); } };
+    const pending = createAuditWriter({ sink: honoring }, { timer, hookTimeoutMs: 50 }).recordAllowedDurably(allowed());
+    await flush(); timer.advance(50); release();
+    expect(await pending).toEqual({ ok: false, reason: "audit_unavailable" });
+    await flush();
+    expect(store.size).toBe(0);
   });
 });
 

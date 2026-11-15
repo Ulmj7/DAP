@@ -14,10 +14,14 @@
  * `min(hookTimeoutMs, what is left of the proposal budget)`. With `attempts` above 1 a failed append is retried with the SAME event
  * (the same id), so a sink that is idempotent on `event.id` never ends up with two rows even when the first attempt did commit.
  *
+ * Every attempt passes the sink an abandonment signal (`AuditAppendOptions.signal`) and aborts it when the attempt did not end in a confirmed commit,
+ * so a sink that is still working (a blocked statement) rolls back instead of committing an event the Gateway has already treated as not recorded.
+ * It is never aborted after a confirmed commit.
+ *
  * Only events made by `buildAuditEvent` are written: anything else is refused without touching the sink, counted as a failure.
  * Nothing here throws, and no error text (which could hold anything) is kept or forwarded.
  */
-import type { AuditEvent, AuditEventType, AuditSink } from "@dap/contracts";
+import type { AuditAppendOptions, AuditEvent, AuditEventType, AuditSink } from "@dap/contracts";
 import { assertTimeout } from "../gateway/deadline.js";
 import { wrapHook, type HookOptions } from "../gateway/hook-wrapper.js";
 import type { ProposalBudget } from "../gateway/pipeline.js";
@@ -55,7 +59,7 @@ export function createAuditWriter(
   // The sink method is read once and keeps the host's receiver.
   const appended: unknown = sink?.append;
   if (typeof appended !== "function") throw new TypeError("Missing audit sink");
-  const append = appended as (this: AuditSink, event: AuditEvent) => unknown;
+  const append = appended as (this: AuditSink, event: AuditEvent, options: AuditAppendOptions) => unknown;
   const count = safeTelemetry(telemetry);
 
   /** True only when the event was durably committed. Never throws. */
@@ -66,8 +70,11 @@ export function createAuditWriter(
         const left = budget === undefined ? Number.POSITIVE_INFINITY : Math.floor(budget.remainingMs());
         // (A spent budget would also fail inside wrapHook, whose timeout must be at least 1; the check just avoids the call.)
         if (!(left >= 1)) return false;
-        const committed = await wrapHook((candidate: AuditEvent) => Reflect.apply(append, sink, [candidate]), "void", { hookTimeoutMs: Math.min(hookTimeoutMs, left), ...(timer === undefined ? {} : { timer }) })(event);
+        // One signal per attempt: a sink that is still working when the writer gives up is told so, and must then not commit.
+        const controller = new AbortController();
+        const committed = await wrapHook((candidate: AuditEvent) => Reflect.apply(append, sink, [candidate, { signal: controller.signal }]), "void", { hookTimeoutMs: Math.min(hookTimeoutMs, left), ...(timer === undefined ? {} : { timer }) })(event);
         if (committed.ok) return true;
+        controller.abort();
       }
       return false;
     } catch { return false; }
