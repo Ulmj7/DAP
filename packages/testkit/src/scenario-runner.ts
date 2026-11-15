@@ -18,7 +18,7 @@ import type {
   ProposalCall,
   RecordingExecutor,
 } from "@dap/contracts";
-import { InMemoryAuditSink } from "./audit-capture.js";
+import type { InMemoryAuditSink } from "./audit-capture.js";
 import { snapshotData } from "./snapshot.js";
 import { LeakScanner } from "./leak-scanner.js";
 import { OUTCOMES } from "@dap/contracts";
@@ -36,7 +36,7 @@ export interface ScenarioTarget extends CapabilityTraits {
   /** Recording executor that proves whether execution ever happened. */
   readonly executor: RecordingExecutor;
   /** In-memory audit sink capturing every event the pipeline wrote. */
-  readonly audit: InMemoryAuditSink;
+  readonly audit: Pick<InMemoryAuditSink, "events">;
   /** Anything else the planner can see (raw echoes, reflected errors, ...). */
   readonly visibleOutput: unknown;
 }
@@ -58,7 +58,7 @@ export async function runScenario(
   scenario: AttackScenario,
   target: ScenarioTarget,
   scanner = new LeakScanner(),
-): Promise<AttackObservation> {
+): Promise<AttackObservation & { readonly foreignDisplayNames?: readonly string[] }> {
   const submitted: PlannerFeedback[] = [];
   const findings = new Set<string>();
   const scan = (value: unknown): void => {
@@ -69,7 +69,8 @@ export async function runScenario(
   let auditEvents: AttackObservation["auditEvents"] = [];
   let failed = false;
   let executor: RecordingExecutor | undefined;
-  let audit: InMemoryAuditSink | undefined;
+  let audit: Pick<InMemoryAuditSink, "events"> | undefined;
+  let foreignDisplayNames: readonly string[] | undefined;
   try {
     const { actionId, risk, changesState, targetsResource, requiresConfirmation, planner, submit } = target;
     executor = target.executor;
@@ -86,8 +87,24 @@ export async function runScenario(
         throw new Error("Unreadable planner output");
       }
     };
+    const capture = <T>(read: () => T): T => {
+      try { return snapshotData(read()); }
+      catch { failed = true; findings.add("runner-error:$"); throw new TypeError("Unreadable scenario control"); }
+    };
+    const executorView: RecordingExecutor = Object.freeze({
+      get calls() { return capture(() => executor!.calls); },
+      get grantsSeen() { return capture(() => executor!.grantsSeen); },
+      get receivedParams() { return capture(() => executor!.receivedParams); },
+    });
+    const auditView = Object.freeze({ get events() { return capture(() => audit!.events); } });
+    if (Reflect.has(target, "foreignDisplayNames")) {
+      const names: unknown = capture(() => Reflect.get(target, "foreignDisplayNames"));
+      if (!Array.isArray(names) || names.length === 0 || !names.every((name: unknown) => typeof name === "string" && name.length > 0)) throw new TypeError("Missing planted names");
+      foreignDisplayNames = names as readonly string[];
+    }
     const base = {
-      actionId, risk, changesState, targetsResource, requiresConfirmation, planner, executor, audit,
+      actionId, risk, changesState, targetsResource, requiresConfirmation,
+      planner: Object.freeze({ script: capture(() => planner.script) }), executor: executorView, audit: auditView,
       get visibleOutput() { return visibleOutput(); },
       async submit(call: ProposalCall): Promise<PlannerFeedback> {
         let response: unknown;
@@ -103,17 +120,18 @@ export async function runScenario(
         return captured;
       },
     };
-    // The controls a scenario drives beyond a plain target (PrivilegeTarget, TenantAttackTarget: `setPermissionAnswer`, `resourceProposal`, ...)
-    // are handed through as they are. They cannot replace the guarded members above, and every submission still goes through the guarded `submit`.
-    const extras: PropertyDescriptorMap = {};
-    for (const key of Reflect.ownKeys(target)) {
-      if (Object.prototype.hasOwnProperty.call(base, key)) continue;
-      const value: unknown = Reflect.get(target, key);
-      extras[key] = typeof value === "function"
-        ? { enumerable: true, value: (...args: unknown[]): unknown => Reflect.apply(value, target, args) }
-        : { enumerable: true, get: (): unknown => Reflect.get(target, key) };
+    // Only the attack target interfaces' controls cross this boundary; never arbitrary world or mint handles.
+    for (const key of ["validProposal", "setPermissionAnswer", "setReportedPage", "expireSession", "resourceProposal", "setResourceAnswer", "foreignResource", "foreignDisplayNames"] as const) {
+      if (!Reflect.has(target, key)) continue;
+      if (key === "foreignDisplayNames") {
+        Object.defineProperty(base, key, { enumerable: true, get: () => capture(() => Reflect.get(target, key)) });
+      } else {
+        const control: unknown = Reflect.get(target, key);
+        if (typeof control !== "function") throw new TypeError("Invalid scenario control");
+        Object.defineProperty(base, key, { enumerable: true, value: Object.freeze((...args: unknown[]): unknown => capture(() => Reflect.apply(control, target, args))) });
+      }
     }
-    const observedTarget: ScenarioTarget = Object.freeze(Object.defineProperties(base, extras));
+    const observedTarget: ScenarioTarget = Object.freeze(base);
     try {
       const report: unknown = await scenario.run(observedTarget);
       if (!report || typeof report !== "object") throw new TypeError("Invalid observation");
@@ -156,8 +174,8 @@ export async function runScenario(
       else combined.push(item);
     }
     if (failed) combined.unshift(failureFeedback());
-    return snapshotData({ feedback: combined, executorCalls, auditEvents, leakFindings: [...findings] });
+    return snapshotData({ feedback: combined, executorCalls, auditEvents, leakFindings: [...findings], ...(foreignDisplayNames === undefined ? {} : { foreignDisplayNames }) });
   } catch {
-    return snapshotData({ feedback: [failureFeedback()], executorCalls, auditEvents, leakFindings: [...findings, "runner-error:$"] });
+    return snapshotData({ feedback: [failureFeedback()], executorCalls, auditEvents, leakFindings: [...findings, "runner-error:$"], ...(foreignDisplayNames === undefined ? {} : { foreignDisplayNames }) });
   }
 }

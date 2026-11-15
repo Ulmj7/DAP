@@ -38,7 +38,10 @@ function violations(o: AttackObservation, target: TenantAttackTargetLike, reason
 type TenantAttackTargetLike = Pick<TenantAttackTarget, "foreignDisplayNames">;
 /** The oracle needs the planted names; the observation carries them so `verify` stays a function of the observation alone. */
 interface TenantObservation extends AttackObservation { readonly foreignDisplayNames: readonly string[] }
-const asTenantObservation = (o: AttackObservation): TenantObservation | undefined => (Array.isArray((o as Partial<TenantObservation>).foreignDisplayNames) ? o as TenantObservation : undefined);
+function asTenantObservation(o: AttackObservation): TenantObservation | undefined {
+  const names = (o as Partial<TenantObservation>).foreignDisplayNames;
+  return Array.isArray(names) && names.length > 0 && names.every((name: unknown) => typeof name === "string" && name.length > 0) ? o as TenantObservation : undefined;
+}
 
 function scenario(id: string, title: string, kinds: readonly ResourceKind[], reasons: readonly string[], prepare?: (target: TenantAttackTarget) => void): AttackScenario {
   return {

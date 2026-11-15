@@ -18,6 +18,13 @@ const FOREIGN = TENANT_B_RESOURCES.map((resource) => resource.displayName);
 const obs = (over: Partial<AttackObservation> & { foreignDisplayNames?: readonly string[] }): AttackObservation => ({ feedback: [generic, generic], executorCalls: 0, auditEvents: [], leakFindings: [], foreignDisplayNames: FOREIGN, ...over }) as AttackObservation;
 const decisions = (...reasons: string[]) => reasons.map((reason, index) => event({ id: `d${index}`, reason: reason as ReasonCode }));
 
+it("the canary oracle requires nonempty world expectations, not an empty or malformed list", () => {
+  for (const names of [[], [""], [1]]) {
+    const observation = obs({ auditEvents: decisions("resource_not_available", "resource_not_available"), foreignDisplayNames: names as never });
+    expect(scenario("ATK-XTENANT-01").verify(observation)).toContain("no foreign display names were observed");
+  }
+});
+
 describe("the scenarios", () => {
   it("are ATK-XTENANT-01..04, in order, of category cross-tenant", () => {
     expect(crossTenantScenarios.map((entry) => entry.id)).toEqual(["ATK-XTENANT-01", "ATK-XTENANT-02", "ATK-XTENANT-03", "ATK-XTENANT-04"]);
@@ -176,21 +183,18 @@ const B_ALICE: WorldUser = { tenant: "B", user: ALICE };
 const RESOURCE_CAPABILITIES = ["testMediumDraft", "testHighPublish", "testCriticalDelete"] as const;
 const KINDS = ["other-tenant", "nonexistent", "same-tenant-unauthorized"] as const;
 
-/** runScenario returns only feedback, executor calls, audit events and findings; the oracle also needs the names planted in the other tenant, which the world (not the scenario) states. */
-const withNames = (world: GatewayWorld, observation: AttackObservation): AttackObservation => ({ ...observation, foreignDisplayNames: world.foreignDisplayNames("A") }) as AttackObservation;
-
 describe("the scenarios against the REAL gateway, through withGateway() (T073, REQUIRED: ATK-XTENANT-01..03)", () => {
   describe.each(RESOURCE_CAPABILITIES)("%s", (actionId) => {
     it("ATK-XTENANT-01 runScenario: another tenant's resource and a nonexistent one get the same bytes, recorded as resource_not_available, executor at zero", async () => {
       const world = withGateway({ config: WIDE });
-      const observation = withNames(world, await runScenario(scenario("ATK-XTENANT-01"), world.targetFor(actionId, A_ALICE)));
+      const observation = await runScenario(scenario("ATK-XTENANT-01"), world.targetFor(actionId, A_ALICE));
       expect(scenario("ATK-XTENANT-01").verify(observation)).toEqual([]);
       expect(observation.feedback.map((item) => JSON.stringify(item))).toEqual([NOT_AVAILABLE_BYTES, NOT_AVAILABLE_BYTES]);
       expect(world.executorCalls()).toBe(0);
     });
     it("ATK-XTENANT-02 runScenario: a same-tenant resource the user may not use looks exactly like another tenant's", async () => {
       const world = withGateway({ config: WIDE });
-      const observation = withNames(world, await runScenario(scenario("ATK-XTENANT-02"), world.targetFor(actionId, A_ALICE)));
+      const observation = await runScenario(scenario("ATK-XTENANT-02"), world.targetFor(actionId, A_ALICE));
       expect(scenario("ATK-XTENANT-02").verify(observation)).toEqual([]);
       expect(world.executorCalls()).toBe(0);
     });
