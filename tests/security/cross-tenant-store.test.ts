@@ -1,0 +1,38 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Pool } from "pg";
+import { assertCrossTenantStores, FakeResourceAuthorizer, LeakScanner, TENANT_A, TENANT_B, ALICE, ctx, testCrossTenantCanary } from "@dap/testkit";
+
+let app: Pool; let owner: Pool;
+beforeAll(async () => {
+  if (!process.env.DAP_DATABASE_URL || !process.env.DAP_MIGRATE_DATABASE_URL) throw new Error("ATK-XTENANT-05 requires DAP_DATABASE_URL and DAP_MIGRATE_DATABASE_URL; start postgres and run npm run db:migrate (no silent skip)");
+  app = new Pool({ connectionString: process.env.DAP_DATABASE_URL, max: 1, connectionTimeoutMillis: 2000 });
+  owner = new Pool({ connectionString: process.env.DAP_MIGRATE_DATABASE_URL, max: 1, connectionTimeoutMillis: 2000 });
+  expect((await app.query("SELECT current_user AS name,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user")).rows).toEqual([{ name: "dap_app", rolsuper: false, rolbypassrls: false }]);
+  expect((await owner.query("SELECT current_user AS name")).rows).toEqual([{ name: "dap_owner" }]);
+});
+afterAll(async () => { await Promise.all([app?.end(), owner?.end()]); });
+
+describe("T124 store and resource isolation", () => {
+  it("ATK-XTENANT-05 discovers EVERY sec_* table, forced RLS, positive B read, A/no-setting invisibility, and forbidden B write", async () => {
+    const a = randomUUID(); const b = randomUUID();
+    const report = await assertCrossTenantStores(app, { tenantA: a, tenantB: b });
+    expect(report.tables.length).toBeGreaterThan(0);
+    const catalog = await owner.query("SELECT n.nspname AS schema,c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p') AND c.relname LIKE 'sec\\_%' ESCAPE '\\' AND n.nspname NOT IN ('pg_catalog','information_schema') ORDER BY n.nspname,c.relname");
+    expect(report.tables).toEqual(catalog.rows.map((row) => `${row.schema}.${row.name}`));
+    expect(report.violations).toEqual([]);
+  });
+  it("ATK-XTENANT-10 foreign resource display-name canary is absent from A's host answer", async () => {
+    const host = new FakeResourceAuthorizer();
+    const { resource, canary } = testCrossTenantCanary(TENANT_B);
+    host.registerResource(TENANT_B, resource.ref, resource);
+    const foreign = await host.resolve(ctx(TENANT_A, ALICE), resource.ref, "perm.read" as never);
+    const own = await host.resolve(ctx(TENANT_B, ALICE), resource.ref, "perm.read" as never);
+    expect(foreign).toBeNull();
+    expect(own?.displayName).toBe(canary);
+    const scanner = new LeakScanner({ canaries: [canary] });
+    expect(scanner.scan(foreign)).toEqual([]);
+    expect(scanner.scan(own).some((item) => item.kind === "canary")).toBe(true);
+  });
+  it.todo("ATK-XTENANT-10 real gateway response/audit for foreign resource never contains display-name canary; needs authorize/resource/audit stages");
+});
