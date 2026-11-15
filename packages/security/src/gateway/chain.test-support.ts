@@ -1,6 +1,6 @@
 /**
  * A whole proposal chain for tests: the real context, intake, resolve, validate, authorize, audit and execute stages and the real
- * decision auditor, with pass-through stand-ins for stage 7 (risk) and confirmation, which do not exist yet, and for rate_limit and replay, which exist but are covered by their own tests (these chains exercise audit and execute), a
+ * decision auditor, with the real risk and confirmation stages (T104a) and pass-through stand-ins only for rate_limit and replay, which are covered by their own tests (these chains exercise audit and execute). `confirmedStandIns` replaces risk and confirmation for a test that deliberately needs a class the real stage 7 stops, a
  * recording executor behind `defineExecutor`, and an audit sink that can be made to fail.
  */
 import { z } from "zod";
@@ -72,9 +72,12 @@ export function chain(options: ChainOptions = {}) {
     clock: { now: (options.clock ?? (() => options.now ?? "2026-01-01T00:00:00Z")) as () => IsoInstant }, config: { ...base.config, ...options.config },
   };
   const pass: PolicyStage = () => ({ kind: "continue", data: {} });
-  /** Stand-ins for the D6 positions that are not built yet (risk, confirmation) or are tested elsewhere (rate_limit, replay), reporting the facts the real stages will. Tests only: the real gateway has no stage 7. */
+  /** Stand-ins for the positions tested elsewhere (rate_limit, replay). Tests only. */
   const standIns: StageMap = {
     rate_limit: pass, replay: pass,
+  };
+  /** Pass-through risk and confirmation stages, for the tests that deliberately need a class the real stage 7 would stop (a confirmed HIGH, bent facts). */
+  const confirmedStandIns: StageMap = {
     risk: (request) => ({ kind: "continue", data: { risk: (request.facts.resolve as { risk: string }).risk, confirmation: "not_required" } }),
     confirmation: () => ({ kind: "continue", data: { state: "not_required", confirmationId: null } }),
   };
@@ -89,7 +92,7 @@ export function chain(options: ChainOptions = {}) {
   }
   const text = (params: unknown, action = "openProject") => JSON.stringify({ action, params });
   const events = async (): Promise<readonly AuditEvent[]> => store.listForTenant(TENANT);
-  return { definition, registry, deps, executorCalls, store, faults, sinkCalls, hostCalls, standIns, built, pipelineWith, submitter, text, events, ctx: context(), run };
+  return { definition, registry, deps, executorCalls, store, faults, sinkCalls, hostCalls, standIns, confirmedStandIns, built, pipelineWith, submitter, text, events, ctx: context(), run };
 }
 export type Chain = ReturnType<typeof chain>;
 export const feedbackOf = async (world: Chain, params: unknown, action = "openProject", overrides: StageMap = {}): Promise<PlannerFeedback> =>

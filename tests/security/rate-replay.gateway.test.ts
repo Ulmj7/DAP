@@ -8,37 +8,39 @@ const raw = { action: "testSafeEcho", params: { message: "benign" } };
 const call = (callId: string, params = raw.params) => ({ callId, raw: { ...raw, params } });
 const unavailable = { outcome: "DENIED", category: "not_available" };
 const retry = { outcome: "DENIED", category: "try_later" };
+const allowed = { outcome: "ALLOWED", category: "ok" };
+const confirm = { outcome: "REQUIRES_CONFIRMATION", category: "needs_user_confirmation" };
 function configured(limits: Record<string, unknown>) { return validateGatewayConfig({ ...DEFAULT_GATEWAY_CONFIG, limits: { ...DEFAULT_GATEWAY_CONFIG.limits, ...limits } }); }
 
-describe("T107 real gateway replay through stage 6 (no ALLOWED stand-in)", () => {
+describe("T107 real gateway replay through the whole chain (no stand-ins)", () => {
   it("ATK-REPLAY-01/08 duplicate and corrected proposals cannot reuse a consumed claim", async () => {
     const h = gatewaySequence();
-    expect(await h.target.submitAs(actor(), call("first"))).toEqual(retry);
-    expect(h.permissions).toBe(1); // a positive stage-3 control, then the missing risk stage denies
+    expect(await h.target.submitAs(actor(), call("first"))).toEqual(allowed);
+    expect(h.permissions).toBe(1); // a positive stage-3 control: the first claim proceeds all the way and executes once
     expect(await h.target.submitAs(actor(), call("first"))).toEqual(unavailable);
     expect(await h.target.submitAs(actor(), call("corrected", {} as never))).toMatchObject({ outcome: "INVALID_PARAMETERS" });
     expect(await h.target.submitAs(actor(), call("corrected"))).toEqual(unavailable);
     expect(h.claims.map((item) => item.answer)).toEqual(["claimed", "duplicate", "claimed", "duplicate"]);
-    expect(h.permissions).toBe(1); expect(h.target.executor.calls).toBe(0);
+    expect(h.permissions).toBe(1); expect(h.target.executor.calls).toBe(1); // only the first, un-replayed proposal ever executed
   });
   it("ATK-REPLAY-03 50 parallel submissions across two instances: exactly one passes stage 3", async () => {
     const h = gatewaySequence({ config: configured({ proposalsPerTurn: 100, perUserPerMinute: { limit: 100, windowSeconds: 60 } }) });
     const answers = await Promise.all(Array.from({ length: 50 }, (_, index) => h.target.submitAs(actor({ instance: index % 2 ? 1 : 2 }), call("parallel"))));
     expect(answers.filter((item) => item.category === "not_available")).toHaveLength(49);
-    expect(answers.filter((item) => item.category === "try_later")).toHaveLength(1);
+    expect(answers.filter((item) => item.outcome === "ALLOWED")).toHaveLength(1);
     expect(h.claims.filter((item) => item.answer === "claimed")).toHaveLength(1);
-    expect(h.permissions).toBe(1); expect(h.target.executor.calls).toBe(0);
+    expect(h.permissions).toBe(1); expect(h.target.executor.calls).toBe(1); // exactly one execution for 50 submissions of one callId
   });
   it("ATK-REPLAY-07 model-supplied envelope ids are rejected without claiming the host id", async () => {
     const h = gatewaySequence();
     expect(await h.target.submitAs(actor(), { callId: "host", raw: { ...raw, callId: "model-id", requestId: "model-request" } })).toMatchObject({ outcome: "INVALID_ACTION" });
     expect(h.claims).toEqual([]);
-    expect(await h.target.submitAs(actor(), call("host"))).toEqual(retry);
+    expect(await h.target.submitAs(actor(), call("host"))).toEqual(allowed);
     expect(h.claims).toMatchObject([{ key: "session-1:host", answer: "claimed" }]);
   });
   it("ATK-XTENANT-06 same ids claim independently in different minted tenants", async () => {
     const h = gatewaySequence();
-    for (const tenant of ["A", "B"] as const) expect(await h.target.submitAs(actor({ tenant }), call("same"))).toEqual(retry);
+    for (const tenant of ["A", "B"] as const) expect(await h.target.submitAs(actor({ tenant }), call("same"))).toEqual(allowed);
     expect(h.claims.map((item) => item.tenantId)).toEqual([h.tenants.A, h.tenants.B]);
     expect(h.claims.map((item) => item.answer)).toEqual(["claimed", "claimed"]);
     expect(h.permissions).toBe(2);
@@ -51,23 +53,31 @@ describe("T107 PostgreSQL replay through actual gateway instances", () => {
   afterAll(async () => { await Promise.all([app?.end(), owner?.end()]); });
   it("ATK-REPLAY-02 a newly constructed gateway on the same PostgreSQL store still rejects replay", async () => {
     const h = gatewaySequence({ replay: new PostgresReplayGuard(app) });
-    expect(await h.target.submitAs(actor(), call("persisted"))).toEqual(retry);
+    expect(await h.target.submitAs(actor(), call("persisted"))).toEqual(allowed);
     h.restart(1);
     expect(await h.target.submitAs(actor(), call("persisted"))).toEqual(unavailable);
     expect(h.claims.map((item) => item.answer)).toEqual(["claimed", "duplicate"]);
-    expect(h.permissions).toBe(1); expect(h.target.executor.calls).toBe(0);
+    expect(h.permissions).toBe(1); expect(h.target.executor.calls).toBe(1); // the replay after the restart did not execute again
   });
 });
 
-describe("T108 real gateway rate controls through stage 6", () => {
-  it("ATK-RATE-01 10000 proposals make bounded shared-store calls; execution remains unreachable", async () => {
+describe("T108 real gateway rate controls through the whole chain", () => {
+  it("ATK-RATE-01 10000 proposals make bounded shared-store calls; executions stay bounded by the proposal and capability limits", async () => {
     const h = gatewaySequence();
-    for (let index = 0; index < 10000; index++) expect(await h.target.submitAs(actor(), call(`flood-${index}`))).toEqual(retry);
+    const answers: unknown[] = [];
+    for (let index = 0; index < 10000; index++) answers.push(await h.target.submitAs(actor(), call(`flood-${index}`)));
+    // Allowed proposals stop at the per-user, per-capability quota (the first limit reached); everything after it is denied.
+    const cap = h.config.limits.perUserPerCapabilityPerMinute.limit;
+    expect(answers.filter((answer) => JSON.stringify(answer) === JSON.stringify(allowed))).toHaveLength(cap);
+    expect(answers.filter((answer) => JSON.stringify(answer) === JSON.stringify(retry))).toHaveLength(10000 - cap);
     expect(h.claims).toHaveLength(25); expect(h.permissions).toBe(25);
     expect(h.target.sharedStoreCalls).toBeLessThanOrEqual(160);
     expect(h.target.audit.events.some((event) => event.type === "AI_RATE_LIMITED" && event.reason === "rate_limited_turn")).toBe(true);
-    expect(h.target.executor.calls).toBe(0);
+    expect(h.target.executor.calls).toBe(cap);
   }, 30000);
+  // Found when ALLOWED became reachable: Limiter.claimExecution (executionsPerTurn, default 8) is not called by any stage, so the catalogue's
+  // "executions at most the per-turn cap" is not enforced yet; the run above executes up to the capability quota instead.
+  it.todo("ATK-RATE-01 executions in one turn never exceed limits.executionsPerTurn (needs claimExecution wired before execute: decision for the lead)");
   it("ATK-RATE-05 counted limiter denials cross the throttle; local denials add no throttle writes", async () => {
     const h = gatewaySequence({ config: configured({ perUserPerMinute: { limit: 1, windowSeconds: 60 } }) });
     for (let index = 0; index < 7; index++) await h.target.submitAs(actor({ turn: `turn-${index}` }), call(`denial-${index}`));
@@ -87,7 +97,7 @@ describe("T108 real gateway rate controls through stage 6", () => {
       expect(h.target.audit.events.at(-1)).toMatchObject({ type: "AI_RATE_LIMITED", reason: "denial_throttle" });
       expect(h.permissions).toBe(0);
       // Only that AI session is blocked; the same user in a new session proceeds to stage 6.
-      expect(await h.target.submitAs(actor({ session: "other-session", turn: "t" }), call("other"))).toEqual(retry);
+      expect(await h.target.submitAs(actor({ session: "other-session", turn: "t" }), call("other"))).toEqual(allowed);
       expect(h.permissions).toBe(1);
     }
     const replays = gatewaySequence();
@@ -112,15 +122,15 @@ describe("T108 real gateway rate controls through stage 6", () => {
   it("ATK-RATE-02/03 user and capability quotas emit the matching rate denial", async () => {
     for (const [control, reason] of [["perUserPerMinute", "rate_limited_user"], ["perUserPerCapabilityPerMinute", "rate_limited_capability"]] as const) {
       const h = gatewaySequence({ config: configured({ [control]: { limit: 1, windowSeconds: 60 } }) });
-      expect(await h.target.submitAs(actor(), call("quota-first"))).toEqual(retry);
+      expect(await h.target.submitAs(actor(), call("quota-first"))).toEqual(allowed);
       expect(await h.target.submitAs(actor(), call("quota-next"))).toEqual(retry);
       expect(h.target.audit.events.at(-1)).toMatchObject({ type: "AI_RATE_LIMITED", reason });
-      expect(h.target.executor.calls).toBe(0);
+      expect(h.target.executor.calls).toBe(1); // only the first proposal ever executed
     }
   });
   it("ATK-RATE-04 HIGH and CRITICAL share a per-user risk quota after authorization", async () => {
     const h = gatewaySequence({ config: configured({ highRiskPerUserPerHour: { limit: 1, windowSeconds: 3600 } }) });
-    expect(await h.target.submitAs(actor(), { callId: "high", raw: { action: "testHighPublish", params: { documentId: "doc-1", audience: ["team"] } } })).toEqual(retry);
+    expect(await h.target.submitAs(actor(), { callId: "high", raw: { action: "testHighPublish", params: { documentId: "doc-1", audience: ["team"] } } })).toEqual(confirm);
     expect(await h.target.submitAs(actor(), { callId: "critical", raw: { action: "testCriticalDelete", params: { documentId: "doc-1" } } })).toEqual(retry);
     expect(h.target.audit.events.at(-1)).toMatchObject({ type: "AI_RATE_LIMITED", reason: "rate_limited_risk" });
     expect(h.permissions).toBe(2); expect(h.target.executor.calls).toBe(0);

@@ -4,7 +4,7 @@ import { bindExecutors, buildRegistry, createPolicyGateway, createSecurityContex
 import { ALL_TEST_CAPABILITIES, FakeClock, IdGenerator, InMemoryAuditSink, RecordingExecutor } from "@dap/testkit";
 import type { Actor, LimiterFault, SequenceTarget } from "../../packages/testkit/src/attacks/sequence-scenario.js";
 
-/** REAL gateway through stage 6. No risk/confirmation/audit-allow/execute replacement is installed. */
+/** REAL gateway, every stage (T104a made ALLOWED reachable for SAFE and LOW). No stage is replaced. */
 export function gatewaySequence(options: { config?: GatewayConfig; replay?: ReplayGuard } = {}) {
   const clock = new FakeClock("2099-01-01T00:00:00Z");
   const tenants = { A: randomUUID() as TenantId, B: randomUUID() as TenantId };

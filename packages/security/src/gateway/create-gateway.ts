@@ -18,6 +18,7 @@ import { createAuditWriter } from "../audit/audit-writer.js";
 import { createDecisionAuditor } from "./decision-auditor.js";
 import type { GatewayTelemetry } from "./telemetry.js";
 import { createAuditStage } from "./stages/audit.js";
+import { createNoConfirmationStage, createRiskGateStage } from "./stages/risk-gate.js";
 import { createExecuteStage } from "./stages/execute.js";
 import { createAuthorizeStage } from "./stages/authorize.js";
 import { createValidateStage } from "./stages/validate.js";
@@ -99,9 +100,10 @@ function createGatewayLimiter(deps: GatewayDependencies): Limiter {
 }
 
 /**
- * The D6 stages implemented so far, bound to the captured dependencies, and the runner's auditor. Positions not listed stay absent
- * (rate_limit, replay, risk, confirmation), and the pipeline denies fail-closed at the first absent one, so `ALLOWED` is not yet reachable
- * through the real gateway. Exported for tests only; not part of the package surface.
+ * The D6 stages, bound to the captured dependencies, and the runner's auditor: context, intake, rate_limit, replay, resolve, validate, authorize,
+ * risk (stage 7, the deterministic risk decision), confirmation (records that none was needed; the confirmation service replaces it), audit and
+ * execute. `ALLOWED` is reachable for the classes that need no confirmation; a class that does is stopped at risk with `REQUIRES_CONFIRMATION`.
+ * Exported for tests only; not part of the package surface.
  */
 export function assemble(deps: GatewayDependencies, extras: GatewayExtras = {}, limiter: Limiter = createGatewayLimiter(deps)): { readonly stages: StageMap; readonly auditor: DecisionAuditor } {
   const options = { hookTimeoutMs: deps.config.hookTimeoutMs };
@@ -119,6 +121,8 @@ export function assemble(deps: GatewayDependencies, extras: GatewayExtras = {}, 
       resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),
       validate: createValidateStage(deps.registry, caps),
       authorize: createAuthorizeStage({ registry: deps.registry, permissions: deps.hooks.permissions, resources: deps.hooks.resources, pages: deps.hooks.pages, clock: deps.clock, limiter }, options),
+      risk: createRiskGateStage({ registry: deps.registry, ids: deps.ids }),
+      confirmation: createNoConfirmationStage(),
       audit: createAuditStage({ registry: deps.registry, events, writer }),
       execute: createExecuteStage({ registry: deps.registry, executors: deps.executors, events, writer, ...telemetry }),
     },

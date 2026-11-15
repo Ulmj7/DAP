@@ -1,7 +1,7 @@
 /**
  * T090: ALLOWED is bound. Through the real chain, bend each fact the allow decision rests on (action, version, risk, digest, confirmation
  * id, resource) and the proposal is DENIED with the executor at zero calls, whichever stage is the one that sees the disagreement.
- * Also: through the real gateway, where rate_limit, replay and the risk and confirmation stages do not exist yet, ALLOWED stays unreachable.
+ * Also: a pipeline whose stage 7 is absent still fails closed, and the real gateway's telemetry sees the allowed decision.
  */
 import { describe, expect, it, vi } from "vitest";
 import type { AuditEvent } from "@dap/contracts";
@@ -74,14 +74,13 @@ describe("the untampered chain is the only one that executes", () => {
   });
 });
 
-describe("through the real gateway ALLOWED is not reachable yet", () => {
-  it("is denied fail-closed at the absent stage 7 (risk), records the proposal and the denial, and never executes", async () => {
+describe("an absent stage 7 and the real gateway's telemetry", () => {
+  it("a pipeline with no risk stage is denied fail-closed at it, records the proposal and the denial, and never executes", async () => {
     const world = chain();
-    const gateway = createPolicyGateway(world.deps);
-    const feedback = await gateway.proposals.forSession(context(), run).submit({ callId: "c", raw: world.text({ projectId: "p1" }) });
+    const feedback = await world.submitter({ risk: undefined as never }).submit({ callId: "c", raw: world.text({ projectId: "p1" }) });
     expect(feedback).toEqual(TRY_LATER);
     expect(world.executorCalls).toHaveLength(0);
-    // The real chain now runs rate limit, replay, resolve, validate and authorize (permission and resource checks) and stops at the absent stage 7.
+    // The chain still ran authorize (permission and resource checks) before it reached the absent stage.
     expect(world.hostCalls).toEqual(["has", "resolve"]);
     const events = await world.events();
     expect(types(events)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_DENIED"]);
@@ -93,10 +92,10 @@ describe("through the real gateway ALLOWED is not reachable yet", () => {
     const world = chain();
     const gateway = createPolicyGateway(world.deps, { telemetry: { decision: (sample) => { seen.push(sample); } } });
     await gateway.proposals.forSession(context(), run).submit({ callId: "c", raw: world.text({ projectId: "p1" }) });
-    // The proposal now gets as far as authorize, so the decision is attributed to the resolved action and its risk.
-    expect(seen).toEqual([{ outcome: "DENIED", reason: "dependency_failure", risk: "SAFE", action: "openProject" }]);
+    // The real chain now allows a SAFE capability, so the host's telemetry counts an ALLOWED decision attributed to the resolved action.
+    expect(seen).toEqual([{ outcome: "ALLOWED", reason: "allowed", risk: "SAFE", action: "openProject" }]);
     const hostile = createPolicyGateway(world.deps, { telemetry: { decision: () => { throw new Error("CANARY"); } } });
-    expect(await hostile.proposals.forSession(context(), run).submit({ callId: "c2", raw: world.text({ projectId: "p1" }) })).toEqual(TRY_LATER);
+    expect(await hostile.proposals.forSession(context(), run).submit({ callId: "c2", raw: world.text({ projectId: "p1" }) })).toEqual({ outcome: "ALLOWED", category: "ok" });
   });
 
   it("a sink that fails changes neither the decision nor the executor count", async () => {

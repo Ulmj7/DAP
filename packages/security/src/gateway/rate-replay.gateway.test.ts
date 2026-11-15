@@ -13,12 +13,12 @@ function world() {
   const stages = composeStages(wired);
   return { wired, calls, stages, checks: () => checks };
 }
-describe("T117 real composed stages 0..6", () => {
-  it("reaches authorize through real rate/replay and still fails closed at missing risk", async () => {
+describe("T117 real composed stages", () => {
+  it("reaches audit through real rate/replay, authorize, risk and confirmation, and still fails closed there (the fixture's audit sink is unavailable)", async () => {
     const w = world(); const decision = await createPipeline(w.stages).run(input());
-    expect(decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "risk" });
+    expect(decision).toMatchObject({ outcome: "DENIED", reason: "audit_unavailable", stage: "audit" });
     expect(w.checks()).toBe(1); expect(w.calls()).toBe(0);
-    expect(Object.keys(w.stages).sort()).toEqual(["audit", "authorize", "context", "execute", "intake", "rate_limit", "replay", "resolve", "validate"]);
+    expect(Object.keys(w.stages).sort()).toEqual(["audit", "authorize", "confirmation", "context", "execute", "intake", "rate_limit", "replay", "resolve", "risk", "validate"]);
     expect(await createPolicyGateway(w.wired).proposals.forSession(context(), run).submit({ callId: "other", raw: { action: "viewProject", params: {} } })).toEqual({ outcome: "DENIED", category: "try_later" });
     expect(w.calls()).toBe(0);
   });
