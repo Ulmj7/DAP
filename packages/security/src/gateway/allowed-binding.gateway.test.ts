@@ -118,8 +118,8 @@ describe("how the gateway wires its audit pieces", () => {
   it("counts a result record that could not be dated through the host's telemetry", async () => {
     const failures: string[] = [];
     let reads = 0;
-    // Readings: context stage, PROPOSED record, authorize stage, allow-event record, then the result record, which fails.
-    const world = chain({ telemetry: { auditWriteFailed: (kind) => { failures.push(kind); } }, clock: () => { reads += 1; if (reads === 5) throw new Error("clock down"); return "2026-01-01T00:00:00Z"; } });
+    // Readings: context stage, PROPOSED record, authorize stage, the execution-slot claim, allow-event record, then the result record, which fails.
+    const world = chain({ telemetry: { auditWriteFailed: (kind) => { failures.push(kind); } }, clock: () => { reads += 1; if (reads === 6) throw new Error("clock down"); return "2026-01-01T00:00:00Z"; } });
     const feedback = await submit(world, {});
     expect(feedback).toEqual({ outcome: "ALLOWED", category: "ok" });
     expect(failures).toEqual(["executed"]);
@@ -131,7 +131,7 @@ describe("how the gateway wires its audit pieces", () => {
     try {
       let reads = 0;
       // The allow-event's date never arrives: it must be cut off after hookTimeoutMs, not the 2000 ms default.
-      const world = chain({ config: { hookTimeoutMs: 30 }, clock: () => { reads += 1; return reads === 4 ? new Promise(() => {}) : "2026-01-01T00:00:00Z"; } });
+      const world = chain({ config: { hookTimeoutMs: 30 }, clock: () => { reads += 1; return reads === 5 ? new Promise(() => {}) : "2026-01-01T00:00:00Z"; } });
       let settled = false;
       const pending = submit(world, {}).then((feedback) => { settled = true; return feedback; });
       await vi.advanceTimersByTimeAsync(29);

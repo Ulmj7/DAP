@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuditEvent } from "@dap/contracts";
 import { chain } from "./chain.test-support.js";
-import { context } from "./fixtures.test-support.js";
+import { context, dependencies } from "./fixtures.test-support.js";
 
 interface Answer { attempted: string | null; verdict: string; reason: string | null; by: string; resource: string | null }
 /** The reviewer's reading of one request's records: nothing but events. */
@@ -21,7 +21,9 @@ function explain(group: readonly AuditEvent[]): Answer {
 describe("SC-008: twenty mixed actions, answered from events alone", () => {
   it("what was attempted, why it was allowed or denied, who authorized it and what changed", async () => {
     let permitted = true;
-    const world = chain({ permission: () => permitted });
+    // Six executions in one turn: the cap (the fixture's is 5) is raised so that this test is about the trail, not about the cap.
+    const limits = { ...dependencies().deps.config.limits, executionsPerTurn: 20 };
+    const world = chain({ permission: () => permitted, config: { limits } });
     const who = `${context().tenantId}/${context().userId}`;
     const ok = (id: string): [string, Answer] => [world.text({ projectId: id }), { attempted: "openProject", verdict: "executed:success", reason: "allowed", by: who, resource: `project:${id}` }];
     const denied = (raw: string, attempted: string | null, reason: string, type = "AI_ACTION_DENIED"): [string, Answer] => [raw, { attempted, verdict: type, reason, by: who, resource: null }];

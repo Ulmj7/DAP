@@ -62,22 +62,28 @@ describe("T107 PostgreSQL replay through actual gateway instances", () => {
 });
 
 describe("T108 real gateway rate controls through the whole chain", () => {
-  it("ATK-RATE-01 10000 proposals make bounded shared-store calls; executions stay bounded by the proposal and capability limits", async () => {
+  it("ATK-RATE-01 10000 proposals make bounded shared-store calls; executions stop at the per-turn execution cap", async () => {
     const h = gatewaySequence();
     const answers: unknown[] = [];
     for (let index = 0; index < 10000; index++) answers.push(await h.target.submitAs(actor(), call(`flood-${index}`)));
-    // Allowed proposals stop at the per-user, per-capability quota (the first limit reached); everything after it is denied.
-    const cap = h.config.limits.perUserPerCapabilityPerMinute.limit;
+    // Allowed proposals stop at the per-turn execution cap (8 by default); everything after it is denied. (The capability quota is 20.)
+    const cap = h.config.limits.executionsPerTurn;
     expect(answers.filter((answer) => JSON.stringify(answer) === JSON.stringify(allowed))).toHaveLength(cap);
     expect(answers.filter((answer) => JSON.stringify(answer) === JSON.stringify(retry))).toHaveLength(10000 - cap);
     expect(h.claims).toHaveLength(25); expect(h.permissions).toBe(25);
-    expect(h.target.sharedStoreCalls).toBeLessThanOrEqual(160);
+    expect(h.target.sharedStoreCalls).toBeLessThanOrEqual(160 + cap); // the earlier bound plus one shared hit per execution; still independent of the 10000
     expect(h.target.audit.events.some((event) => event.type === "AI_RATE_LIMITED" && event.reason === "rate_limited_turn")).toBe(true);
     expect(h.target.executor.calls).toBe(cap);
   }, 30000);
-  // Found when ALLOWED became reachable: Limiter.claimExecution (executionsPerTurn, default 8) is not called by any stage, so the catalogue's
-  // "executions at most the per-turn cap" is not enforced yet; the run above executes up to the capability quota instead.
-  it.todo("ATK-RATE-01 executions in one turn never exceed limits.executionsPerTurn (needs claimExecution wired before execute: decision for the lead)");
+  it("ATK-RATE-02/03 the per-capability quota still bites when the execution cap is raised above it", async () => {
+    const h = gatewaySequence({ config: configured({ executionsPerTurn: 50, proposalsPerTurn: 100, denialThrottle: { denials: 1000, windowSeconds: 60, blockSeconds: 60 } }) });
+    const answers: unknown[] = [];
+    for (let index = 0; index < 30; index++) answers.push(await h.target.submitAs(actor(), call(`quota-${index}`)));
+    const quota = h.config.limits.perUserPerCapabilityPerMinute.limit; // 20
+    expect(answers.filter((answer) => JSON.stringify(answer) === JSON.stringify(allowed))).toHaveLength(quota);
+    expect(h.target.executor.calls).toBe(quota);
+    expect(h.target.audit.events.at(-1)).toMatchObject({ type: "AI_RATE_LIMITED", reason: "rate_limited_capability" });
+  });
   it("ATK-RATE-05 counted limiter denials cross the throttle; local denials add no throttle writes", async () => {
     const h = gatewaySequence({ config: configured({ perUserPerMinute: { limit: 1, windowSeconds: 60 } }) });
     for (let index = 0; index < 7; index++) await h.target.submitAs(actor({ turn: `turn-${index}` }), call(`denial-${index}`));

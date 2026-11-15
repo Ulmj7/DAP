@@ -22,14 +22,18 @@ class ManualTimer implements HookTimer {
   clearTimeout(handle: unknown): void { this.pending.delete(handle as number); }
   advance(ms: number): void { this.time += ms; for (const [id, entry] of [...this.pending]) if (entry.at <= this.time) { this.pending.delete(id); entry.callback(); } }
 }
-function build(options: { clock?: () => unknown; timer?: HookTimer } = {}) {
+const ALLOW = { allowed: true } as const;
+function build(options: { clock?: () => unknown; timer?: HookTimer; claim?: (input: unknown) => unknown } = {}) {
   const world: Chain = chain();
+  const claims: unknown[] = [];
+  const limiter = { claimExecution: async (input: unknown) => { claims.push(input); return options.claim === undefined ? ALLOW : options.claim(input); }, recordDenial: async () => ({ recorded: true as const, throttled: false }) };
   const clock = options.clock === undefined ? world.deps.clock : { now: options.clock as never };
   const stage = createAuditStage({
     registry: world.registry, events: createAuditEventFactory({ clock }, options.timer === undefined ? {} : { timer: options.timer }),
     writer: createAuditWriter({ sink: world.deps.audit }, options.timer === undefined ? {} : { timer: options.timer }),
-  }) as PolicyStage;
-  return { world, stage };
+    limiter: limiter as never,
+  }, options.timer === undefined ? {} : { timer: options.timer }) as PolicyStage;
+  return { world, stage, claims };
 }
 const stopOf = (result: unknown) => result as { kind: string; decision: Record<string, unknown>; data: Record<string, unknown> };
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
@@ -79,6 +83,67 @@ describe("a consistent proposal is recorded durably, then continues with the bin
   });
 });
 
+describe("the execution slot (bounded execution, Constitution XV)", () => {
+  const denial = (reason: string, limit: string, countsTowardThrottle = false) => ({ allowed: false, outcome: "DENIED", reason, limit, retryAfterSeconds: null, countsTowardThrottle });
+
+  it("claims exactly one slot for the minted scope, session and turn, before anything is written, and then records the allow-event", async () => {
+    const { world, stage, claims } = build({ claim: () => { expect(world.sinkCalls).toHaveLength(0); return ALLOW; } });
+    const request = recordOf(goodFacts(world));
+    const result = stopOf(await stage(request));
+    expect(result.kind).toBe("continue");
+    expect(claims).toEqual([{ scope: request.context, aiSessionId: request.run.aiSessionId, turnId: request.run.turnId }]);
+    expect(world.sinkCalls).toHaveLength(1);
+  });
+
+  it.each([["rate_limited_turn", "turn_executions"]])("a refused slot (%s) is the limiter's own denial at the audit stage: nothing is written", async (reason, limit) => {
+    const { world, stage, claims } = build({ claim: () => denial(reason, limit) });
+    const result = stopOf(await stage(recordOf(goodFacts(world))));
+    expect(result.kind).toBe("stop");
+    expect(result.decision).toMatchObject({ outcome: "DENIED", reason, stage: "audit" });
+    expect(claims).toHaveLength(1);
+    expect(world.sinkCalls).toHaveLength(0);
+  });
+
+  it.each([
+    ["throws", () => { throw new Error("CANARY limiter"); }], ["answers nothing", () => undefined], ["answers a string", () => "yes"], ["answers allowed with extra data", () => ({ allowed: true, extra: 1 })],
+    ["answers a denial without a limit", () => ({ allowed: false, outcome: "DENIED", reason: "rate_limited_turn" })], ["answers an unknown reason", () => denial("because", "turn_executions")],
+  ])("a limiter that %s is a dependency_failure: nothing is written and nothing runs", async (_name, claim) => {
+    const { world, stage } = build({ claim });
+    const result = stopOf(await stage(recordOf(goodFacts(world))));
+    expect(result.decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "audit" });
+    expect(world.sinkCalls).toHaveLength(0);
+    expect(JSON.stringify(result)).not.toContain("CANARY");
+  });
+
+  it("a limiter that never answers is cut off at the proposal's remaining budget", async () => {
+    const timer = new ManualTimer();
+    const { world, stage } = build({ timer, claim: () => new Promise(() => {}) });
+    const pending = Promise.resolve(stage(recordOf(goodFacts(world), { budget: { remainingMs: () => 50 } })));
+    await flush();
+    timer.advance(50);
+    expect(stopOf(await pending).decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
+    expect(world.sinkCalls).toHaveLength(0);
+  });
+
+  it("consumes no slot when the facts are not a consistent allowed proposal", async () => {
+    const { world, stage, claims } = build();
+    const bent = bend(goodFacts(world), "validate", { paramsDigest: "not-a-digest" });
+    expect(stopOf(await stage(recordOf(bent))).decision).toMatchObject({ reason: "dependency_failure" });
+    expect(stopOf(await stage(recordOf(without(goodFacts(world), "risk")))).decision).toMatchObject({ reason: "dependency_failure" });
+    expect(stopOf(await stage(recordOf(goodFacts(world), { context: null }))).decision).toMatchObject({ reason: "dependency_failure" });
+    expect(claims).toHaveLength(0);
+  });
+
+  it("never refunds: an audit sink that fails after the claim still leaves the slot spent, and a second proposal claims a second one", async () => {
+    const { world, stage, claims } = build();
+    world.faults.all = true;
+    expect(stopOf(await stage(recordOf(goodFacts(world)))).decision).toMatchObject({ reason: "audit_unavailable" });
+    expect(claims).toHaveLength(1);
+    await stage(recordOf(goodFacts(world)));
+    expect(claims).toHaveLength(2);
+  });
+});
+
 describe("no durable record, no execution", () => {
   const faults: [string, (world: Chain) => void][] = [
     ["a sink that throws", (w) => { w.faults.all = true; }],
@@ -104,11 +169,12 @@ describe("no durable record, no execution", () => {
     expect(stopOf(await pending).decision).toMatchObject({ outcome: "DENIED", reason: "audit_unavailable" });
   });
 
-  it("an exhausted proposal budget is audit_unavailable and the sink is never called", async () => {
-    const { world, stage } = build();
+  it("an exhausted proposal budget is denied before an execution slot can be claimed (dependency_failure), and the sink is never called", async () => {
+    const { world, stage, claims } = build();
     const result = stopOf(await stage(recordOf(goodFacts(world), { budget: { remainingMs: () => 0 } })));
-    expect(result.decision).toMatchObject({ outcome: "DENIED", reason: "audit_unavailable" });
+    expect(result.decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
     expect(world.sinkCalls).toHaveLength(0);
+    expect(claims).toHaveLength(0);
   });
 
   it.each([["throws", () => { throw new Error("CANARY clock"); }], ["answers the wrong shape", () => "yesterday"], ["answers undefined", () => undefined]])("a clock that %s cannot date the record: audit_unavailable, sink untouched", async (_name, clock) => {

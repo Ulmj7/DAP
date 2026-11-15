@@ -1,11 +1,14 @@
 import type { ActionRegistry } from "@dap/contracts";
+import type { Limiter } from "../../limits/limiter.js";
 import { isMintedContext } from "@dap/contracts/mint";
 import type { AuditWriter } from "../../audit/audit-writer.js";
 import type { AuditEventFactory } from "../../audit/event-factory.js";
 import { projectParams } from "../../audit/projection.js";
 import { denyDecision } from "../decision.js";
+import type { HookOptions } from "../hook-wrapper.js";
 import type { PolicyStage } from "../pipeline.js";
 import { readAllowFacts } from "./allow-facts.js";
+import { createLimitGate } from "./limit-gate.js";
 import { provenDefinition } from "./registered.js";
 
 /**
@@ -17,9 +20,21 @@ import { provenDefinition } from "./registered.js";
  * `DENIED` with `audit_unavailable`, and nothing is executed. On success it publishes
  * `facts.audit = { eventId, actionId, version, risk, paramsDigest, confirmationId }`: the binding it actually wrote, which the execute
  * stage re-checks against every other fact. Facts that are missing or disagree are a `dependency_failure`.
+ *
+ * Before anything is written, this stage claims ONE execution slot of the turn (`Limiter.claimExecution`, `executionsPerTurn`: bounded execution,
+ * Constitution XV). It is the first thing done once the facts are proven consistent, so only a proposal that has passed authorization, risk and
+ * confirmation spends a slot; proposals rejected by those earlier stages never do. A refusal is the limiter's own verdict through the same gate as the other limits (the
+ * rate-limit reason, one AI_RATE_LIMITED event from the decision auditor, counted toward the denial throttle as the limiter says); a limiter that
+ * is down is a `dependency_failure`. Either way nothing is written and nothing runs. The slot is never given back: a later failure of the audit
+ * write or of the executor does not refund it, and a retry is a new proposal that needs a new slot.
  */
-export function createAuditStage({ registry, events, writer }: { readonly registry: ActionRegistry; readonly events: AuditEventFactory; readonly writer: AuditWriter }): PolicyStage {
+export function createAuditStage({ registry, events, writer, limiter }: {
+  readonly registry: ActionRegistry; readonly events: AuditEventFactory; readonly writer: AuditWriter;
+  readonly limiter: Pick<Limiter, "claimExecution" | "recordDenial">;
+}, options: HookOptions = {}): PolicyStage {
   const get = registry.get.bind(registry);
+  const claimExecution = limiter.claimExecution.bind(limiter);
+  const limitGate = createLimitGate(limiter, options);
   return async (request) => {
     const ids = { decisionId: request.decisionId, requestId: request.requestId, stage: "audit" } as const;
     const name = typeof (request.facts.resolve as { id?: unknown } | undefined)?.id === "string" ? (request.facts.resolve as { id: string }).id : undefined;
@@ -31,6 +46,9 @@ export function createAuditStage({ registry, events, writer }: { readonly regist
     if (definition === undefined) return stop("dependency_failure");
     // One read of the allowlist, before any await.
     const rules = definition.auditParams;
+    // The execution slot, claimed before the allow-event can exist. The limiter's verdict (or its failure) is the decision; nothing below runs.
+    const limited = await limitGate(request, "audit", () => claimExecution({ scope: ctx, aiSessionId: request.run.aiSessionId, turnId: request.run.turnId }));
+    if (limited !== null) return limited;
     let event;
     try {
       event = await events.make({
