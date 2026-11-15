@@ -99,6 +99,27 @@ describe("ATK-XTENANT-05 probe sensitivity", () => {
     ];
     await expect(assertCrossTenantStores(evidence({ columns }), tenants)).rejects.toThrow("fixture support for column unsupported (bytea)");
   });
+  it("uses an updatable state column for foreign UPDATE probes when bindings are immutable", async () => {
+    const statements: string[] = [];
+    const columns = [
+      { name: "tenant_id", type: "uuid", nullable: false, generated: false, enum_value: null },
+      { name: "status", type: "text", nullable: false, generated: true, enum_value: null },
+    ];
+    const report = await assertCrossTenantStores(evidence({ columns, leakUpdate: true }, [], statements), tenants);
+    expect(statements).toContain('UPDATE "public"."sec_probe" SET "status" = "status" WHERE tenant_id = $1');
+    expect(report.violations).toContain("public.sec_probe: foreign update touched a row");
+  });
+  it("rejects overrides with a wrong tenant, missing required fields, or unknown columns before insertion", async () => {
+    const columns = [
+      { name: "tenant_id", type: "uuid", nullable: false, generated: false, enum_value: null },
+      { name: "id", type: "text", nullable: false, generated: false, enum_value: null },
+    ];
+    for (const row of [{ tenant_id: "A", id: "probe" }, { tenant_id: "B" }, { tenant_id: "B", id: "probe", unknown: true }]) {
+      const statements: string[] = [];
+      await expect(assertCrossTenantStores(evidence({ columns }, [], statements), tenants, { sec_probe: () => row })).rejects.toThrow("invalid or incomplete fixture override");
+      expect(statements.some((sql) => sql.startsWith("INSERT"))).toBe(false);
+    }
+  });
   it("fails loudly with no tables, unsafe role, or identical scopes", async () => {
     await expect(assertCrossTenantStores(evidence({ noTables: true }), tenants)).rejects.toThrow("no sec_* tables");
     await expect(assertCrossTenantStores(evidence({ unsafeRole: true }), tenants)).rejects.toThrow("dap_app");

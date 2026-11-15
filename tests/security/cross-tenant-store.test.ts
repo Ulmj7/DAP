@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
-import { assertCrossTenantStores, FakeResourceAuthorizer, LeakScanner, TENANT_A, TENANT_B, ALICE, ctx, testCrossTenantCanary } from "@dap/testkit";
+import { assertCrossTenantStores, crossTenantFixtureOverrides, FakeResourceAuthorizer, LeakScanner, TENANT_A, TENANT_B, ALICE, ctx, testCrossTenantCanary } from "@dap/testkit";
 
 let app: Pool; let owner: Pool;
 beforeAll(async () => {
@@ -14,13 +14,31 @@ beforeAll(async () => {
 afterAll(async () => { await Promise.all([app?.end(), owner?.end()]); });
 
 describe("T124 store and resource isolation", () => {
-  it("ATK-XTENANT-05 discovers EVERY sec_* table, forced RLS, positive B read, A/no-setting invisibility, and forbidden B write", async () => {
+  it("ATK-XTENANT-05 covers EVERY discovered sec_* table generically or by override, forced RLS, positive B read, A/no-setting invisibility, and forbidden B write", async () => {
     const a = randomUUID(); const b = randomUUID();
     const report = await assertCrossTenantStores(app, { tenantA: a, tenantB: b });
     expect(report.tables.length).toBeGreaterThan(0);
     const catalog = await owner.query("SELECT n.nspname AS schema,c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p') AND c.relname LIKE 'sec\\_%' ESCAPE '\\' AND n.nspname NOT IN ('pg_catalog','information_schema') ORDER BY n.nspname,c.relname");
     expect(report.tables).toEqual(catalog.rows.map((row) => `${row.schema}.${row.name}`));
     expect(report.violations).toEqual([]);
+  });
+  it("sec_confirmations requires a valid override; missing or invalid fixtures fail loudly", async () => {
+    const tenants = { tenantA: randomUUID(), tenantB: randomUUID() };
+    const catalog = await owner.query("SELECT to_regclass('public.sec_confirmations')::text AS name");
+    expect(catalog.rows).toEqual([{ name: "sec_confirmations" }]);
+    const report = await assertCrossTenantStores(app, tenants);
+    expect(report.tables).toContain("public.sec_confirmations");
+    expect(report.violations).toEqual([]);
+    await expect(assertCrossTenantStores(app, tenants, {})).rejects.toThrow(/sec_confirmations.*check constraint/);
+    const validFixture = crossTenantFixtureOverrides.sec_confirmations!;
+    await expect(assertCrossTenantStores(app, tenants, {
+      ...crossTenantFixtureOverrides,
+      sec_confirmations: (tenant) => ({ ...validFixture(tenant), action_id: "invalid-action" }),
+    })).rejects.toThrow(/sec_confirmations_action_id_check/);
+    await expect(assertCrossTenantStores(app, tenants, {
+      ...crossTenantFixtureOverrides,
+      sec_confirmations: (tenant) => ({ ...validFixture(tenant), expires_at: "2100-01-01T00:00:00Z" }),
+    })).rejects.toThrow(/sec_confirmations.*check constraint/);
   });
   it("discovers a future sec_* table from the real catalog, excludes a look-alike prefix, and refuses unsupported column types", async () => {
     const suffix = randomUUID().replaceAll("-", "");

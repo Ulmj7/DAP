@@ -23,12 +23,25 @@ function fixtureValue(column: Column, tenant: string): unknown {
   throw new Error(`ATK-XTENANT-05 needs fixture support for column ${column.name} (${column.type}); table is NOT silently omitted`);
 }
 
+export type CrossTenantFixture = (tenantId: string) => Readonly<Record<string, unknown>>;
+/** Tables with related CHECK/trigger constraints need a complete valid fixture, not column guesses. */
+export const crossTenantFixtureOverrides: Readonly<Record<string, CrossTenantFixture>> = Object.freeze({
+  sec_confirmations: (tenantId: string) => ({
+    id: randomUUID(), tenant_id: tenantId, user_id: "probe-user", request_id: randomUUID(),
+    action_id: "probeAction", definition_version: 1, definition_hash: "b".repeat(64),
+    params: JSON.stringify({}), params_digest: "a".repeat(64), risk: "HIGH",
+    consequence: JSON.stringify({ title: "Probe", effects: [], irreversible: false }),
+    status: "pending", execution_status: "none", created_at: "2099-01-01T00:00:00Z",
+    expires_at: "2099-01-01T00:05:00Z",
+  }),
+});
+
 export interface CrossTenantStoreReport { readonly tables: readonly string[]; readonly violations: readonly string[] }
 /**
  * Every probe uses a SINGLE application transaction and always rolls back. Seed as B, prove the
  * row exists, then read as A/unscoped and try a B write. Works for append-only tables too.
  */
-export async function assertCrossTenantStores(pool: Pool, tenants: { readonly tenantA: string; readonly tenantB: string }): Promise<CrossTenantStoreReport> {
+export async function assertCrossTenantStores(pool: Pool, tenants: { readonly tenantA: string; readonly tenantB: string }, overrides: Readonly<Record<string, CrossTenantFixture>> = crossTenantFixtureOverrides): Promise<CrossTenantStoreReport> {
   if (tenants.tenantA === tenants.tenantB) throw new TypeError("Isolation probe needs distinct tenants");
   const client = await pool.connect();
   const violations: string[] = [];
@@ -46,10 +59,15 @@ export async function assertCrossTenantStores(pool: Pool, tenants: { readonly te
       const columns = await client.query<Column>("SELECT a.attname AS name,t.typname AS type,NOT a.attnotnull AS nullable,(a.atthasdef OR a.attidentity<>'' OR a.attgenerated<>'') AS generated,(SELECT e.enumlabel FROM pg_enum e WHERE e.enumtypid=t.oid ORDER BY e.enumsortorder LIMIT 1) AS enum_value FROM pg_attribute a JOIN pg_type t ON t.oid=a.atttypid WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum", [table.oid]);
       if (!columns.rows.some((column) => column.name === "tenant_id")) throw new Error(`${label}: missing tenant_id`);
       const required = columns.rows.filter((column) => column.name === "tenant_id" || (!column.nullable && !column.generated));
-      const values = required.map((column) => fixtureValue(column, tenants.tenantB));
+      const override = Object.hasOwn(overrides, table.name) ? overrides[table.name]!(tenants.tenantB) : undefined;
+      if (override && (override.tenant_id !== tenants.tenantB || required.some((column) => !Object.hasOwn(override, column.name)) || Object.keys(override).some((key) => !columns.rows.some((column) => column.name === key)))) {
+        throw new Error(`${label}: invalid or incomplete fixture override; table is NOT silently omitted`);
+      }
+      const inserted = override ? columns.rows.filter((column) => Object.hasOwn(override, column.name)) : required;
+      const values = inserted.map((column) => override ? override[column.name] : fixtureValue(column, tenants.tenantB));
       const relation = `${quote(table.schema)}.${quote(table.name)}`;
-      const insert = `INSERT INTO ${relation} (${required.map((column) => quote(column.name)).join(",")}) VALUES (${values.map((_, index) => `$${index + 1}`).join(",")})`;
-      await probeTable(client, relation, insert, values, tenants, label, violations, health);
+      const insert = `INSERT INTO ${relation} (${inserted.map((column) => quote(column.name)).join(",")}) VALUES (${values.map((_, index) => `$${index + 1}`).join(",")})`;
+      await probeTable(client, relation, insert, values, tenants, label, violations, health, columns.rows.some((column) => column.name === "status") ? "status" : "tenant_id");
     }
     return Object.freeze({ tables: Object.freeze(names), violations: Object.freeze(violations) });
   } finally { client.release(health.rollbackFailed); }
@@ -66,7 +84,7 @@ async function mustTouchNothing(client: PoolClient, savepoint: string, sql: stri
   } catch (error) { if (!error || typeof error !== "object" || Reflect.get(error, "code") !== "42501") throw error; }
   finally { await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`); }
 }
-async function probeTable(client: PoolClient, relation: string, insert: string, values: readonly unknown[], tenants: { tenantA: string; tenantB: string }, label: string, violations: string[], health: { rollbackFailed: boolean }): Promise<void> {
+async function probeTable(client: PoolClient, relation: string, insert: string, values: readonly unknown[], tenants: { tenantA: string; tenantB: string }, label: string, violations: string[], health: { rollbackFailed: boolean }, updateColumn: string): Promise<void> {
   await client.query("BEGIN");
   try {
     await client.query("SELECT set_config('app.tenant_id',$1,true)", [tenants.tenantB]);
@@ -83,7 +101,7 @@ async function probeTable(client: PoolClient, relation: string, insert: string, 
     catch (error) { if (!error || typeof error !== "object" || Reflect.get(error, "code") !== "42501") throw error; }
     finally { await client.query("ROLLBACK TO SAVEPOINT foreign_write"); }
     // The same tenant-A scope must not change or remove B's row either.
-    await mustTouchNothing(client, "foreign_update", `UPDATE ${relation} SET tenant_id = tenant_id WHERE tenant_id = $1`, [tenants.tenantB], "foreign update touched a row", label, violations);
+    await mustTouchNothing(client, "foreign_update", `UPDATE ${relation} SET ${quote(updateColumn)} = ${quote(updateColumn)} WHERE tenant_id = $1`, [tenants.tenantB], "foreign update touched a row", label, violations);
     await mustTouchNothing(client, "foreign_delete", `DELETE FROM ${relation} WHERE tenant_id = $1`, [tenants.tenantB], "foreign delete touched a row", label, violations);
     // And the owner of a row (B) must not be able to hand it to another tenant.
     await client.query("SELECT set_config('app.tenant_id',$1,true)", [tenants.tenantB]);
