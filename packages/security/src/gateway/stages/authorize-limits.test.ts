@@ -16,6 +16,7 @@ function fixture() {
 describe("T117 authorize capability limits", () => {
   it("checks the proven action/risk and requesting identity after permission/resource authorization", async () => {
     const test = fixture();
+    test.request = { ...test.request, facts: { ...test.request.facts, resolve: { ...(test.request.facts.resolve as object), risk: "CRITICAL" } } };
     expect(await test.stage(test.request)).toEqual({ kind: "continue", data: { resource: null } });
     expect(test.checkCapability).toHaveBeenCalledExactlyOnceWith({ scope: test.request.context, userId: "alice", actionId: "viewProject", risk: "SAFE" });
     expect(test.has.mock.invocationCallOrder[0]).toBeLessThan(test.checkCapability.mock.invocationCallOrder[0]!);

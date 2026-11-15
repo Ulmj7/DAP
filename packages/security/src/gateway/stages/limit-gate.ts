@@ -2,6 +2,8 @@ import { z } from "zod";
 import { isMintedContext } from "@dap/contracts/mint";
 import type { PipelineStage } from "@dap/contracts";
 import type { Limiter } from "../../limits/limiter.js";
+import { deferLimitDenial } from "./limit-recording.js";
+export { withDeferredLimitDenials } from "./limit-recording.js";
 import { snapshotAnswer } from "../answer-snapshot.js";
 import { nativeTimer, underDeadline } from "../deadline.js";
 import { denyDecision } from "../decision.js";
@@ -33,7 +35,10 @@ export function createLimitGate(limiter: Pick<Limiter, "recordDenial">, { hookTi
     // Local rejections, active blocks and faults deliberately make no shared throttle round trip.
     const recordTimeout = left();
     if (verdict.countsTowardThrottle && recordTimeout >= 1) {
-      await underDeadline(() => recordDenial({ scope: request.context!, aiSessionId: request.run.aiSessionId }), () => undefined, () => undefined, recordTimeout, timer);
+      const record = async (): Promise<void> => {
+        await underDeadline(() => recordDenial({ scope: request.context!, aiSessionId: request.run.aiSessionId }), () => undefined, () => undefined, recordTimeout, timer);
+      };
+      if (!deferLimitDenial({ stage, reason: verdict.reason, record })) await record();
     }
     return result;
   };

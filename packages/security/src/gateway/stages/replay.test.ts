@@ -11,6 +11,11 @@ describe("T117 replay stage", () => {
     expect(await createReplayStage({ replay: { claim }, retainSeconds: 86400 })(request)).toEqual({ kind: "continue", data: { claimed: true } });
     expect(claim).toHaveBeenCalledExactlyOnceWith(request.context, "ai-session:trusted-call", 86400);
   });
+  it("uses a non-default configured retention", async () => {
+    const claim = vi.fn(async () => "claimed" as const); const request = record();
+    await createReplayStage({ replay: { claim }, retainSeconds: 37 })(request);
+    expect(claim).toHaveBeenCalledExactlyOnceWith(request.context, "ai-session:trusted-call", 37);
+  });
   it("a duplicate is replayed_request and never a grant; faults/capacity/malformed responses are retryable", async () => {
     for (const answer of ["duplicate", undefined, "claimed ", true, { claimed: true }]) {
       const stage = createReplayStage({ replay: { claim: async () => answer as never }, retainSeconds: 86400 });

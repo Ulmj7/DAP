@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { LimitVerdict } from "../../limits/limiter.js";
 import type { PipelineRecord } from "../pipeline.js";
 import { context, input, run } from "../fixtures.test-support.js";
+import { withDeferredLimitDenials } from "./limit-gate.js";
 import { createRateLimitStage } from "./rate-limit.js";
+import { denyDecision } from "../decision.js";
 import { toPlannerFeedback } from "../feedback.js";
 
 const record = (over: Partial<PipelineRecord> = {}): PipelineRecord => ({ ...input(), context: context(), run, facts: { intake: { callId: "trusted" } }, budget: { remainingMs: () => 10000 }, ...over });
@@ -26,6 +28,7 @@ describe("T117 stage 2 rate limits", () => {
       const result = await test.stage(request);
       expect(result).toMatchObject({ kind: "stop", decision: { outcome: "DENIED", reason: "rate_limited_user", stage: "rate_limit" } });
       expect(test.recordDenial).toHaveBeenCalledTimes(count ? 1 : 0);
+      if (count) expect(test.recordDenial).toHaveBeenCalledExactlyOnceWith({ scope: request.context, aiSessionId: run.aiSessionId });
       if (result.kind === "stop") expect(toPlannerFeedback(result.decision)).toEqual({ outcome: "DENIED", category: "try_later" });
     }
   });
@@ -57,4 +60,32 @@ describe("T117 stage 2 rate limits", () => {
       expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
   });
+  it("finalizes denial recording outside the pipeline deadline and preserves the rate reason", async () => {
+    vi.useFakeTimers();
+    try {
+      const test = fixture(denied()); test.recordDenial.mockImplementation(() => new Promise(() => {}));
+      let decisionMade = false;
+      const pending = withDeferredLimitDenials(async () => {
+        const result = await test.stage(record({ budget: { remainingMs: () => decisionMade ? 0 : 40 } }));
+        if (result.kind !== "stop") throw new Error("Expected rate denial");
+        decisionMade = true;
+        return result.decision;
+      });
+      await vi.advanceTimersByTimeAsync(40);
+      expect(await pending).toMatchObject({ reason: "rate_limited_user" });
+      expect(decisionMade).toBe(true); expect(test.recordDenial).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not record an abandoned countable verdict when another final decision won", async () => {
+    for (const alternate of [{ stage: "rate_limit", reason: "dependency_failure" }, { stage: "authorize", reason: "rate_limited_user" }] as const) {
+      const test = fixture(denied()); const request = record();
+      await withDeferredLimitDenials(async () => {
+        await test.stage(request);
+        return denyDecision({ decisionId: request.decisionId, requestId: request.requestId, ...alternate });
+      });
+      expect(test.recordDenial).not.toHaveBeenCalled();
+    }
+  });
+
 });

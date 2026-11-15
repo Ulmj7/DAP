@@ -7,6 +7,7 @@ import { createLimiter } from "../limits/limiter.js";
 import { validateGatewayConfig } from "../limits/limit-config.js";
 import { snapshotAnswer } from "./answer-snapshot.js";
 import { createPipeline, type PipelineOptions, type StageMap } from "./pipeline.js";
+import { withDeferredLimitDenials } from "./stages/limit-recording.js";
 import { auditRateDenial } from "./rate-audit.js";
 import { createProposalGateway } from "./submitter.js";
 import { createIntakeStage } from "./stages/intake.js";
@@ -113,7 +114,7 @@ export function createPolicyGateway(source: GatewayDependencies): Readonly<{ pro
   const pipeline = createPipeline(composeStages(deps), pipelineOptions(deps.config));
   const proposals = createProposalGateway({ pipeline: {
     async run(input) {
-      const decision = await pipeline.run(input);
+      const decision = await withDeferredLimitDenials(() => pipeline.run(input));
       await auditRateDenial(deps, input, decision);
       return decision;
     },

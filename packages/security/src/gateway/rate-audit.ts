@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { AuditEvent, GatewayDependencies, PlannerRunMeta, PolicyDecision } from "@dap/contracts";
 import { isMintedContext } from "@dap/contracts/mint";
 import type { PipelineInput } from "./pipeline.js";
@@ -13,8 +12,10 @@ export async function auditRateDenial(deps: GatewayDependencies, input: Pipeline
     const time = await wrapHook(() => deps.clock.now(), "instant", options)();
     if (!time.ok) return;
     const run = input.run as PlannerRunMeta;
+    const id: unknown = deps.ids.newDecisionId();
+    if (typeof id !== "string" || !id) return;
     const event: AuditEvent = Object.freeze({
-      id: randomUUID(), occurredAt: time.value, type: "AI_RATE_LIMITED", requestId: decision.requestId, decisionId: decision.decisionId,
+      id, occurredAt: time.value, type: "AI_RATE_LIMITED", requestId: decision.requestId, decisionId: decision.decisionId,
       tenantId: input.context.tenantId, userId: input.context.userId, aiSessionId: run.aiSessionId, turnId: run.turnId, model: run.model,
       actionId: null, definitionVersion: null, paramsView: Object.freeze({}), risk: null, outcome: decision.outcome, reason: decision.reason,
       confirmationId: null, confirmationState: null, executionResult: null, resource: null,
