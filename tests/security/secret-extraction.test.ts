@@ -249,6 +249,18 @@ describe("T082 through the REAL gateway, via withGateway() (REQUIRED, representa
       }
     });
 
+    it("a secret-shaped value in a PLAIN audited parameter is redacted by the scrubber before it is recorded, while the executor still receives it", async () => {
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      const token = "sk-abcdefghijklmnopqrstuvwx";
+      const answer = await world.submit(A_ALICE, { callId: "tok", raw: { action: "testSafeEcho", params: { message: `use ${token} now` } } });
+      expect(answer).toEqual({ outcome: "ALLOWED", category: "ok" });
+      expect(world.executor("testSafeEcho").receivedParams).toEqual([{ message: `use ${token} now` }]); // the control: the value really passed through the Gateway
+      const recorded = JSON.stringify(world.events());
+      expect(recorded).not.toContain(token);
+      const allowed = world.events().find((event) => event.type === "AI_ACTION_ALLOWED")!;
+      expect(allowed.paramsView["/message"]).toEqual(expect.stringContaining("[redacted"));
+    });
+
     it("a rejected request's events carry only codes: no params view, no resource, no result", async () => {
       const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
       const answer = await world.submit(A_ALICE, { callId: "bad", raw: { action: "testSafeEcho", params: { message: 7, extra: SECRET_CANARIES[1] } } });
