@@ -8,7 +8,7 @@ import type { AttackObservation, AuditEvent, CapabilityTraits, PlannerFeedback, 
 import { DEFAULT_GATEWAY_CONFIG, denyDecision, toPlannerFeedback, validateGatewayConfig } from "@dap/security";
 import type { GatewayConfig } from "@dap/security";
 import { ALICE, NOT_AVAILABLE_BYTES, TENANT_A, TENANT_B, TENANT_B_RESOURCES, byteIdentical, crossTenantScenarios, runScenario, validParamsFor, withGateway } from "@dap/testkit";
-import type { DenialScenario, GatewayWorld, WorldUser } from "@dap/testkit";
+import type { DenialScenario, WorldUser } from "@dap/testkit";
 
 const scenario = (id: string) => crossTenantScenarios.find((entry) => entry.id === id)!;
 const traits = (over: Partial<CapabilityTraits> = {}): CapabilityTraits => ({ actionId: "testMediumDraft", risk: "MEDIUM", changesState: true, targetsResource: true, requiresConfirmation: true, ...over });
