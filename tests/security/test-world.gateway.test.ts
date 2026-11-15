@@ -199,6 +199,35 @@ describe("world controls added for the evidence scenarios", () => {
 
 });
 
+describe("world controls added for the PostgreSQL audit proofs", () => {
+  it("auditSink: every event is committed to the injected sink before the world's capture records it; the default stays the in-memory capture", async () => {
+    const committed: AuditEvent[] = [];
+    const seenByCapture: number[] = [];
+    const world = withGateway({ auditSink: { append: async (event) => { committed.push(event); seenByCapture.push(world.events().length); } } });
+    expect((await world.submit(A_ALICE, world.proposal("testSafeEcho"))).outcome).toBe("ALLOWED");
+    expect(committed.map((event) => event.type)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED", "AI_ACTION_EXECUTED"]);
+    expect(seenByCapture).toEqual([0, 1, 2]); // the capture trails the sink by exactly the event being written
+    expect(world.events()).toEqual(committed);
+    expect(withGateway().events()).toEqual([]);
+  });
+  it("auditSink: a sink that rejects fails the allow-event closed: try later, executor at zero, and the capture holds no ALLOWED", async () => {
+    const world = withGateway({ auditSink: { append: async () => { throw new Error("db down: CANARY"); } } });
+    expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"))).toEqual({ outcome: "DENIED", category: "try_later" });
+    expect(world.executorCalls()).toBe(0);
+    expect(world.events()).toEqual([]);
+  });
+  it("onRun: the observer runs inside the executor body, after the call is recorded, and sees the guarded call", async () => {
+    const world = withGateway();
+    const seen: unknown[] = [];
+    world.executor("testSafeEcho").onRun(async (call) => { seen.push([call.actionId, world.executor("testSafeEcho").calls, world.events().map((event) => event.type)]); });
+    await world.submit(A_ALICE, world.proposal("testSafeEcho"));
+    expect(seen).toEqual([["testSafeEcho", 1, ["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED"]]]);
+    world.executor("testSafeEcho").onRun(undefined);
+    await world.submit(A_ALICE, world.proposal("testSafeEcho"));
+    expect(seen).toHaveLength(1);
+  });
+});
+
 describe("a wrong-tenant, inaccessible or nonexistent resource is denied with the same bytes", () => {
   it("other tenant, nonexistent and same-tenant-unauthorized look identical to the planner, and the executor stays at zero", async () => {
     const world = withGateway();

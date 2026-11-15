@@ -7,6 +7,7 @@
  * FakeClock so the world is fully deterministic.
  */
 import type {
+  AuditSink,
   ActionId,
   AuditEvent,
   AuditEventType,
@@ -177,6 +178,11 @@ export interface GatewayWorldOptions {
   readonly startAt?: string;
   /** Default length of an authenticated session in seconds (default 3600). */
   readonly sessionSeconds?: number;
+  /**
+   * An audit sink the Gateway writes to FIRST (for example the PostgreSQL store). The world's own capture, which `events()` reads, records an event only after
+   * this sink has committed it, so `events()` holds exactly what was durably written, and a failing sink fails the append like any audit failure.
+   */
+  readonly auditSink?: AuditSink;
   /** Replace the input schema of named test capabilities (for example the PARAMS fixture schema with nesting). The sample parameters of `proposal()` must still parse. */
   readonly inputSchemas?: Readonly<Record<string, ZodType>>;
   /** Every user holds every permission (default false: only the users listed in `WORLD_PERMISSIONS`). */
@@ -421,7 +427,7 @@ export function withGateway(options: GatewayWorldOptions = {}): GatewayWorld {
         confirmations: { create: unused, get: unused, listPending: unused, tryAccept: unused, tryReject: unused, invalidate: unused, recordExecution: unused } as never,
         ping: async () => true,
       },
-      audit: { append: through("audit", { append: (event: AuditEvent) => audit.append(event) }, "append") as never },
+      audit: { append: through("audit", { append: async (event: AuditEvent) => { if (options.auditSink !== undefined) await options.auditSink.append(event); await audit.append(event); } }, "append") as never },
       confirmationChannel: { deliver: unused },
       clock: { now: through("clock", { now: () => clock.now() }, "now") as never },
       ids, config,

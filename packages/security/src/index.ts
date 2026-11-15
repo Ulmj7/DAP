@@ -26,6 +26,7 @@ export type { CapabilityLimitInput, DenialInput, DenialRecord, Limiter, LimiterO
 export { DEFAULT_GATEWAY_CONFIG, DEFAULT_LIMIT_CONFIG, validateGatewayConfig, validateLimitConfig } from "./limits/limit-config.js";
 export { PostgresReplayGuard } from "./state/postgres/replay.js";
 export { PostgresRateLimiter } from "./state/postgres/rate-limiter.js";
+export { PostgresAuditStore } from "./state/postgres/audit.js";
 export { buildAuditEvent, createAuditEventBuilder, isBuiltAuditEvent } from "./audit/event-builder.js";
 export type { AuditEventInput } from "./audit/event-builder.js";
 export { projectParams, MASKED } from "./audit/projection.js";

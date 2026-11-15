@@ -33,6 +33,7 @@ export class RecordingExecutor<TParams = unknown, TValue = unknown>
   private readonly log: ExecutionCall<TParams>[] = [];
   private nextResult: ExecutionResult<TValue>;
   private failure: string | undefined;
+  private observer: ((call: ExecutionCall<TParams>) => Promise<void> | void) | undefined;
 
   /** The defineExecutor-guarded executor. This is the ONLY way the body can run. */
   readonly executor: ActionExecutor<TParams, TValue>;
@@ -51,6 +52,8 @@ export class RecordingExecutor<TParams = unknown, TValue = unknown>
         catch { throw new TypeError("RecordingExecutor received unreadable arguments"); }
         // Replace our immutable entry only after capture succeeds; entry evidence is never lost.
         log[index] = Object.freeze({ ...call, ...data });
+        // What the world looks like at the moment the body runs (for example whether the allow-event is already committed): the callback sees the guarded call.
+        if (this.observer !== undefined) await this.observer(log[index]!);
         // A trusted dependency failing inside the body, with a message the scenario chose (it must never reach the planner or the trail).
         if (this.failure !== undefined) throw new Error(this.failure);
         return this.nextResult;
@@ -61,6 +64,11 @@ export class RecordingExecutor<TParams = unknown, TValue = unknown>
   /** Change the result returned by the next (and following) guarded calls. */
   setNextResult(result: ExecutionResult<TValue>): void {
     this.nextResult = snapshotData(result);
+  }
+
+  /** Run `observer` inside the body, after the call is recorded and before the result is returned (`undefined`: stop observing). */
+  onRun(observer: ((call: ExecutionCall<TParams>) => Promise<void> | void) | undefined): void {
+    this.observer = observer;
   }
 
   /** Make the body throw an error with this message after it has been recorded (`undefined`: stop throwing). */
