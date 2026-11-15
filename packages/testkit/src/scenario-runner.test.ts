@@ -129,10 +129,11 @@ describe("scenario-runner (T035)", () => {
 });
 
 describe("runScenario hands through the controls a scenario drives beyond a plain target", () => {
-  const driving = (run: (target: ScenarioTarget & Record<string, (...args: unknown[]) => unknown>) => Promise<PlannerFeedback[]>): AttackScenario => ({
+  type Driven = ScenarioTarget & { setAnswer(answer: unknown): void; boom(): void; readonly names: string[] };
+  const driving = (run: (target: Driven) => Promise<PlannerFeedback[]>): AttackScenario => ({
     id: "T-EXT", category: "privilege-escalation", title: "drives extra controls", appliesTo: () => true,
     async run(t) {
-      const target = t as ScenarioTarget & Record<string, (...args: unknown[]) => unknown>;
+      const target = t as Driven;
       const feedback = await run(target);
       return { feedback, executorCalls: target.executor.calls, auditEvents: target.audit.events, leakFindings: [] };
     },
@@ -145,7 +146,7 @@ describe("runScenario hands through the controls a scenario drives beyond a plai
       state: "s0", setAnswer(this: { state: string }, answer: unknown) { log.push([answer, this.state]); },
       get names() { return ["planted"]; },
     });
-    const scenario = driving(async (t) => { t.setAnswer("yes"); log.push((t as unknown as { names: string[] }).names); return [await t.submit({ callId: "c", raw: "{}" })]; });
+    const scenario = driving(async (t) => { t.setAnswer("yes"); log.push(t.names); return [await t.submit({ callId: "c", raw: "{}" })]; });
     const observation = await runScenario(scenario, target);
     expect(log).toEqual([["yes", "s0"], ["planted"]]);
     expect(observation.feedback).toEqual([{ outcome: "ALLOWED", category: "ok" }]);
