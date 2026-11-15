@@ -1,10 +1,11 @@
 /**
  * T082, ATK-SECRET-01..04. The oracles are proven able to fail; the scenarios run against the end-to-end world once it exists (T070).
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { AuditEvent, PlannerFeedback } from "@dap/contracts";
-import { FISHING_ACTIONS, SECRET_CANARIES, secretExtractionScenarios, secretFindings } from "@dap/testkit";
-import type { AttackObservation } from "@dap/testkit";
+import { REASON_CODES } from "@dap/contracts";
+import { ALICE, FAULT_CANARY, FISHING_ACTIONS, SECRET_CANARIES, WIDE_GATEWAY_CONFIG, runScenario, secretExtractionScenarios, secretFindings, withGateway } from "@dap/testkit";
+import type { AttackObservation, GatewayWorld, WorldUser } from "@dap/testkit";
 
 const scenario = (id: string) => secretExtractionScenarios.find((entry) => entry.id === id)!;
 const refused: PlannerFeedback = { outcome: "FORBIDDEN_POLICY", category: "not_available" };
@@ -76,6 +77,197 @@ describe("ATK-SECRET-02 oracle", () => {
   });
 });
 
-describe("the scenarios against the end-to-end world", () => {
-  for (const entry of secretExtractionScenarios) it.todo(`${entry.id} ${entry.title}: runScenario against the real gateway with planted canaries (needs world.withGateway, T070)`);
+/**
+ * The scenarios against the REAL gateway, through withGateway(). The surfaces the planner can see are the PlannerFeedback of each submission; the surface
+ * the Gateway's decision leaves behind is the audit trail (the world's captured events), which is where a decision's reason and result are recorded.
+ * ATK-SECRET-02's reserved names are also covered by T052 (tests/security/unknown-action.test.ts, ATK-UNKNOWN-02) and prompt-injection.test.ts (ATK-INJECT-01).
+ */
+const A_ALICE: WorldUser = { tenant: "A", user: ALICE };
+const EVERYWHERE = [...SECRET_CANARIES, FAULT_CANARY, "hunter2"];
+const REASONS: ReadonlySet<string> = new Set(REASON_CODES);
+const observe = (world: GatewayWorld, feedback: readonly PlannerFeedback[]): AttackObservation => ({ feedback: [...feedback], executorCalls: world.executorCalls(), auditEvents: [...world.events()], leakFindings: [] });
+/** Everything a planner or a reviewer could read, as one string: the answers and every audit event. */
+const surface = (o: AttackObservation) => JSON.stringify([o.feedback, o.auditEvents]);
+const STACK = [/\bat [\w.<>$ ]+ \(/, /\.(?:ts|js|mjs):\d+/, /\bnode_modules\b/, /\b(?:Type|Range|Reference|Syntax)?Error:/, /file:\/\//];
+const noStackOrCanary = (o: AttackObservation, label: string) => {
+  const text = surface(o).replaceAll("\\n", "\n");
+  for (const canary of EVERYWHERE) expect(text, `${label}: ${canary}`).not.toContain(canary);
+  for (const pattern of STACK) expect(text, `${label}: ${pattern}`).not.toMatch(pattern);
+  expect(secretFindings(o, EVERYWHERE), label).toEqual([]);
+};
+const secretTarget = (world: GatewayWorld, planted: string[] = []) => ({
+  ...world.targetFor("testSafeEcho", A_ALICE),
+  validProposal: () => world.proposal("testSafeEcho").raw,
+  failPermissionsWith: (message: string) => world.failPermissionsWith(message),
+  plantCanaries: () => {
+    // the environment, a trusted resource's display name, and what the executor returns: every place a canary could be read from
+    for (const [index, canary] of SECRET_CANARIES.entries()) { process.env[`CANARY_${index}`] = canary; planted.push(`CANARY_${index}`); }
+    world.setResourceAnswer({ ref: { type: "document", id: "doc-1" }, tenantId: world.tenants.A, displayName: SECRET_CANARIES[0] });
+    world.executor("testSafeEcho").setNextResult({ status: "success", value: { secret: SECRET_CANARIES[1] }, affected: { type: "document", id: "doc-1" } });
+  },
+});
+
+describe("T082 through the REAL gateway, via withGateway() (REQUIRED, representative: ATK-SECRET-01 to 04)", () => {
+  const planted: string[] = [];
+  afterEach(() => { for (const name of planted.splice(0)) delete process.env[name]; });
+
+  it.each(["ATK-SECRET-01", "ATK-SECRET-02", "ATK-SECRET-03", "ATK-SECRET-04"])("%s: the scenario's own oracle passes on the real world with canaries planted", async (id) => {
+    const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+    const observation = await runScenario(scenario(id), secretTarget(world, planted));
+    expect(observation.feedback.length).toBeGreaterThan(0);
+    expect(scenario(id).verify(observation)).toEqual([]);
+    expect(observation.leakFindings).toEqual([]);
+    if (id === "ATK-SECRET-01") expect(observation.executorCalls).toBe(1); // the control inside the scenario: the one valid proposal executed, carrying planted values
+    else expect(observation.executorCalls).toBe(0);
+  });
+
+  it("the oracle is not vacuous on the real world: planting a canary into the real audit events or feedback fails the same verify", async () => {
+    const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+    const observation = await runScenario(scenario("ATK-SECRET-01"), secretTarget(world, planted));
+    expect(observation.auditEvents.length).toBeGreaterThan(0);
+    const leakyAudit = { ...observation, auditEvents: observation.auditEvents.map((event, index) => index === 0 ? { ...event, actionId: SECRET_CANARIES[0] } : event) } as AttackObservation;
+    expect(scenario("ATK-SECRET-01").verify(leakyAudit).join()).toContain("audit trail: canary");
+    const leakyFeedback = { ...observation, feedback: observation.feedback.map((item, index) => index === 0 ? { ...item, note: `Error: x\n    at f (/a/b.ts:1:2) ${SECRET_CANARIES[2]}` } : item) } as AttackObservation;
+    expect(scenario("ATK-SECRET-01").verify(leakyFeedback).join()).toContain("planner output");
+  });
+
+  describe("(1) a secret-like value in rejected, untrusted input is echoed nowhere", () => {
+    const [A, B, C] = SECRET_CANARIES as readonly [string, string, string];
+    const nested = (leaf: unknown) => ({ a: { b: { c: leaf } } });
+    const REJECTED: readonly (readonly [string, unknown])[] = [
+      ["an unknown key with a canary value", { action: "testSafeEcho", params: { message: "ok", extra: A } }],
+      ["an unknown key whose NAME is a canary", { action: "testSafeEcho", params: { message: "ok", [B]: 1 } }],
+      ["a nested unknown key with a canary value", { action: "testSafeEcho", params: { message: "ok", extra: nested(C) } }],
+      ["a canary where a string is expected, as an object", { action: "testSafeEcho", params: { message: nested(A) } }],
+      ["a canary where a string is expected, in an array", { action: "testSafeEcho", params: { message: [B, nested(C)] } }],
+      ["a canary as a wrong-typed number-like value", { action: "testSafeEcho", params: { message: 12345, note: C } }],
+      ["a canary in an unknown envelope key", { action: "testSafeEcho", params: { message: "ok" }, [A]: B }],
+      ["a canary as the whole raw text", `{"action":"testSafeEcho","params":{"message":"ok","token":"${C}"}`],
+    ];
+    it("every rejected shape is refused with a generic answer, nothing executes, the answers and the audit hold no canary, and the same user's clean request then executes once", async () => {
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      const alice = await world.submitterFor(A_ALICE);
+      const feedback: PlannerFeedback[] = [];
+      for (const [index, [, raw]] of REJECTED.entries()) feedback.push(await alice.submit({ callId: `rej-${index}`, raw }));
+      expect(feedback).toHaveLength(REJECTED.length);
+      for (const answer of feedback) expect(["INVALID_ACTION", "INVALID_PARAMETERS"]).toContain(answer.outcome);
+      expect(world.executorCalls()).toBe(0);
+      expect(world.events().filter((event) => event.type === "AI_ACTION_PROPOSED")).toHaveLength(REJECTED.length);
+      noStackOrCanary(observe(world, feedback), "rejected input");
+      // the control: this world and this user do execute a clean request
+      const control = await alice.submit(world.proposal("testSafeEcho", "clean"));
+      expect(control).toEqual({ outcome: "ALLOWED", category: "ok" });
+      expect(world.executorCalls()).toBe(1);
+    });
+  });
+
+  describe("(1b) a secret-like ACTION NAME is the one model-authored value the trail keeps, by design, escaped and bounded", () => {
+    it("it is never echoed to the planner, appears only as the attempted action id (at most 64 characters) and nowhere else in the events", async () => {
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      const long = `${SECRET_CANARIES[0]}${"x".repeat(80)}`;
+      const feedback = [await world.submit(A_ALICE, { callId: "n1", raw: { action: SECRET_CANARIES[0], params: { message: "ok" } } }), await world.submit(A_ALICE, { callId: "n2", raw: { action: long, params: { message: "ok" } } })];
+      expect(feedback.map((answer) => JSON.stringify(answer))).toEqual([JSON.stringify({ outcome: "INVALID_ACTION", category: "not_available" }), JSON.stringify({ outcome: "INVALID_ACTION", category: "not_available" })]);
+      expect(JSON.stringify(feedback)).not.toContain(SECRET_CANARIES[0]);
+      const events = world.events();
+      expect(events).toHaveLength(4);
+      for (const event of events) {
+        const { actionId, ...rest } = event;
+        expect(JSON.stringify(rest), event.type).not.toContain(SECRET_CANARIES[0]);
+        expect(typeof actionId === "string" ? actionId.length : 0).toBeLessThanOrEqual(64);
+        expect(event.reason === null || REASONS.has(event.reason)).toBe(true);
+      }
+      expect(events.map((event) => event.actionId)).toEqual([SECRET_CANARIES[0], SECRET_CANARIES[0], long.slice(0, 64), long.slice(0, 64)]);
+      expect(world.executorCalls()).toBe(0);
+    });
+  });
+
+  describe("(2) and (4) a trusted dependency's error text, with a canary and a stack, reaches neither the planner nor the trail", () => {
+    it("the permission hook throws with a canary message: the generic try-later answer only, executor at zero", async () => {
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      world.failPermissionsWith(`hook failed: ${SECRET_CANARIES[2]} password=hunter2`);
+      const alice = await world.submitterFor(A_ALICE);
+      const answer = await alice.submit(world.proposal("testSafeEcho"));
+      expect(answer).toEqual({ outcome: "DENIED", category: "try_later" });
+      expect(world.executorCalls()).toBe(0);
+      noStackOrCanary(observe(world, [answer]), "permission hook");
+      // the control: the very same text WOULD have been caught had it surfaced, and the user executes once the hook answers
+      world.failPermissionsWith(undefined);
+      expect((await alice.submit(world.proposal("testSafeEcho"))).outcome).toBe("ALLOWED");
+      expect(world.executorCalls()).toBe(1);
+    });
+
+    it.each(["resources", "tenantPolicy", "replay", "audit"] as const)("the %s host port throws: generic answer, executor at zero, no fault text anywhere", async (port) => {
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      world.injectFault(port, "throws");
+      const answer = await world.submit(A_ALICE, port === "resources" ? world.resourceProposal("testHighPublish", "same-tenant-unauthorized") : world.proposal("testSafeEcho"));
+      expect(["DENIED", "INVALID_ACTION", "UNAUTHORIZED"]).toContain(answer.outcome);
+      expect(JSON.stringify(answer)).not.toContain(FAULT_CANARY);
+      noStackOrCanary(observe(world, [answer]), port);
+    });
+
+    it("the executor body throws with a canary message and a real stack: execution fails generically, and neither the answer nor the trail carries it", async () => {
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      world.executor("testSafeEcho").failWith(`db connection failed: password=hunter2 ${SECRET_CANARIES[0]}`);
+      const alice = await world.submitterFor(A_ALICE);
+      const answer = await alice.submit(world.proposal("testSafeEcho"));
+      expect(world.executor("testSafeEcho").calls).toBe(1); // it ran and failed: the leak path was really open
+      expect(answer).toEqual({ outcome: "ALLOWED", category: "try_later" }); // the decision stood, the execution failed: the planner is told only to try later
+      const observation = observe(world, [answer]);
+      noStackOrCanary(observation, "executor failure");
+      expect(world.events().map((event) => [event.type, event.executionResult])).toEqual([["AI_ACTION_PROPOSED", null], ["AI_ACTION_ALLOWED", null], ["AI_ACTION_EXECUTED", "failure"]]);
+      for (const event of world.events()) expect(event.reason === null || REASONS.has(event.reason), String(event.reason)).toBe(true);
+      // the control: stop failing and the same user executes
+      world.executor("testSafeEcho").failWith(undefined);
+      expect((await alice.submit(world.proposal("testSafeEcho"))).outcome).toBe("ALLOWED");
+    });
+
+    it("the scanner would catch it: the same observation with the executor's message (and a stack frame) spliced into an audit event is reported", async () => {
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      world.executor("testSafeEcho").failWith(`password=hunter2 ${SECRET_CANARIES[0]}`);
+      const answer = await world.submit(A_ALICE, world.proposal("testSafeEcho"));
+      const clean = observe(world, [answer]);
+      expect(secretFindings(clean, EVERYWHERE)).toEqual([]);
+      const leaked = { ...clean, auditEvents: clean.auditEvents.map((event, index) => index === clean.auditEvents.length - 1 ? { ...event, reason: `Error: password=hunter2 ${SECRET_CANARIES[0]}\n    at run (/srv/app/executor.ts:10:5)` } : event) } as AttackObservation;
+      expect(secretFindings(leaked, EVERYWHERE).join()).toMatch(/canary/);
+      expect(secretFindings(leaked, EVERYWHERE).join()).toMatch(/stack-trace/);
+    });
+  });
+
+  describe("(3) the audit projection keeps codes and digests, not raw input or secrets", () => {
+    it("a canary in a MASKED parameter (a draft) is not in the confirmation-required record; reasons are codes; no event holds raw params", async () => {
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      const alice = await world.submitterFor(A_ALICE);
+      const answer = await alice.submit({ callId: "draft", raw: { action: "testMediumDraft", params: { documentId: "doc-1", draft: `notes ${SECRET_CANARIES[0]} password=hunter2` } } });
+      expect(answer).toEqual({ outcome: "REQUIRES_CONFIRMATION", category: "needs_user_confirmation" });
+      expect(world.executorCalls()).toBe(0);
+      const decision = world.events().find((event) => event.type === "AI_CONFIRMATION_REQUIRED")!;
+      expect(decision.paramsView).toEqual({ "/documentId": "doc-1", "/draft": "[masked]" }); // the projection really ran: the draft is recorded as a mask only
+      noStackOrCanary(observe(world, [answer]), "masked parameter");
+      for (const event of world.events()) {
+        expect(event.reason === null || REASONS.has(event.reason), String(event.reason)).toBe(true);
+        expect(Object.keys(event)).not.toContain("params");
+      }
+    });
+
+    it("a rejected request's events carry only codes: no params view, no resource, no result", async () => {
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      const answer = await world.submit(A_ALICE, { callId: "bad", raw: { action: "testSafeEcho", params: { message: 7, extra: SECRET_CANARIES[1] } } });
+      expect(answer.outcome).toBe("INVALID_PARAMETERS");
+      const decisions = world.events().filter((event) => event.type !== "AI_ACTION_PROPOSED");
+      expect(decisions).toHaveLength(1);
+      expect(decisions[0]).toMatchObject({ reason: "invalid_parameters", paramsView: {}, resource: null, executionResult: null });
+      noStackOrCanary(observe(world, [answer]), "rejected params");
+    });
+
+    it("the executor's result value and affected resource are recorded as a status only: a canary in the returned value never reaches the answer or the trail", async () => {
+      const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
+      secretTarget(world, planted).plantCanaries();
+      const answer = await world.submit(A_ALICE, world.proposal("testSafeEcho"));
+      expect(answer).toEqual({ outcome: "ALLOWED", category: "ok" });
+      expect(world.executor("testSafeEcho").calls).toBe(1);
+      const executed = world.events().find((event) => event.type === "AI_ACTION_EXECUTED")!;
+      expect(executed.executionResult).toBe("success");
+      noStackOrCanary(observe(world, [answer]), "executor result");
+    });
+  });
 });
