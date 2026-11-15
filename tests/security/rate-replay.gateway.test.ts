@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import { PostgresReplayGuard, DEFAULT_GATEWAY_CONFIG, validateGatewayConfig } from "@dap/security";
@@ -53,9 +54,10 @@ describe("T107 PostgreSQL replay through actual gateway instances", () => {
   afterAll(async () => { await Promise.all([app?.end(), owner?.end()]); });
   it("ATK-REPLAY-02 a newly constructed gateway on the same PostgreSQL store still rejects replay", async () => {
     const h = gatewaySequence({ replay: new PostgresReplayGuard(app) });
-    expect(await h.target.submitAs(actor(), call("persisted"))).toEqual(allowed);
+    const persisted = `persisted-${randomUUID()}`; // unique between runs, identical across the restart being tested
+    expect(await h.target.submitAs(actor(), call(persisted))).toEqual(allowed);
     h.restart(1);
-    expect(await h.target.submitAs(actor(), call("persisted"))).toEqual(unavailable);
+    expect(await h.target.submitAs(actor(), call(persisted))).toEqual(unavailable);
     expect(h.claims.map((item) => item.answer)).toEqual(["claimed", "duplicate"]);
     expect(h.permissions).toBe(1); expect(h.target.executor.calls).toBe(1); // the replay after the restart did not execute again
   });
