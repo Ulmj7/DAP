@@ -41,11 +41,6 @@ const notFor = (traits: CapabilityTraits) => traits.risk === "FORBIDDEN";
 const withApplies = (scenario: DenialScenario, appliesTo: (traits: CapabilityTraits) => boolean): DenialScenario => ({ ...scenario, appliesTo });
 
 const call = (id: string, index: number, raw: unknown): ProposalCall => ({ callId: `${id}-${index}`, raw });
-async function observe(target: ScenarioTarget, id: string, raws: readonly unknown[]): Promise<AttackObservation> {
-  const feedback: PlannerFeedback[] = [];
-  for (const [index, raw] of raws.entries()) feedback.push(await target.submit(call(id, index, raw)));
-  return { feedback, executorCalls: target.executor.calls, auditEvents: target.audit.events, leakFindings: [] };
-}
 const isFeedback = (feedback: PlannerFeedback | undefined, outcome: string, category: string) => isDeepStrictEqual(feedback, { outcome, category });
 const decisionEvents = (events: readonly AuditEvent[]) => events.filter((event) => event.type !== "AI_ACTION_PROPOSED");
 

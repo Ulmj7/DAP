@@ -8,7 +8,7 @@ import type { AttackObservation, AuditEvent, CapabilityTraits, PermissionId, Pla
 import { buildRegistry } from "@dap/security";
 import {
   ALICE, BOB, CAROL, CLAIM_KEYS, FakePermissionChecker, NON_BOOLEAN_ANSWERS, PERMISSION_ACTION_NAMES, PRIVILEGE_CLAIMS, SPOOFED_PAGES, TENANT_A, TENANT_B, VALID_PARAMS,
-  ctx, hostParity, parityViolations, privilegeEscalationScenarios, stringParamNames, testCriticalDelete, testHighPublish, testLowNavigate, testMediumDraft, testSafeEcho, validParamsFor,
+  ctx, hostParity, parityViolations, privilegeEscalationScenarios, stringParamNames, testCriticalDelete, testHighPublish, testLowNavigate, testMediumDraft, testSafeEcho,
 } from "@dap/testkit";
 import type { DenialScenario } from "@dap/testkit";
 
