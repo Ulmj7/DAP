@@ -85,13 +85,13 @@ describe("T116 limiter: configured buckets", () => {
     expect(config.proposalsPerTurn).toBe(25);
   });
 
-  it("local counters never reject a turn the shared store would allow, even after eviction", async () => {
+  it("keeps existing active counts when capacity refuses another turn", async () => {
     const { limiter, clock } = setup({}, { maxLocalTurns: 2 });
     const first = proposal(clock, { turnId: "t1" });
     for (let index = 0; index < 3; index++) await limiter.checkProposal(first);
     await limiter.checkProposal(proposal(clock, { turnId: "t2" }));
-    await limiter.checkProposal(proposal(clock, { turnId: "t3" }));
-    // t1 was evicted locally; the authoritative count (3) is still used and the cap still holds.
+    expect(await limiter.checkProposal(proposal(clock, { turnId: "t3" }))).toEqual(fault);
+    // Capacity never evicts t1: the existing count still allows the remaining legitimate hits.
     let allowed = 3;
     for (let index = 0; index < 40; index++) if ((await limiter.checkProposal(first)).allowed) allowed++;
     expect(allowed).toBe(25);
@@ -482,17 +482,16 @@ describe("T116 limiter: review-hardening cases", () => {
     expect(store.calls.filter((call) => call.key.startsWith("turn:")).map((call) => call.rule?.windowSeconds)).toEqual([2, 2]);
   });
 
-  it("evicts old local turn counts so replica memory stays bounded", async () => {
-    const { limiter, clock, store } = setup({}, { maxLocalTurns: 1 });
+  it("bounds memory by denying new active turns, then reclaims slots after the turn lifetime", async () => {
+    const { limiter, clock, store, config } = setup({}, { maxLocalTurns: 1 });
     const first = proposal(clock, { turnId: "keep" });
-    for (let index = 0; index < 30; index++) await limiter.checkProposal(first);
+    for (let index = 0; index < config.proposalsPerTurn; index++) await limiter.checkProposal(first);
     const exhausted = store.calls.length;
-    await limiter.checkProposal(first);
+    expect(await limiter.checkProposal(proposal(clock, { turnId: "other" }))).toEqual(fault);
+    expect(await limiter.checkProposal(first)).toEqual(denied("rate_limited_turn", "turn_proposals"));
     expect(store.calls.length).toBe(exhausted);
-    await limiter.checkProposal(proposal(clock, { turnId: "other" }));
-    const afterOther = store.calls.length;
-    await limiter.checkProposal(first);
-    expect(store.calls.length).toBeGreaterThan(afterOther + 1);
+    clock.advance(config.turnBudgetMs / 1000 + 1);
+    expect(await limiter.checkProposal(proposal(clock, { turnId: "fresh" }))).toEqual({ allowed: true });
   });
 
   it("normalises the trusted tenant to lower case before it reaches the store", async () => {

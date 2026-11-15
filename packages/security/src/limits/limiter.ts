@@ -2,6 +2,7 @@ import { z } from "zod";
 import { RISK_LEVELS, type Clock, type IsoInstant, type LimitConfig, type RateLimiter, type RateLimitResult, type RateLimitRule, type ReasonCode, type RiskLevel, type TenantId, type TenantScope } from "@dap/contracts";
 import { snapshotAnswer } from "../gateway/answer-snapshot.js";
 import { assertTimeout, nativeTimer, underDeadline, type HookTimer } from "../gateway/deadline.js";
+import { wrapHook } from "../gateway/hook-wrapper.js";
 import { validateLimitConfig } from "./limit-config.js";
 
 /**
@@ -68,7 +69,7 @@ export interface LimiterOptions {
   /** Deadline for each port call; default 2000 ms. */
   readonly timeoutMs?: number;
   readonly timer?: HookTimer;
-  /** Per-replica cache of per-turn counts; evicting a count is always safe (default 10,000). */
+  /** Per-replica cache of per-turn counts; active counts are never evicted; capacity exhaustion denies (default 10,000). */
   readonly maxLocalTurns?: number;
 }
 
@@ -109,26 +110,23 @@ function boundedInteger(value: unknown, maximum: number, minimum: number): numbe
   return value;
 }
 
-/**
- * Per-replica counts. A count is only ever incremented immediately before the same hit is issued
- * to the shared store, so local <= shared; a local rejection is therefore always correct (and
- * costs no round trip). Eviction only lowers a local count, which stays safe.
- */
+interface LocalCount { count: number; readonly expiresAt: number; denial?: LimitVerdict }
+/** Keep active counts through the whole turn, including an epoch-window rollover. Full capacity fails closed. */
 class LocalCounts {
-  private readonly counts = new Map<string, number>();
-  constructor(private readonly capacity: number) {}
-  exhausted(id: string, cap: number): boolean { return (this.counts.get(id) ?? 0) >= cap; }
-  reserve(id: string, cap: number): boolean {
-    const count = this.counts.get(id) ?? 0;
-    if (count >= cap) return false;
-    this.counts.delete(id);
-    this.counts.set(id, count + 1);
-    while (this.counts.size > this.capacity) {
-      const oldest = this.counts.keys().next();
-      if (oldest.done) break;
-      this.counts.delete(oldest.value);
+  private readonly counts = new Map<string, LocalCount>();
+  constructor(private readonly capacity: number, private readonly lifetimeMs: number) {}
+  get(id: string, now: number): LocalCount {
+    // Entries are in creation order with a fixed lifetime; the caller rejects a backward clock.
+    for (const [key, entry] of this.counts) {
+      if (entry.expiresAt >= now) break;
+      this.counts.delete(key);
     }
-    return true;
+    const existing = this.counts.get(id);
+    if (existing) return existing;
+    if (this.counts.size >= this.capacity) throw new Error("Local turn capacity exhausted");
+    const entry: LocalCount = { count: 0, expiresAt: now + this.lifetimeMs };
+    this.counts.set(id, entry);
+    return entry;
   }
 }
 
@@ -154,33 +152,31 @@ export function createLimiter(options: LimiterOptions): Limiter {
   const userRule = config.perUserPerMinute;
   const capabilityRule = config.perUserPerCapabilityPerMinute;
   const riskRule = config.highRiskPerUserPerHour;
-  const proposalCounts = new LocalCounts(maxLocalTurns);
-  const executionCounts = new LocalCounts(maxLocalTurns);
+  const proposalCounts = new LocalCounts(maxLocalTurns, config.turnBudgetMs);
+  const executionCounts = new LocalCounts(maxLocalTurns, config.turnBudgetMs);
 
+  let lastNow = Number.NEGATIVE_INFINITY;
   function now(): number {
     const raw: unknown = clockPort.now();
     if (!instant.safeParse(raw).success) throw new TypeError("Invalid limiter clock");
     const ms = Date.parse(raw as string);
-    if (!Number.isFinite(ms)) throw new TypeError("Invalid limiter clock");
+    if (!Number.isFinite(ms) || ms < lastNow) throw new TypeError("Invalid limiter clock");
+    lastNow = ms;
     return ms;
   }
   const guarded = <R>(call: () => unknown, accept: (answer: unknown) => R): Promise<R | Fault> =>
     underDeadline<R | Fault>(call, (raw) => accept(snapshotAnswer(raw)), () => FAULT, timeoutMs, timer);
-  const readHit = (answer: unknown): RateLimitResult => {
-    if (answer === null || typeof answer !== "object") throw new TypeError("Invalid rate answer");
-    const { allowed, retryAfterSeconds } = answer as { allowed?: unknown; retryAfterSeconds?: unknown };
-    if (typeof allowed !== "boolean" || typeof retryAfterSeconds !== "number" || !Number.isSafeInteger(retryAfterSeconds) || retryAfterSeconds < 0) throw new TypeError("Invalid rate answer");
-    return { allowed, retryAfterSeconds };
-  };
+  const hitAnswer = z.strictObject({ allowed: z.boolean(), retryAfterSeconds: z.number().int().nonnegative() });
+  const readHit = (answer: unknown): RateLimitResult => hitAnswer.parse(answer);
   const hit = (scope: TenantScope, bucket: string, rule: RateLimitRule): Promise<RateLimitResult | Fault> => guarded(() => port.hit(scope, bucket, rule), readHit);
   const blocked = (scope: TenantScope, bucket: string): Promise<boolean | Fault> => guarded(() => port.isBlocked(scope, bucket), (answer) => {
     if (typeof answer !== "boolean") throw new TypeError("Invalid block answer");
     return answer;
   });
-  const block = (scope: TenantScope, bucket: string, seconds: number): Promise<true | Fault> => guarded(() => port.block(scope, bucket, seconds), (answer) => {
-    if (answer !== undefined) throw new TypeError("Invalid block answer");
-    return true as const;
-  });
+  const block = async (scope: TenantScope, bucket: string, seconds: number): Promise<true | Fault> => {
+    const answer = await wrapHook(() => port.block(scope, bucket, seconds), "void", { hookTimeoutMs: timeoutMs, timer })();
+    return answer.ok ? true : FAULT;
+  };
   /** Undefined means the hit was within the limit; anything else is the denial to return. */
   async function consume(scope: TenantScope, bucket: string, rule: RateLimitRule, reason: ReasonCode, limit: LimitKind): Promise<LimitVerdict | undefined> {
     const result = await hit(scope, bucket, rule);
@@ -205,20 +201,26 @@ export function createLimiter(options: LimiterOptions): Limiter {
       const localKey = turnLocalKey(scope, session, turn);
 
       if (depth > config.maxChainDepth) return deny("rate_limited_turn", "chain_depth");
-      const elapsed = now() - startedAt;
+      const time = now();
+      const elapsed = time - startedAt;
       if (elapsed < 0) return FAULT_VERDICT;
       if (elapsed > config.turnBudgetMs) return deny("rate_limited_turn", "turn_budget");
-      if (proposalCounts.exhausted(localKey, config.proposalsPerTurn)) return deny("rate_limited_turn", "turn_proposals");
+      const local = proposalCounts.get(localKey, time);
+      if (local.denial) return local.denial;
+      if (local.count >= config.proposalsPerTurn) return deny("rate_limited_turn", "turn_proposals");
 
       const throttled = await blocked(scope, denyBucket);
-      if (throttled === FAULT) return FAULT_VERDICT;
-      if (throttled) return deny("denial_throttle", "denial_throttle");
-      // Reserve and issue the shared hit in one synchronous step: local never exceeds shared.
-      if (!proposalCounts.reserve(localKey, config.proposalsPerTurn)) return deny("rate_limited_turn", "turn_proposals");
-      return await consume(scope, turnBucket, turnProposalRule, "rate_limited_turn", "turn_proposals")
+      if (throttled === FAULT) return local.denial = FAULT_VERDICT;
+      if (throttled) return local.denial = deny("denial_throttle", "denial_throttle");
+      // Reserve and issue the shared hit in one synchronous step; an active local count is never evicted.
+      if (local.count >= config.proposalsPerTurn) return deny("rate_limited_turn", "turn_proposals");
+      local.count++;
+      const verdict = await consume(scope, turnBucket, turnProposalRule, "rate_limited_turn", "turn_proposals")
         ?? await consume(scope, "tenant", tenantRule, "rate_limited_tenant", "tenant")
         ?? await consume(scope, userBucket, userRule, "rate_limited_user", "user")
         ?? ALLOW;
+      if (!verdict.allowed && verdict.reason === "dependency_failure") local.denial = verdict;
+      return verdict.allowed && now() - startedAt > config.turnBudgetMs ? deny("rate_limited_turn", "turn_budget") : verdict;
     } catch { return FAULT_VERDICT; }
   }
 
@@ -244,7 +246,9 @@ export function createLimiter(options: LimiterOptions): Limiter {
       const turn = identifier(field(input, "turnId"));
       const bucket = key("turn:executions", session, turn);
       const localKey = turnLocalKey(scope, session, turn);
-      if (!executionCounts.reserve(localKey, config.executionsPerTurn)) return deny("rate_limited_turn", "turn_executions");
+      const local = executionCounts.get(localKey, now());
+      if (local.count >= config.executionsPerTurn) return deny("rate_limited_turn", "turn_executions");
+      local.count++;
       return await consume(scope, bucket, turnExecutionRule, "rate_limited_turn", "turn_executions") ?? ALLOW;
     } catch { return FAULT_VERDICT; }
   }
