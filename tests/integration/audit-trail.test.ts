@@ -77,7 +77,7 @@ describe("T084 audit trail (SC-008)", () => {
       mutate("a denial's reason is replaced", (copy) => copy.map((event, index) => index === deniedIndex ? { ...event, reason: "allowed" as never } : event)),
       mutate("the resource is omitted", (copy) => copy.map((event, index) => index === confirmIndex ? { ...event, resource: null } : event)),
       mutate("the tenant is dropped", (copy) => copy.map((event) => ({ ...event, tenantId: "" as never }))),
-      mutate("the action is dropped from the decision", (copy) => copy.map((event, index) => index === deniedIndex ? { ...event, actionId: null } : event)),
+      mutate("the action is dropped from the whole request (a decision alone still names it through the proposal, so both go)", (copy) => copy.map((event) => event.requestId === events[deniedIndex]!.requestId ? { ...event, actionId: null } : event)),
     ];
     for (const [name, corrupted] of mutants) expect(reconstruct(corrupted), name).not.toEqual(EXPECTED);
     // a decision recorded twice is not a different reading but an inconsistent trail: it is refused outright
