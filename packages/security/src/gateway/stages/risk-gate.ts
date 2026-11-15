@@ -35,6 +35,10 @@ function handle(ids: Pick<IdGenerator, "newConfirmationId">): unknown {
  * ALLOWED (that belongs to execute alone). A REQUIRES_CONFIRMATION decision carries a handle from the id generator that names no record yet:
  * the planner feedback built from it has no id or token, and the confirmation service (T104) will own what the handle stands for.
  *
+ * NO CONFIRMATION RECORD EXISTS until that optional confirmation service is built. The handle is reserved, not stored: the `pending` state that
+ * the AI_CONFIRMATION_REQUIRED audit event records for it is the decision's state, not a stored confirmation, and nothing can accept or reject it
+ * (the service's `decide` answers `not_found`). Reviewers must not read that audit record as evidence of a stored confirmation.
+ *
  * The class and the policy come from the proven definition snapshot (each read once), and must agree with what resolve published; nothing from the
  * proposal is read. Any missing, malformed or inconsistent fact is a `dependency_failure`.
  */
