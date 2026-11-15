@@ -3,12 +3,13 @@ import type {
   IdGenerator, PageContextProvider, PermissionChecker, PolicyGateway, RateLimiter, ReplayGuard, ResourceAuthorizer,
   SecurityStateStore, TenantActionPolicyStore,
 } from "@dap/contracts";
-import { createLimiter } from "../limits/limiter.js";
+import { createLimiter, type Limiter } from "../limits/limiter.js";
 import { validateGatewayConfig } from "../limits/limit-config.js";
 import { snapshotAnswer } from "./answer-snapshot.js";
 import { createPipeline, type PipelineOptions, type StageMap } from "./pipeline.js";
 import { withDeferredLimitDenials } from "./stages/limit-recording.js";
 import { auditRateDenial } from "./rate-audit.js";
+import { recordFinalDenial } from "./denial-throttle.js";
 import { createProposalGateway } from "./submitter.js";
 import { createIntakeStage } from "./stages/intake.js";
 import { createRateLimitStage } from "./stages/rate-limit.js";
@@ -85,13 +86,16 @@ function captureDependencies(source: GatewayDependencies): GatewayDependencies {
   } catch { throw new TypeError("Missing or invalid gateway dependency"); }
 }
 
+function createGatewayLimiter(deps: GatewayDependencies): Limiter {
+  return createLimiter({ rateLimiter: deps.state.rateLimiter, config: deps.config.limits, clock: deps.clock, timeoutMs: deps.config.hookTimeoutMs });
+}
+
 /**
  * The D6 stages implemented so far, bound to the captured dependencies. Positions not listed stay absent, and the
  * pipeline denies fail-closed at the first absent one. Exported for tests only; not part of the package surface.
  */
-export function composeStages(deps: GatewayDependencies): StageMap {
+export function composeStages(deps: GatewayDependencies, limiter: Limiter = createGatewayLimiter(deps)): StageMap {
   const options = { hookTimeoutMs: deps.config.hookTimeoutMs };
-  const limiter = createLimiter({ rateLimiter: deps.state.rateLimiter, config: deps.config.limits, clock: deps.clock, timeoutMs: deps.config.hookTimeoutMs });
   const caps = { maxPayloadBytes: deps.config.maxPayloadBytes, maxJsonDepth: deps.config.maxJsonDepth };
   return {
     context: createContextStage(deps.clock, options),
@@ -111,11 +115,13 @@ export function pipelineOptions(config: GatewayConfig): PipelineOptions {
 
 export function createPolicyGateway(source: GatewayDependencies): Readonly<{ proposals: PolicyGateway; confirmations: ConfirmationService }> {
   const deps = captureDependencies(source);
-  const pipeline = createPipeline(composeStages(deps), pipelineOptions(deps.config));
+  const limiter = createGatewayLimiter(deps);
+  const pipeline = createPipeline(composeStages(deps, limiter), pipelineOptions(deps.config));
   const proposals = createProposalGateway({ pipeline: {
     async run(input) {
       const decision = await withDeferredLimitDenials(() => pipeline.run(input));
       await auditRateDenial(deps, input, decision);
+      await recordFinalDenial(limiter, input, decision);
       return decision;
     },
   }, ids: deps.ids });

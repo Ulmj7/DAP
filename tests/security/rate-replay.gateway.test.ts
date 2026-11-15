@@ -77,6 +77,38 @@ describe("T108 real gateway rate controls through stage 6", () => {
     expect(h.target.audit.events.at(-1)).toMatchObject({ type: "AI_RATE_LIMITED", reason: "denial_throttle" });
     expect(h.permissions).toBe(1);
   });
+  it("ATK-RATE-05 EVERY final denial counts toward the throttle: unknown actions, malformed envelopes and replays block the session", async () => {
+    const unknown = { action: "deleteEverything", params: {} };
+    for (const denials of [[...Array(6)].map((_, index) => ({ callId: `u-${index}`, raw: unknown })),
+      [...Array(6)].map((_, index) => ({ callId: `m-${index}`, raw: { action: "testSafeEcho", params: {}, callId: "model-chosen" } }))]) {
+      const h = gatewaySequence();
+      for (const [index, item] of denials.entries()) await h.target.submitAs(actor({ turn: `turn-${index}` }), item);
+      expect(await h.target.submitAs(actor({ turn: "after" }), call("after"))).toEqual(retry);
+      expect(h.target.audit.events.at(-1)).toMatchObject({ type: "AI_RATE_LIMITED", reason: "denial_throttle" });
+      expect(h.permissions).toBe(0);
+      // Only that AI session is blocked; the same user in a new session proceeds to stage 6.
+      expect(await h.target.submitAs(actor({ session: "other-session", turn: "t" }), call("other"))).toEqual(retry);
+      expect(h.permissions).toBe(1);
+    }
+    const replays = gatewaySequence();
+    await replays.target.submitAs(actor({ turn: "t0" }), call("same"));
+    for (let index = 1; index <= 6; index++) await replays.target.submitAs(actor({ turn: `t${index}` }), call("same"));
+    expect(await replays.target.submitAs(actor({ turn: "after" }), call("fresh"))).toEqual(retry);
+    expect(replays.target.audit.events.at(-1)).toMatchObject({ type: "AI_RATE_LIMITED", reason: "denial_throttle" });
+  });
+  it("ATK-RATE-05 denials below the threshold do not block, and rate denials are not double counted", async () => {
+    const h = gatewaySequence();
+    for (let index = 0; index < 5; index++) await h.target.submitAs(actor({ turn: `turn-${index}` }), { callId: `u-${index}`, raw: { action: "deleteEverything", params: {} } });
+    const before = h.permissions;
+    await h.target.submitAs(actor({ turn: "ok" }), call("ok"));
+    expect(h.permissions).toBe(before + 1);
+    const tight = gatewaySequence({ config: configured({ perUserPerMinute: { limit: 1, windowSeconds: 60 } }) });
+    await tight.target.submitAs(actor({ turn: "a" }), call("a"));
+    for (let index = 0; index < 5; index++) await tight.target.submitAs(actor({ turn: `x${index}` }), call(`x${index}`));
+    const writes = tight.target.sharedStoreCalls!;
+    await tight.target.submitAs(actor({ turn: "y" }), call("y"));
+    expect(tight.target.sharedStoreCalls! - writes).toBeLessThanOrEqual(8);
+  });
   it("ATK-RATE-02/03 user and capability quotas emit the matching rate denial", async () => {
     for (const [control, reason] of [["perUserPerMinute", "rate_limited_user"], ["perUserPerCapabilityPerMinute", "rate_limited_capability"]] as const) {
       const h = gatewaySequence({ config: configured({ [control]: { limit: 1, windowSeconds: 60 } }) });
