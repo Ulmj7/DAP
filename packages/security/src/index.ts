@@ -36,3 +36,4 @@ export { noopTelemetry, safeTelemetry } from "./gateway/telemetry.js";
 export type { GatewayTelemetry, DecisionSample, AuditWriteKind, DependencyName, RateLimitScope } from "./gateway/telemetry.js";
 export { buildConfirmationFields, definitionDrift, effectiveTtlSeconds, requiresConfirmation, sanitizeDisplayText, verifyBinding, MAX_CONFIRMATION_TTL_SECONDS } from "./confirmation/binding.js";
 export type { BindingCheck, ConfirmationBindingInput } from "./confirmation/binding.js";
+export { InMemoryConfirmationStore } from "./state/memory/confirmations.js";
