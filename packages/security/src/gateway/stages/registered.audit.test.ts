@@ -26,10 +26,15 @@ describe("what the proof keeps for the audit and execute stages", () => {
     expect(reads).toBe(1);
   });
 
-  it.each([["no audit", {}], ["a null audit", { audit: null }], ["audit that is a string", { audit: "x" }], ["params that are not a list", { audit: { params: "x" } }], ["a throwing getter", { get audit(): never { throw new Error("CANARY"); } }]])(
+  it.each([["no audit", {}], ["a null audit", { audit: null }], ["audit that is a string", { audit: "x" }], ["params that are not a list", { audit: { params: "x" } }]]])(
     "records nothing for %s", (_name, definition) => {
       expect(provenDefinition(registryOf(definition), resolved)!.auditParams).toEqual([]);
     });
+
+  it("records nothing when the audit getter throws", () => {
+    const definition = { id: "openProject", version: 2, get audit(): never { throw new Error("CANARY"); } };
+    expect(provenDefinition((() => ({ definition, definitionHash: HASH })) as never, resolved)!.auditParams).toEqual([]);
+  });
 
   it("drops each malformed rule and keeps the good ones", () => {
     const params = [null, 5, "x", {}, { path: 5, mode: "plain" }, { path: "/a", mode: "loud" }, { path: "/a" }, { path: "/ok", mode: "plain" }, { path: "/m", mode: "masked" }];
