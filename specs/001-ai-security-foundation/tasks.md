@@ -57,7 +57,7 @@ Completed task IDs and their `[X]` state are unchanged. Every open task now carr
 Implemented code in OPTIONAL and FUTURE areas **stays in the repository**; the tag only says whether
 completing the task is required.
 
-**Open task counts (2026-11-16, after adding T104a): REQUIRED 26, OPTIONAL 21, FUTURE 9.**
+**Open task counts (2026-11-16, after completing T089, T090, T104a and T146): REQUIRED 23, OPTIONAL 21, FUTURE 9.**
 
 **Branch handling.** `exec` is REQUIRED critical-path work. `attacks2` is merged only for the
 representative trust-boundary tests. `confirm-store` is OPTIONAL: preserved, does not block M1.
@@ -73,7 +73,7 @@ criteria in spec.md "Scope Declaration" hold.
 
 | Step | Tasks | What it delivers | M1 criteria |
 |------|-------|------------------|-------------|
-| 1 | T089, T090 | Audit and execute stages, runner result (merge branch `exec` after QA) | 1, 2, 7, 10 |
+| 1 | T089, T090, T146 | Audit and execute stages, runner result, per-turn execution cap | 1, 2, 7, 10 |
 | 2 | T104a | Deterministic risk-decision stage (stage 7); `ALLOWED` becomes reachable for SAFE and LOW | 1 |
 | 3 | T070, T078 | Minimal gateway test world with the real chain; closes T078 | 1 to 10 enabled |
 | 4 | T052, T053, T054, T072, T073 | Representative denial scenarios through the real gateway | 3, 4, 5, 6, 10 |
@@ -84,8 +84,10 @@ criteria in spec.md "Scope Declaration" hold.
 | 9 | T071, T140 | M1 gate and the CI checks it needs | all |
 | 10 | T142, T143, T144, T145 | M1 documentation and validation against Constitution 2.0.0 | all |
 
-Total M1 tasks: 26 (T056 is already done). Order inside a step is free; steps are ordered by
+Total M1 tasks: 27 (T056 is already done; T089, T090, T104a and T146 are done; 23 remain open). Order inside a step is free; steps are ordered by
 dependency.
+
+- [X] T146 [REQUIRED] Enforce the configured per-turn execution cap after authorization, risk and confirmation, immediately before allow audit and execution. Built: the audit stage claims exactly one slot through the existing limiter gate before the durable allow-event; refusals and limiter faults fail closed, and failed execution attempts retain their slots.
 
 ## OPTIONAL and FUTURE tasks (not required for Feature 001)
 
