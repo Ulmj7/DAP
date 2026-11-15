@@ -20,6 +20,15 @@ describe("T118 purge migration", () => {
       expect((await client.query(policies)).rows).toEqual(before);
     } finally { await client.query("ROLLBACK"); client.release(); }
   });
+  it("refuses a state table without forced RLS", async () => {
+    const client = await owner.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("ALTER TABLE public.sec_rate_blocks NO FORCE ROW LEVEL SECURITY");
+      const migration = await readFile(new URL("../../../../../db/migrations/060_sec_state_purge.sql", import.meta.url), "utf8");
+      await expect(client.query(migration)).rejects.toThrow("State tables must be owned by dap_owner with forced row level security");
+    } finally { await client.query("ROLLBACK"); client.release(); }
+  });
   it("only dap_owner may apply it", async () => {
     const client = await app.connect();
     try {
