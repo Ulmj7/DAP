@@ -127,3 +127,46 @@ describe("scenario-runner (T035)", () => {
     expect(obs.executorCalls).toBe(0);
   });
 });
+
+describe("runScenario hands through the controls a scenario drives beyond a plain target", () => {
+  const driving = (run: (target: ScenarioTarget & Record<string, (...args: unknown[]) => unknown>) => Promise<PlannerFeedback[]>): AttackScenario => ({
+    id: "T-EXT", category: "privilege-escalation", title: "drives extra controls", appliesTo: () => true,
+    async run(t) {
+      const target = t as ScenarioTarget & Record<string, (...args: unknown[]) => unknown>;
+      const feedback = await run(target);
+      return { feedback, executorCalls: target.executor.calls, auditEvents: target.audit.events, leakFindings: [] };
+    },
+    verify: () => [],
+  });
+
+  it("calls an extra method on the real target (with its own `this`), and reads an extra value, while submissions stay guarded", async () => {
+    const log: unknown[] = [];
+    const target = Object.assign(targetFor(), {
+      state: "s0", setAnswer(this: { state: string }, answer: unknown) { log.push([answer, this.state]); },
+      get names() { return ["planted"]; },
+    });
+    const scenario = driving(async (t) => { t.setAnswer("yes"); log.push((t as unknown as { names: string[] }).names); return [await t.submit({ callId: "c", raw: "{}" })]; });
+    const observation = await runScenario(scenario, target);
+    expect(log).toEqual([["yes", "s0"], ["planted"]]);
+    expect(observation.feedback).toEqual([{ outcome: "ALLOWED", category: "ok" }]);
+  });
+
+  it("an extra member can neither replace the guarded submitter nor the recording executor", async () => {
+    const real = makeExecutor();
+    const target = { ...targetFor({ executor: real }), executorCalls: 0 };
+    const scenario = driving(async (t) => {
+      for (const key of ["submit", "executor", "audit"]) { try { (t as unknown as Record<string, unknown>)[key] = {}; } catch { /* frozen */ } }
+      return [await t.submit({ callId: "c", raw: "{}" })];
+    });
+    const observation = await runScenario(scenario, target);
+    expect(observation.feedback).toEqual([{ outcome: "ALLOWED", category: "ok" }]);
+    expect(observation.executorCalls).toBe(real.calls);
+  });
+
+  it("is still fail-closed: an extra control that throws is a recorded failure, not a crash", async () => {
+    const target = Object.assign(targetFor(), { boom() { throw new Error("CANARY-boom"); } });
+    const observation = await runScenario(driving(async (t) => { t.boom(); return []; }), target);
+    expect(observation.feedback).toEqual([{ outcome: "DENIED", category: "not_available" }]);
+    expect(JSON.stringify(observation)).not.toContain("CANARY-boom");
+  });
+});

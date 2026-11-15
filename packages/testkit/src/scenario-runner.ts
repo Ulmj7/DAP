@@ -86,7 +86,7 @@ export async function runScenario(
         throw new Error("Unreadable planner output");
       }
     };
-    const observedTarget: ScenarioTarget = Object.freeze({
+    const base = {
       actionId, risk, changesState, targetsResource, requiresConfirmation, planner, executor, audit,
       get visibleOutput() { return visibleOutput(); },
       async submit(call: ProposalCall): Promise<PlannerFeedback> {
@@ -102,7 +102,18 @@ export async function runScenario(
         submitted.push(captured);
         return captured;
       },
-    });
+    };
+    // The controls a scenario drives beyond a plain target (PrivilegeTarget, TenantAttackTarget: `setPermissionAnswer`, `resourceProposal`, ...)
+    // are handed through as they are. They cannot replace the guarded members above, and every submission still goes through the guarded `submit`.
+    const extras: PropertyDescriptorMap = {};
+    for (const key of Reflect.ownKeys(target)) {
+      if (Object.prototype.hasOwnProperty.call(base, key)) continue;
+      const value: unknown = Reflect.get(target, key);
+      extras[key] = typeof value === "function"
+        ? { enumerable: true, value: (...args: unknown[]): unknown => Reflect.apply(value, target, args) }
+        : { enumerable: true, get: (): unknown => Reflect.get(target, key) };
+    }
+    const observedTarget: ScenarioTarget = Object.freeze(Object.defineProperties(base, extras));
     try {
       const report: unknown = await scenario.run(observedTarget);
       if (!report || typeof report !== "object") throw new TypeError("Invalid observation");
