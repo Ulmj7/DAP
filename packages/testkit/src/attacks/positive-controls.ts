@@ -27,6 +27,9 @@ export interface PositiveObservation extends AttackObservation {
   readonly receivedParams: readonly unknown[];
 }
 
+/** The Gateway hands the executor deeply frozen, null-prototype data; equality is of the data, not of the prototype (which isDeepStrictEqual would also compare). */
+const sameData = (received: unknown, expected: unknown): boolean => isDeepStrictEqual(JSON.parse(JSON.stringify(received)), JSON.parse(JSON.stringify(expected)));
+
 async function drive(target: PositiveTarget, id: string): Promise<PositiveObservation> {
   const proposal = target.validProposal();
   const feedback = [await target.submit({ callId: `${id}-0`, raw: proposal.raw })];
@@ -45,7 +48,7 @@ export const positiveScenarios: readonly AttackScenario[] = [
       if (observation.executorCalls !== 1) v.push("the executor did not run exactly once");
       const types = observation.auditEvents.map((event) => event.type);
       if (!isDeepStrictEqual(types, ["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED", "AI_ACTION_EXECUTED"])) v.push("the trail is not PROPOSED, ALLOWED, EXECUTED");
-      if (o.receivedParams === undefined || o.receivedParams.length !== 1 || !isDeepStrictEqual(o.receivedParams[0], o.validated)) v.push("the executor did not receive exactly the validated parameters");
+      if (o.receivedParams === undefined || o.receivedParams.length !== 1 || !sameData(o.receivedParams[0], o.validated)) v.push("the executor did not receive exactly the validated parameters");
       return v;
     },
   },

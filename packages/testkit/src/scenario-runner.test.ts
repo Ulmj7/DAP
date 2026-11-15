@@ -187,6 +187,18 @@ describe("runScenario hands through the controls a scenario drives beyond a plai
     expect(checked).toBe(true);
     expect(observation.feedback).toHaveLength(1); expect(observation.leakFindings).toEqual([]);
   });
+  it("hands through the two controls of the secret-extraction target (plantCanaries, failPermissionsWith) and still hides every other member", async () => {
+    const log: unknown[] = [];
+    const target = Object.assign(targetFor(), { plantCanaries() { log.push("planted"); }, failPermissionsWith(message: string) { log.push(message); }, setExecutorResult() { log.push("hidden"); } });
+    const observation = await runScenario(driving(async (t) => {
+      const view = t as unknown as Record<string, (...args: unknown[]) => void>;
+      view.plantCanaries!(); view.failPermissionsWith!("boom");
+      expect(Object.hasOwn(view, "setExecutorResult")).toBe(false);
+      return [await t.submit({ callId: "c", raw: "{}" })];
+    }), target);
+    expect(log).toEqual(["planted", "boom"]);
+    expect(observation.leakFindings).toEqual([]);
+  });
   it("a caught throwing control still invalidates the observation", async () => {
     const target = Object.assign(targetFor(), { setPermissionAnswer() { throw new Error("CONTROL_SECRET"); } });
     const observation = await runScenario(driving(async (t) => {

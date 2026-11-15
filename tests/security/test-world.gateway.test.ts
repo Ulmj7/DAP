@@ -177,6 +177,36 @@ describe("world controls added for the denial scenarios", () => {
   });
 });
 
+describe("world controls added for the evidence scenarios", () => {
+  it("failPermissionsWith makes the host's permission hook throw that message: the planner hears only try-later, and undefined stops it", async () => {
+    const world = withGateway();
+    const alice = await world.submitterFor(A_ALICE);
+    world.failPermissionsWith("hook down: CANARY");
+    expect(await alice.submit(world.proposal("testSafeEcho"))).toEqual({ outcome: "DENIED", category: "try_later" });
+    expect(world.executorCalls()).toBe(0);
+    world.failPermissionsWith(undefined);
+    expect((await alice.submit(world.proposal("testSafeEcho"))).outcome).toBe("ALLOWED");
+  });
+  it("a recording executor that fails after being recorded counts as a call, and stops failing on request", async () => {
+    const world = withGateway();
+    world.executor("testSafeEcho").failWith("boom");
+    expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"))).toEqual({ outcome: "ALLOWED", category: "try_later" });
+    expect(world.executor("testSafeEcho").calls).toBe(1);
+    world.executor("testSafeEcho").failWith(undefined);
+    expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"))).toEqual({ outcome: "ALLOWED", category: "ok" });
+    expect(world.executor("testSafeEcho").calls).toBe(2);
+  });
+  it("the host's service identity bait counts calls and a gateway run never makes one", async () => {
+    const world = withGateway();
+    await world.submit(A_ALICE, world.proposal("testSafeEcho"));
+    expect(world.serviceIdentityCalls()).toBe(0);
+    world.hostServiceIdentity.serviceContext();
+    expect(world.serviceIdentityCalls()).toBe(1);
+    world.reset();
+    expect(world.serviceIdentityCalls()).toBe(0);
+  });
+});
+
 describe("a wrong-tenant, inaccessible or nonexistent resource is denied with the same bytes", () => {
   it("other tenant, nonexistent and same-tenant-unauthorized look identical to the planner, and the executor stays at zero", async () => {
     const world = withGateway();

@@ -121,7 +121,7 @@ export async function runScenario(
       },
     };
     // Only the attack target interfaces' controls cross this boundary; never arbitrary world or mint handles.
-    for (const key of ["validProposal", "setPermissionAnswer", "setReportedPage", "expireSession", "resourceProposal", "setResourceAnswer", "foreignResource", "foreignDisplayNames"] as const) {
+    for (const key of ["validProposal", "setPermissionAnswer", "setReportedPage", "expireSession", "resourceProposal", "setResourceAnswer", "foreignResource", "foreignDisplayNames", "plantCanaries", "failPermissionsWith"] as const) {
       if (!Reflect.has(target, key)) continue;
       if (key === "foreignDisplayNames") {
         Object.defineProperty(base, key, { enumerable: true, get: () => capture(() => Reflect.get(target, key)) });

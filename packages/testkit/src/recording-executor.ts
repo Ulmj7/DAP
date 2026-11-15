@@ -32,6 +32,7 @@ export class RecordingExecutor<TParams = unknown, TValue = unknown>
 {
   private readonly log: ExecutionCall<TParams>[] = [];
   private nextResult: ExecutionResult<TValue>;
+  private failure: string | undefined;
 
   /** The defineExecutor-guarded executor. This is the ONLY way the body can run. */
   readonly executor: ActionExecutor<TParams, TValue>;
@@ -50,6 +51,8 @@ export class RecordingExecutor<TParams = unknown, TValue = unknown>
         catch { throw new TypeError("RecordingExecutor received unreadable arguments"); }
         // Replace our immutable entry only after capture succeeds; entry evidence is never lost.
         log[index] = Object.freeze({ ...call, ...data });
+        // A trusted dependency failing inside the body, with a message the scenario chose (it must never reach the planner or the trail).
+        if (this.failure !== undefined) throw new Error(this.failure);
         return this.nextResult;
       },
     });
@@ -58,6 +61,11 @@ export class RecordingExecutor<TParams = unknown, TValue = unknown>
   /** Change the result returned by the next (and following) guarded calls. */
   setNextResult(result: ExecutionResult<TValue>): void {
     this.nextResult = snapshotData(result);
+  }
+
+  /** Make the body throw an error with this message after it has been recorded (`undefined`: stop throwing). */
+  failWith(message: string | undefined): void {
+    this.failure = message;
   }
 
   /** Number of times the executor body actually ran. */
