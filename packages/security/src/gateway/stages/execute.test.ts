@@ -28,12 +28,12 @@ class ManualTimer implements HookTimer {
   clearTimeout(handle: unknown): void { this.pending.delete(handle as number); }
   advance(ms: number): void { this.time += ms; for (const [id, entry] of [...this.pending]) if (entry.at <= this.time) { this.pending.delete(id); entry.callback(); } }
 }
-function build(options: ChainOptions & { executors?: ExecutorTable; timer?: HookTimer } = {}) {
+function build(options: ChainOptions & { executors?: ExecutorTable; timer?: HookTimer; eventsClock?: () => unknown } = {}) {
   const world = chain(options);
   const mints: GrantBinding[] = [];
   const failures: string[] = [];
   const telemetry = { auditWriteFailed: (kind: string) => { failures.push(kind); } } as never;
-  const events = createAuditEventFactory({ clock: world.deps.clock });
+  const events = createAuditEventFactory({ clock: options.eventsClock === undefined ? world.deps.clock : { now: options.eventsClock as never } });
   const writer = createAuditWriter({ sink: world.deps.audit, telemetry });
   const stage = createExecuteStage({
     registry: world.registry, executors: options.executors ?? world.deps.executors, events, writer, telemetry,
@@ -112,6 +112,77 @@ describe("a recorded, consistent proposal is executed once, with exactly what it
     const [event] = await world.events();
     expect(event).toMatchObject({ type: "AI_ACTION_EXECUTED", outcome: "ALLOWED", reason: "allowed", executionResult: "success", actionId: "openProject", definitionVersion: 2, risk: "SAFE", requestId: "request", resource: { type: "project", id: "p1" }, paramsView: { "/projectId": "p1", "/note": "[masked]" } });
     expect(JSON.stringify(event)).not.toMatch(/SECRET_NOTE|RAW_NOTE|Project One/);
+  });
+});
+
+describe("what reaches the executor and the record in the other shapes", () => {
+  const rawTable = (calls: unknown[], extra: (call: ExecutionCall<unknown>) => void = () => undefined): ExecutorTable => {
+    const executor = { id: "openProjectExecutor" as ExecutorId, async execute(this: unknown, call: ExecutionCall<unknown>) { calls.push({ receiver: this, call }); extra(call); return { status: "success" as const }; } };
+    return { executorFor: () => executor };
+  };
+
+  it("hands over a deeply frozen call, a frozen resource ref, and calls the executor as a method of the host's own object", async () => {
+    const calls: { receiver: unknown; call: ExecutionCall<unknown> }[] = [];
+    const table = rawTable(calls as never);
+    const { stage, facts } = build({ executors: table });
+    await stage(recordOf(facts()));
+    expect(calls).toHaveLength(1);
+    const { call, receiver } = calls[0]!;
+    expect(Object.isFrozen(call)).toBe(true);
+    expect(Object.isFrozen(call.resource)).toBe(true);
+    expect(Object.isFrozen((call.resource as { ref: object }).ref)).toBe(true);
+    expect(receiver).toBe(table.executorFor("x" as ExecutorId));
+  });
+
+  it("an executor id that is not text is never looked up", async () => {
+    let lookups = 0;
+    const real = build();
+    const registry = { ...real.world.registry, get: (id: string) => { const entry = real.world.registry.get(id)!; return { definition: { ...entry.definition, executorId: 5 }, definitionHash: entry.definitionHash }; } };
+    const stage = createExecuteStage({ registry: registry as never, executors: { executorFor: () => { lookups++; return undefined; } }, events: createAuditEventFactory({ clock: real.world.deps.clock }), writer: createAuditWriter({ sink: real.world.deps.audit }) }) as PolicyStage;
+    const result = stopOf(await stage(recordOf(real.facts())));
+    expect(result.decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
+    expect(lookups).toBe(0);
+  });
+
+  it("rounds a fractional remaining budget down for the executor's deadline", async () => {
+    const timer = new ManualTimer();
+    const { stage, facts } = build({ execute: () => new Promise(() => {}), timer });
+    const pending = stage(recordOf(facts(), { budget: { remainingMs: () => 500.9 } }));
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+    expect([...timer.pending.values()].map((entry) => entry.at)).toEqual([500]);
+    timer.advance(500);
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+    expect(stopOf(await pending).executionStatus).toBe("failure");
+  });
+
+  it("records an accepted confirmation, a higher risk and its decision exactly, in the result record and the ALLOWED decision", async () => {
+    const { stage, world } = build();
+    const base = goodFacts(world, { risk: "HIGH" });
+    const facts = withAudit({ ...bend(base, "risk", { confirmation: "accepted" }), confirmation: { state: "accepted", confirmationId: CONFIRMATION } });
+    const result = stopOf(await stage(recordOf(facts)));
+    expect(result.decision).toMatchObject({ outcome: "ALLOWED", risk: "HIGH" });
+    expect((await world.events())[0]).toMatchObject({ type: "AI_ACTION_EXECUTED", risk: "HIGH", confirmationId: CONFIRMATION, confirmationState: "accepted" });
+  });
+
+  it("a failure that names an affected resource does not get to choose what the record says changed", async () => {
+    const { stage, world, facts } = build({ execute: () => ({ status: "failure", code: "x", affected: { type: "project", id: "p9" } }) as never });
+    await stage(recordOf(facts()));
+    expect((await world.events())[0]).toMatchObject({ executionResult: "failure", resource: { type: "project", id: "p1" } });
+  });
+
+  it("ignores an affected resource whose id is not text", async () => {
+    const { stage, world, facts } = build({ execute: () => ({ status: "success", affected: { type: "project", id: 5 } }) as never });
+    await stage(recordOf(facts()));
+    expect((await world.events())[0]!.resource).toEqual({ type: "project", id: "p1" });
+  });
+
+  it("a result record that cannot be dated is counted as failed and changes nothing", async () => {
+    const { stage, failures, world, facts } = build({ eventsClock: () => { throw new Error("CANARY"); } });
+    const result = stopOf(await stage(recordOf(facts())));
+    expect(result.executionStatus).toBe("success");
+    expect(result.decision).toMatchObject({ outcome: "ALLOWED" });
+    expect(failures).toEqual(["executed"]);
+    expect(world.executorCalls).toHaveLength(1);
   });
 });
 

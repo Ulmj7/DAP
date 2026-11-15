@@ -20,7 +20,7 @@ function affectedRef(value: unknown): ResourceRef | undefined {
   const keys = Reflect.ownKeys(value);
   const type: unknown = Reflect.get(value, "type");
   const id: unknown = Reflect.get(value, "id");
-  return keys.length === 2 && isText(type) && isText(id) ? Object.freeze({ type, id }) : undefined;
+  return keys.length === 2 && isText(type) && isText(id) ? { type, id } : undefined;
 }
 
 /**
@@ -82,10 +82,12 @@ export function createExecuteStage({ registry, executors, events, writer, teleme
     const status = await underDeadline<ExecutionStatus>(
       () => Reflect.apply(run as ActionExecutor["execute"], executor, [call]),
       (raw) => {
-        const result = snapshotAnswer(raw) as { readonly status?: unknown; readonly affected?: unknown } | null;
-        if (result === null || typeof result !== "object" || (result.status !== "success" && result.status !== "failure")) throw new TypeError("Invalid executor result");
-        if (result.status === "success") affected = affectedRef(result.affected);
-        return result.status;
+        const result = snapshotAnswer(raw) as { readonly status?: unknown; readonly affected?: unknown } | null | undefined;
+        // (A result that is null, undefined or not an object has no status: the optional chain reads it as absent.)
+        const reported = result?.status;
+        if (reported !== "success" && reported !== "failure") throw new TypeError("Invalid executor result");
+        if (reported === "success") affected = affectedRef(result?.affected);
+        return reported;
       },
       () => "failure",
       left, timer,

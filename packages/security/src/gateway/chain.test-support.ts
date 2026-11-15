@@ -27,6 +27,8 @@ export interface ChainOptions {
   readonly timer?: PipelineOptions["timer"];
   /** What the host clock says; the context's own session runs 2026-01-01T00:00:00Z to 01:00:00Z. */
   readonly now?: string;
+  /** Overrides the clock port entirely (it may throw, hang or answer anything). */
+  readonly clock?: () => unknown;
   readonly config?: Partial<GatewayDependencies["config"]>;
 }
 
@@ -67,7 +69,7 @@ export function chain(options: ChainOptions = {}) {
       resources: { resolve: async (_ctx, ref) => { hostCalls.push("resolve"); return (options.resolveResource ?? (() => ({ ...resolved(), ref })))() as ResolvedResource; } },
       pages: { currentPage: async () => "page" as PageId },
     },
-    clock: { now: () => (options.now ?? "2026-01-01T00:00:00Z") as IsoInstant }, config: { ...base.config, ...options.config },
+    clock: { now: (options.clock ?? (() => options.now ?? "2026-01-01T00:00:00Z")) as () => IsoInstant }, config: { ...base.config, ...options.config },
   };
   const pass: PolicyStage = () => ({ kind: "continue", data: {} });
   /** Stand-ins for the D6 positions that are not built yet, reporting the facts the real stages will. */

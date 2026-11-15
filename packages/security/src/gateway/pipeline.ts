@@ -72,7 +72,7 @@ function captureResult(raw: unknown, request: PipelineRecord, stage: PipelineSta
   // Reject extra fields before copying: promise assimilation may already have read `then`.
   const keys = Reflect.ownKeys(raw);
   const reported = keys.includes("executionStatus");
-  if (keys.length !== (reported ? 3 : 2) || !keys.includes("kind") || (!keys.includes("data") && !keys.includes("decision")) || (reported && !keys.includes("decision"))) throw new TypeError("Invalid stage result fields");
+  if (keys.length !== (reported ? 3 : 2) || !keys.includes("kind") || (!keys.includes("data") && !keys.includes("decision"))) throw new TypeError("Invalid stage result fields");
   const captured = snapshotAnswer(raw);
   if (!captured || typeof captured !== "object" || Array.isArray(captured)) throw new TypeError("Invalid stage result");
   const value = captured as Record<string, unknown>;
@@ -80,7 +80,7 @@ function captureResult(raw: unknown, request: PipelineRecord, stage: PipelineSta
     if (!continuing.safeParse(value).success) throw new TypeError("Invalid stage continuation");
     return captured as StageResult;
   }
-  if (value.kind !== "stop" || !Object.hasOwn(value, "decision")) throw new TypeError("Invalid stage stop");
+  if (value.kind !== "stop") throw new TypeError("Invalid stage stop");
   const status = value.executionStatus;
   if (reported && status !== "success" && status !== "failure") throw new TypeError("Invalid execution status");
   const decision = value.decision as PolicyDecision;
@@ -98,8 +98,8 @@ function captureResult(raw: unknown, request: PipelineRecord, stage: PipelineSta
     checked = denyDecision({ ...fields, outcome } as Parameters<typeof denyDecision>[0]);
     if (checked.stage !== stage || checked.reason === "allowed") throw new TypeError("Invalid denial");
   }
-  // An execution status can only accompany the execute stage's ALLOWED decision: no other stage may claim an executor ran.
-  if (reported && (stage !== "execute" || checked.outcome !== "ALLOWED")) throw new TypeError("Premature execution status");
+  // An execution status can only accompany an ALLOWED decision, and only execute may return one (see "Premature allow"): no other stage may claim an executor ran.
+  if (reported && checked.outcome !== "ALLOWED") throw new TypeError("Premature execution status");
   return Object.freeze(reported ? { kind: "stop", decision: checked, executionStatus: status as ExecutionStatus } : { kind: "stop", decision: checked });
 }
 

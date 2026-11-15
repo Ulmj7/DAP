@@ -3,7 +3,7 @@
  * id, resource) and the proposal is DENIED with the executor at zero calls, whichever stage is the one that sees the disagreement.
  * Also: through the real gateway, where rate_limit, replay and the risk and confirmation stages do not exist yet, ALLOWED stays unreachable.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AuditEvent } from "@dap/contracts";
 import { chain } from "./chain.test-support.js";
 import type { Chain } from "./chain.test-support.js";
@@ -103,5 +103,41 @@ describe("through the real gateway ALLOWED is not reachable yet", () => {
     const feedback = await createPolicyGateway(world.deps).proposals.forSession(context(), run).submit({ callId: "c", raw: world.text({ projectId: "p1" }) });
     expect(feedback).toEqual(TRY_LATER);
     expect(world.executorCalls).toHaveLength(0);
+  });
+});
+
+describe("how the gateway wires its audit pieces", () => {
+  it("reads the host's telemetry once, however many pieces use it", () => {
+    const world = chain();
+    let reads = 0;
+    createPolicyGateway(world.deps, { get telemetry() { reads += 1; return {}; } });
+    expect(reads).toBe(1);
+  });
+
+  it("counts a result record that could not be dated through the host's telemetry", async () => {
+    const failures: string[] = [];
+    let reads = 0;
+    // Readings: context stage, PROPOSED record, authorize stage, allow-event record, then the result record, which fails.
+    const world = chain({ telemetry: { auditWriteFailed: (kind) => { failures.push(kind); } }, clock: () => { reads += 1; if (reads === 5) throw new Error("clock down"); return "2026-01-01T00:00:00Z"; } });
+    const feedback = await submit(world, {});
+    expect(feedback).toEqual({ outcome: "ALLOWED", category: "ok" });
+    expect(failures).toEqual(["executed"]);
+    expect(world.executorCalls).toHaveLength(1);
+  });
+
+  it("gives the clock reads that date records the configured hook timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      let reads = 0;
+      // The allow-event's date never arrives: it must be cut off after hookTimeoutMs, not the 2000 ms default.
+      const world = chain({ config: { hookTimeoutMs: 30 }, clock: () => { reads += 1; return reads === 4 ? new Promise(() => {}) : "2026-01-01T00:00:00Z"; } });
+      let settled = false;
+      const pending = submit(world, {}).then((feedback) => { settled = true; return feedback; });
+      await vi.advanceTimersByTimeAsync(29);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toEqual(TRY_LATER);
+      expect(world.executorCalls).toHaveLength(0);
+    } finally { vi.useRealTimers(); }
   });
 });

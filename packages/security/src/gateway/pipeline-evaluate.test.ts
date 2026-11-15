@@ -122,6 +122,21 @@ describe("the runner's audit calls", () => {
     expect(log[0]).toMatchObject({ call: "proposed", attempted: undefined });
   });
 
+  it("an unminted context is still reported to the auditor (which cannot attribute it): proposed, then decided", async () => {
+    const { log, audit } = recorder();
+    const evaluation = await createPipeline(stagesWith(), { audit }).evaluate({ ...input(), context: { plain: true } });
+    expect(evaluation.decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
+    expect(log.map((entry) => entry.call)).toEqual(["proposed", "decided"]);
+    expect(log[0]!.context).toBeNull();
+  });
+
+  it("evaluate is frozen, and a stage that returns a stop with data instead of a decision is refused", async () => {
+    const pipeline = createPipeline(stagesWith());
+    expect(Object.isFrozen(pipeline.evaluate)).toBe(true);
+    const stages = stagesWith({ authorize: () => ({ kind: "stop", data: {} }) as never });
+    expect(await createPipeline(stages).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "authorize" });
+  });
+
   it("a denial before intake still records the proposal first (with no name) and then the decision", async () => {
     const { log, audit } = recorder();
     const stages = stagesWith({ context: (request) => ({ kind: "stop", decision: denyDecision({ decisionId: request.decisionId, requestId: request.requestId, outcome: "UNAUTHORIZED", reason: "session_expired", stage: "context" }) }) });
