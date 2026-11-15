@@ -344,5 +344,5 @@ describe("T108 end-to-end rate attacks (pending)", () => {
   const waiting = "full catalogue verify() needs complete audit linkage and risk/execute stages; rate/replay gateway controls and limiter faults run in rate-replay.gateway.test.ts";
   for (const scenario of rateAbuseScenarios) it.todo(`${scenario.id} ${scenario.title}: run against the real gateway and verify(); ${waiting}`);
   it.todo("ATK-RATE-01 database round trips measured on the real PostgreSQL adapter through the gateway (SequenceTarget.sharedStoreCalls)");
-  it.todo("ATK-DEP full dependency-failure matrix with audit linkage: limiter gateway faults already run in rate-replay.gateway.test.ts; remaining rows need the dependency-failure harness");
+  it.todo("ATK-DEP full dependency-failure matrix with audit linkage: limiter gateway faults already run in rate-replay.gateway.test.ts; remaining rows need complete production-chain wiring and per-port bound fixtures");
 });

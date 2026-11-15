@@ -71,9 +71,9 @@ describe("gateway composition and planner boundary", () => {
     const gateway = createPolicyGateway(watch(deps) as GatewayDependencies);
     constructing = false; // Only dependency CAPTURE is read-once; live host methods may read their own fields repeatedly.
     expect(await gateway.proposals.forSession(context(), run).submit({ callId: "call", raw: VALID })).toEqual({ outcome: "DENIED", category: "try_later" });
-    expect(clockCalls).toBe(3);
-    expect(receivers).toHaveLength(3);
-    expect(receivers[0]).toBe(copies.get(port));
+    expect(clockCalls).toBe(4); // context, rate entry, rate admission, live authorization
+    expect(receivers).toHaveLength(4);
+    for (const receiver of receivers) expect(receiver).toBe(copies.get(port));
     expect(calls()).toBe(0);
   });
 
@@ -96,7 +96,7 @@ describe("gateway composition and planner boundary", () => {
     Object.assign(deps.clock, { now: () => { throw new Error("replacement"); } });
     Object.assign(deps.config, { hookTimeoutMs: -1 });
     expect(await gateway.proposals.forSession(context(), run).submit({ callId: "call", raw: VALID })).toEqual({ outcome: "DENIED", category: "try_later" });
-    expect(clocks).toBe(3);
+    expect(clocks).toBe(4);
     expect(calls()).toBe(0);
   });
 });
