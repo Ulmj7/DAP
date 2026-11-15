@@ -48,6 +48,13 @@ describe("T117 stage 2 rate limits", () => {
     expect(await test.stage(record({ context: { ...context() } }))).toMatchObject({ decision: { reason: "dependency_failure" } });
     expect(test.checkProposal).not.toHaveBeenCalled();
   });
+  it("missing, exhausted or unreadable runner budget fails before invoking the limiter", async () => {
+    for (const budget of [{ remainingMs: () => 0 }, { remainingMs: () => NaN }, { remainingMs: () => { throw new Error("clock"); } }, {}]) {
+      const test = fixture();
+      expect(await test.stage(record({ budget: budget as never }))).toMatchObject({ decision: { reason: "dependency_failure" } });
+      expect(test.checkProposal).not.toHaveBeenCalled(); expect(test.recordDenial).not.toHaveBeenCalled();
+    }
+  });
   it("a hung limiter and a hung denial recorder are bounded by deterministic timers", async () => {
     vi.useFakeTimers();
     try {
@@ -63,8 +70,10 @@ describe("T117 stage 2 rate limits", () => {
   it("finalizes denial recording outside the pipeline deadline and preserves the rate reason", async () => {
     vi.useFakeTimers();
     try {
-      const test = fixture(denied()); test.recordDenial.mockImplementation(() => new Promise(() => {}));
+      const test = fixture(denied());
       let decisionMade = false;
+      const recordingSawFinal: boolean[] = [];
+      test.recordDenial.mockImplementation(() => { recordingSawFinal.push(decisionMade); return new Promise(() => {}); });
       const pending = withDeferredLimitDenials(async () => {
         const result = await test.stage(record({ budget: { remainingMs: () => decisionMade ? 0 : 40 } }));
         if (result.kind !== "stop") throw new Error("Expected rate denial");
@@ -74,6 +83,7 @@ describe("T117 stage 2 rate limits", () => {
       await vi.advanceTimersByTimeAsync(40);
       expect(await pending).toMatchObject({ reason: "rate_limited_user" });
       expect(decisionMade).toBe(true); expect(test.recordDenial).toHaveBeenCalledTimes(1);
+      expect(recordingSawFinal).toEqual([true]);
     } finally { vi.useRealTimers(); }
   });
 
