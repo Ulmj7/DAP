@@ -179,6 +179,8 @@ export const rateLimiterConformanceCases: readonly RateLimiterConformanceCase[] 
     async run(ctx) {
       const tenant = scope();
       await ctx.store.hit(tenant, "rule", rule);
+      // A shorter rule now uses a DIFFERENT primary-key window; an upsert guard alone cannot reject it.
+      await ctx.advanceSeconds(30);
       for (const changed of [{ limit: 100, windowSeconds: 60 }, { limit: 20, windowSeconds: 1 }]) {
         await expect(ctx.store.hit(tenant, "rule", changed)).rejects.toThrow();
       }

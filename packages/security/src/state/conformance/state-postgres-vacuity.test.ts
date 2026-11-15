@@ -4,9 +4,8 @@
  * introduce a single defect; the named case must fail. A faithful run must pass every case, and every property that a
  * defect can break must be failed by at least one.
  *
- * Deliberately NOT here, because they are redundant on purpose and no suite can tell them apart: the per-key advisory lock
- * and the "live rule" pre-check in hit() (the upsert's own WHERE guard already refuses a changed rule and the adapter turns
- * the empty result into a refusal); removing either is an equivalent mutant.
+ * A changed window may use a different primary key, so the live-rule pre-check and per-key lock are essential even though
+ * the upsert has another rule guard. The shared live-rule case exercises different primary-key windows.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool, type PoolClient } from "pg";
@@ -103,6 +102,7 @@ const REPLAY: Record<string, [string, Rewrite, Via?]> = {
   "overwrites on conflict (the schema grants no UPDATE, so the database refuses)": ["exactly one of 32", swap("DO NOTHING", "DO UPDATE SET claimed_at=EXCLUDED.claimed_at"), "database"],
 };
 const LIMITER: Record<string, [string, Rewrite, Via?]> = {
+  "ignores a different live rule at another primary-key window": ["rejects changing rules inside a live window", swap(/SELECT limit_count,window_seconds FROM public\.sec_rate_counters WHERE tenant_id=\$1 AND bucket_key=\$2 AND expires_at > \$3/, "SELECT limit_count,window_seconds FROM public.sec_rate_counters WHERE tenant_id=$1 AND bucket_key=$2 AND expires_at > $3 AND false")],
   "never counts (count+1 became count)": ["admits exactly `limit` sequential hits", swap("sec_rate_counters.count+1", "sec_rate_counters.count")],
   "anchors the window to the first hit": ["anchors every window to the epoch", (sql, params) => [sql, sql.includes("INSERT INTO public.sec_rate_counters") && params ? [params[0], params[1], params[6], new Date((params[6] as Date).getTime() + (params[5] as number) * 1000), ...params.slice(4)] : params]],
   "treats the block's expiry instant as still blocked (>= instead of >)": ["blocks only the scoped key", swap("expires_at > $3", "expires_at >= $3")],

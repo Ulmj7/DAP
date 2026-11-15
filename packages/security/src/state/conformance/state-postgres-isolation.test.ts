@@ -46,21 +46,22 @@ describe("two independent connection pools (two replicas) agree", () => {
 
 describe("the per-key advisory lock is scoped to (tenant, key)", () => {
   const lockId = (tenantId: string, key: string) => owner.query("SELECT hashtextextended($1,0)::text AS id", [JSON.stringify([tenantId, key])]).then((result) => result.rows[0].id as string);
-  const waiting = async (): Promise<number> => (await owner.query("SELECT count(*)::int AS n FROM pg_locks WHERE locktype='advisory' AND NOT granted")).rows[0].n as number;
+  const waiting = async (id: string): Promise<number> => (await owner.query("SELECT count(*)::int AS n FROM pg_locks WHERE locktype='advisory' AND NOT granted AND classid=(($1::bigint >> 32) & 4294967295)::oid AND objid=($1::bigint & 4294967295)::oid AND objsubid=1", [id])).rows[0].n as number;
 
   it("serializes hits on the same tenant and key, and never makes another tenant's identical key wait", async () => {
     const a = fresh(); const b = fresh(); const key = randomUUID(); const rule = { limit: 5, windowSeconds: 31_536_000 };
     const holder = await owner.connect();
     try {
       await holder.query("BEGIN");
-      await holder.query("SELECT pg_advisory_xact_lock($1::bigint)", [await lockId(a.tenantId.toLowerCase(), key)]);
+      const id = await lockId(a.tenantId.toLowerCase(), key);
+      await holder.query("SELECT pg_advisory_xact_lock($1::bigint)", [id]);
       const limiter = new PostgresRateLimiter(app);
-      const before = await waiting();
+      const before = await waiting(id);
       const pending = limiter.hit(a, key, rule);
       // Tenant B's identical key must complete while A's lock is still held (a shared lock would hang here).
       expect((await limiter.hit(b, key, rule)).allowed).toBe(true);
-      for (let attempt = 0; attempt < 100 && (await waiting()) <= before; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(await waiting()).toBeGreaterThan(before);
+      for (let attempt = 0; attempt < 100 && (await waiting(id)) <= before; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(await waiting(id)).toBeGreaterThan(before);
       await holder.query("COMMIT");
       expect((await pending).allowed).toBe(true);
     } finally { await holder.query("ROLLBACK").catch(() => undefined); holder.release(); }
