@@ -27,6 +27,7 @@ const fresh = (sink: AuditSink = store, extra: Record<string, unknown> = {}) => 
   const startAt = new Date(tick).toISOString();
   return { startAt, seed, world: withGateway({ config: WIDE_GATEWAY_CONFIG, auditSink: sink, startAt, seed, ...extra }) };
 };
+const JUSTIFICATION = "Test-only scratch document in a disposable world; the recorded mutation is bounded and reversible.";
 const B_ALICE: WorldUser = { tenant: "B", user: ALICE };
 /** The rows of some requests as dap_owner sees them (a tenant transaction: the table forces row level security even for its owner). */
 const rowsOf = async (tenantId: string, requestIds: readonly string[]) =>
@@ -35,13 +36,16 @@ const typesOf = async (tenantId: string, requestId: string) => (await rowsOf(ten
 const reviewer = async (world: GatewayWorld, tenant: "A" | "B") => (await world.submitterFor({ tenant, user: "reviewer" })).context;
 
 describe("P1 chain A: the allow-event is committed in PostgreSQL BEFORE the executor body runs", () => {
-  it.each(["testSafeEcho", "testLowNavigate"] as const)("%s executes exactly once; at the moment its body runs the ALLOWED row is already committed (read by another connection), and PROPOSED, ALLOWED, EXECUTED follow in order", async (action) => {
-    const { world } = fresh();
+  it.each(["testSafeEcho", "testLowNavigate", "testMediumDraft"] as const)("%s executes exactly once; at the moment its body runs the ALLOWED row is already committed (read by another connection), and PROPOSED, ALLOWED, EXECUTED follow in order", async (action) => {
+    const { world } = fresh(store, { mediumConfirmationJustification: JUSTIFICATION });
+    expect(world.deps.registry.get(action as never)!.definition.changesState).toBe(action === "testMediumDraft");
+    let stateChanges = 0;
     const atRun: string[][] = [];
-    world.executor(action).onRun(async (call) => { atRun.push(await typesOf(TENANT_A, call.requestId)); });
+    world.executor(action).onRun(async (call) => { atRun.push(await typesOf(TENANT_A, call.requestId)); if (action === "testMediumDraft") stateChanges++; });
     expect(await world.submit(A_ALICE, world.proposal(action))).toEqual({ outcome: "ALLOWED", category: "ok" });
     expect(world.executor(action).calls).toBe(1);
     expect(world.executorCalls()).toBe(1);
+    expect(stateChanges).toBe(action === "testMediumDraft" ? 1 : 0);
     expect(atRun).toEqual([["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED"]]); // the EXECUTED row cannot exist yet, and the ALLOWED row must
     const [requestId] = world.requestIds();
     const rows = await rowsOf(TENANT_A, [requestId!]);
@@ -64,12 +68,16 @@ describe("P2 chain B: a genuine PostgreSQL write failure fails closed and execut
     try {
       let current: AuditSink = new PostgresAuditStore(broken);
       const attempted: AuditEvent[] = [];
-      const { world } = fresh({ append: (event: AuditEvent) => { attempted.push(event); return current.append(event); } });
-      const answer = await world.submit(A_ALICE, world.proposal("testSafeEcho"));
+      const { world } = fresh({ append: (event: AuditEvent) => { attempted.push(event); return current.append(event); } }, { mediumConfirmationJustification: JUSTIFICATION });
+      let mutations = 0;
+      world.executor("testMediumDraft").onRun(() => { mutations++; });
+      expect(world.deps.registry.get("testMediumDraft" as never)!.definition.changesState).toBe(true);
+      const answer = await world.submit(A_ALICE, world.proposal("testMediumDraft"));
       expect(answer).toEqual({ outcome: "DENIED", category: "try_later" });
       expect(world.executorCalls()).toBe(0);
+      expect(mutations).toBe(0);
       // The Gateway DID try to record the allow-event (and the proposal) and the database refused: nothing of that request exists in PostgreSQL.
-      expect(attempted.map((event) => event.type)).toContain("AI_ACTION_ALLOWED");
+      expect(attempted.map((event) => event.type)).toEqual(expect.arrayContaining(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED", "AI_ACTION_DENIED"]));
       expect(attempted.some((event) => event.type === "AI_ACTION_EXECUTED")).toBe(false);
       expect(world.events()).toEqual([]); // the capture records only what was committed
       expect(await rowsOf(TENANT_A, [...new Set(attempted.map((event) => event.requestId))])).toEqual([]);
@@ -79,18 +87,50 @@ describe("P2 chain B: a genuine PostgreSQL write failure fails closed and execut
 
       // The control: clear the failure and the very same request executes once, with its rows in PostgreSQL.
       current = store;
-      expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"))).toEqual({ outcome: "ALLOWED", category: "ok" });
+      expect(await world.submit(A_ALICE, world.proposal("testMediumDraft"))).toEqual({ outcome: "ALLOWED", category: "ok" });
       expect(world.executorCalls()).toBe(1);
+      expect(mutations).toBe(1);
       const ids = world.requestIds();
       expect(await typesOf(TENANT_A, ids[0]!)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED", "AI_ACTION_EXECUTED"]);
     } finally { await broken.end().catch(() => undefined); }
+  });
+
+  it("a blocked allow-write times out without execution and cannot commit ALLOWED after the denial", async () => {
+    const locker = await owner.connect();
+    const writes: Promise<void>[] = [];
+    const attempted: AuditEvent[] = [];
+    let locked = false;
+    await locker.query("BEGIN");
+    const sink: AuditSink = { append: async (event) => {
+      attempted.push(event);
+      if (event.type === "AI_ACTION_ALLOWED" && !locked) {
+        await locker.query("LOCK TABLE public.sec_audit_events IN ACCESS EXCLUSIVE MODE");
+        locked = true;
+      }
+      const writing = store.append(event); writes.push(writing); return writing;
+    } };
+    const { world } = fresh(sink, { mediumConfirmationJustification: JUSTIFICATION, config: { ...WIDE_GATEWAY_CONFIG, hookTimeoutMs: 50, proposalBudgetMs: 200 } });
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const answer = await Promise.race([world.submit(A_ALICE, world.proposal("testMediumDraft")), new Promise<never>((_, reject) => { watchdog = setTimeout(() => reject(new Error("blocked audit exceeded the bounded response deadline")), 3000); })]);
+      expect(locked).toBe(true);
+      expect(answer).toEqual({ outcome: "DENIED", category: "try_later" });
+      expect(world.executorCalls()).toBe(0);
+    } finally {
+      clearTimeout(watchdog);
+      await locker.query("ROLLBACK"); locker.release();
+      await Promise.allSettled(writes);
+    }
+    // A timeout is not cancellation: this must stay empty even after the database lock is released.
+    const rows = await rowsOf(TENANT_A, [...new Set(attempted.map((event) => event.requestId))]);
+    expect(rows.filter((row) => row.event_type === "AI_ACTION_ALLOWED" || row.event_type === "AI_ACTION_EXECUTED")).toEqual([]);
   });
 
   it("a denial still stands when only the denial's own record fails: the planner hears the denial, not the failure", async () => {
     const broken = readOnly();
     try {
       const { world } = fresh(new PostgresAuditStore(broken));
-      expect(await world.submit(A_CAROL, world.proposal("testSafeEcho"))).toEqual({ outcome: "UNAUTHORIZED", category: "not_available" });
+      expect(await world.submit(A_CAROL, world.proposal("testMediumDraft"))).toEqual({ outcome: "UNAUTHORIZED", category: "not_available" });
       expect(world.executorCalls()).toBe(0);
     } finally { await broken.end().catch(() => undefined); }
   });
@@ -151,7 +191,9 @@ describe("P4 secret scrubbing: no stored column of any row holds a canary, an en
     expect((await go(world.proposal("testSafeEcho").raw, "ok")).outcome).toBe("ALLOWED"); // the control: clean traffic is stored and executes
 
     const rows = await rowsOf(TENANT_A, world.requestIds());
-    expect(rows.length).toBeGreaterThanOrEqual(15);
+    expect(world.requestIds()).toHaveLength(8);
+    expect(rows).toHaveLength(19);
+    expect(new Set(rows.map((row) => row.request_id))).toEqual(new Set(world.requestIds()));
     expect(rows.some((row) => row.execution_result === "failure")).toBe(true); // the failing executor really ran and was recorded
     expect(Object.keys(rows[0]!)).toHaveLength(22); // every column is in the scan, and there is no column for raw parameters
     expect(scan(rows)).toEqual([]);
@@ -167,8 +209,8 @@ describe("P4 secret scrubbing: no stored column of any row holds a canary, an en
     const rows = await rowsOf(TENANT_A, world.requestIds());
     expect(rows.length).toBe(3);
     expect(scan(rows)).toEqual([]);
-    const columns = Object.keys(rows[0]!).filter((name) => typeof rows[0]![name] === "string" && name !== "id" && name !== "tenant_id");
-    expect(columns.length).toBeGreaterThan(5);
+    const columns = Object.keys(rows[0]!);
+    expect(columns).toHaveLength(22);
     for (const column of columns) {
       for (const poison of [SECRET_CANARIES[0]!, Buffer.from(SECRET_CANARIES[1]!).toString("base64"), TOKEN, "Error: x\n    at run (/srv/app/x.ts:1:2)"]) {
         const spliced = rows.map((row, index) => index === 1 ? { ...row, [column]: `${String(row[column])} ${poison}` } : row);

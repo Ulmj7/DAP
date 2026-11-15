@@ -168,6 +168,8 @@ export type WorldPort = "authentication" | "permissions" | "resources" | "pages"
 export type WorldResourceKind = "other-tenant" | "nonexistent" | "same-tenant-unauthorized";
 
 export interface GatewayWorldOptions {
+  /** Trusted test-only MEDIUM opt-out, with its written justification; the real registry and risk gate still decide. */
+  readonly mediumConfirmationJustification?: string;
   /** The validated gateway configuration (default: DEFAULT_GATEWAY_CONFIG). */
   readonly config?: GatewayConfig;
   /** What every executor answers (default success). */
@@ -402,7 +404,8 @@ export function withGateway(options: GatewayWorldOptions = {}): GatewayWorld {
 
     const definitions = ALL_TEST_CAPABILITIES.map((definition) => {
       const schema = options.inputSchemas?.[definition.id as string];
-      return schema === undefined ? definition : { ...definition, inputSchema: schema };
+      const trusted = options.mediumConfirmationJustification !== undefined && definition.id === "testMediumDraft" ? { ...definition, confirmation: { kind: "not-required" as const, justification: options.mediumConfirmationJustification } } : definition;
+      return schema === undefined ? trusted : { ...trusted, inputSchema: schema };
     }) as unknown as typeof ALL_TEST_CAPABILITIES;
     const registry = buildRegistry(definitions);
     const executable = definitions.filter((definition) => definition.risk !== "FORBIDDEN");
@@ -451,7 +454,7 @@ export function withGateway(options: GatewayWorldOptions = {}): GatewayWorld {
   const sessionSeconds = options.sessionSeconds ?? 3600;
   const sessionOf = (who: WorldUser): string => who.session ?? `session-${who.user}`;
   const traitsOf = (actionId: string): CapabilityTraits => {
-    const definition = ALL_TEST_CAPABILITIES.find((candidate) => candidate.id === actionId);
+    const definition = state.deps.registry.get(actionId as ActionId)?.definition;
     if (definition === undefined) throw new Error(`world: no test capability ${actionId}`);
     return { actionId, risk: definition.risk, changesState: definition.changesState, targetsResource: typeof definition.resource === "function", requiresConfirmation: definition.confirmation.kind === "required" };
   };

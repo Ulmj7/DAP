@@ -382,6 +382,16 @@ What remains:
     text by audit reviewers; it is never returned in planner feedback. M1 does not promise secrecy
     for arbitrary secrets the planner itself embeds in an attempted action name.
 
+13. **Outstanding audit timeout cancellation (QA #14)**: the Gateway hook deadline returns a denial
+    without cancelling a blocked PostgreSQL append. Once a lock clears, ALLOWED can commit after
+    the action was denied and never executed. The audit-postgres blocked-write regression is
+    intentionally failing until the Gateway/writer cancellation contract is resolved; do not ship
+    the persistent sink as satisfying that failure case.
+14. **Audit time and sequence precision**: the current Gateway clock supplies millisecond instants;
+    PostgreSQL preserves microseconds. Finer nonzero fractions are rejected rather than silently
+    aliased. Sequence allocation is a deterministic insertion tie-break, not evidence of commit
+    order across concurrent transactions. Per-request PROPOSED/ALLOWED/EXECUTED ordering is tested.
+
 ## Complexity Tracking
 
 No constitution violations to justify. The five-package split is a deliberate enforcement mechanism
