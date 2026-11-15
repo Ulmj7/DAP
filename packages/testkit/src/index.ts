@@ -18,3 +18,4 @@ export * from "./attacks/unknown-action.js";
 export * from "./attacks/malformed-parameters.js";
 export * from "./attacks/injection-corpus.js";
 export * from "./attacks/prompt-injection.js";
+export * from "./hostile-planner.js";

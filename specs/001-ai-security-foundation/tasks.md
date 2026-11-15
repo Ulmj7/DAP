@@ -321,7 +321,7 @@ quality gate fails and names the gap (spec US7). Covers FR-045..FR-049, SC-010, 
 
 ### Implementation for User Story 7
 
-- [ ] T122 [P] [US7] Create `packages/testkit/src/hostile-planner.ts`: `HostilePlanner` implementing `PlannerPort` from a script of `ProposalCall` values, with no LLM
+- [X] T122 [P] [US7] Create `packages/testkit/src/hostile-planner.ts`: `HostilePlanner` implementing `PlannerPort` from a script of `ProposalCall` values, with no LLM
 - [ ] T123 [P] [US7] Create `packages/testkit/src/attacks/dependency-failure.ts`: ATK-DEP matrix generated over 9 ports (authentication, permissions, resources, pages, replay, rate limiter, confirmations store, tenant policy, audit append) x 4 failure modes (36 cases), with the documented exception for the confirmation channel
 - [ ] T124 [P] [US7] Create `packages/testkit/src/attacks/cross-tenant-store.ts`: ATK-XTENANT-05 as role `dap_app` over every `sec_*` table (tenant A setting, no setting, write for tenant B) and ATK-XTENANT-10 canary resource names
 - [ ] T125 [P] [US7] Create `packages/testkit/src/oracle.ts` (independent oracle recomputing whether a call may reach an executor, without calling Gateway logic) and `tests/security/invariants.test.ts` with the four fast-check properties from the catalogue
