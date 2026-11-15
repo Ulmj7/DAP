@@ -33,8 +33,8 @@ export function createLimitGate(limiter: Pick<Limiter, "recordDenial">, { hookTi
     if (verdict.allowed) return null;
     const result = denial(verdict.reason);
     // Local rejections, active blocks and faults deliberately make no shared throttle round trip.
-    const recordTimeout = Math.min(2 * hookTimeoutMs, left());
-    if (verdict.countsTowardThrottle && recordTimeout >= 1) {
+    const recordTimeout = 2 * hookTimeoutMs;
+    if (verdict.countsTowardThrottle) {
       const record = async (): Promise<void> => {
         await underDeadline(() => recordDenial({ scope: request.context!, aiSessionId: request.run.aiSessionId }), () => undefined, () => undefined, recordTimeout, timer);
       };

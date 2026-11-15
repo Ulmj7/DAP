@@ -97,13 +97,22 @@ describe("T117 stage 2 rate limits", () => {
         decisionMade = true;
         return result.decision;
       });
-      await vi.advanceTimersByTimeAsync(40);
+      await vi.advanceTimersByTimeAsync(4000);
       expect(await pending).toMatchObject({ reason: "rate_limited_user" });
       expect(decisionMade).toBe(true); expect(test.recordDenial).toHaveBeenCalledTimes(1);
       expect(recordingSawFinal).toEqual([true]);
     } finally { vi.useRealTimers(); }
   });
 
+  it("a countable final denial is not starved when less than one millisecond remains", async () => {
+    const test = fixture(denied()); let reads = 0;
+    await withDeferredLimitDenials(async () => {
+      const result = await test.stage(record({ budget: { remainingMs: () => ++reads === 1 ? 100 : 0.5 } }));
+      if (result.kind !== "stop") throw new Error("Expected denial");
+      return result.decision;
+    });
+    expect(test.recordDenial).toHaveBeenCalledTimes(1);
+  });
   it("does not record an abandoned countable verdict when another final decision won", async () => {
     for (const alternate of [{ stage: "rate_limit", reason: "dependency_failure" }, { stage: "authorize", reason: "rate_limited_user" }] as const) {
       const test = fixture(denied()); const request = record();
