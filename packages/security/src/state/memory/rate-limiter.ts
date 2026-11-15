@@ -4,7 +4,10 @@ import { BoundedState, MAX_STATE_SECONDS, positiveInteger, stateKey, type Memory
 type Entry = { readonly expiresAt: number; readonly kind: "block" }
   | { readonly expiresAt: number; readonly kind: "counter"; readonly count: number; readonly limit: number; readonly windowSeconds: number };
 
-/** Fixed epoch-aligned windows; block and counter entries share the hard memory cap. */
+/**
+ * DEV / TEST ONLY (production: PostgreSQL, T114). Fixed epoch-aligned windows; block and counter entries share the hard
+ * memory cap, which is one process-wide budget across tenants: when it is full, new keys fail closed for ALL tenants.
+ */
 export class InMemoryRateLimiter implements RateLimiter {
   private readonly state: BoundedState<Entry>;
   constructor(clock: Clock, options: MemoryStateOptions = {}) { this.state = new BoundedState(clock, options); }

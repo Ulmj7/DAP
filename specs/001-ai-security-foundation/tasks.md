@@ -291,8 +291,8 @@ execution counts stay within limits and every replay is rejected, including from
 
 ### Implementation for User Story 6
 
-- [X] T110 [P] [US6] Create in-memory `packages/security/src/state/memory/replay.ts` implementing `ReplayGuard` — Bounded process-local adapter passes the shared memory conformance suite.
-- [X] T111 [P] [US6] Create in-memory `packages/security/src/state/memory/rate-limiter.ts` implementing `RateLimiter` — Bounded adapter passes concurrent count, clock-boundary, isolation and block conformance.
+- [X] T110 [P] [US6] Create in-memory `packages/security/src/state/memory/replay.ts` implementing `ReplayGuard` — Bounded process-local adapter passes the shared memory conformance suite. DEV/TEST ONLY: the cap is one process-wide budget, so one user can fill it and new keys then fail closed for ALL tenants; production is PostgreSQL (T114).
+- [X] T111 [P] [US6] Create in-memory `packages/security/src/state/memory/rate-limiter.ts` implementing `RateLimiter` — Bounded adapter passes concurrent count, clock-boundary, isolation and block conformance. DEV/TEST ONLY: shared process-wide cap, new keys fail closed for ALL tenants when full; production is PostgreSQL (T114).
 - [ ] T112 [US6] Create migration `db/migrations/040_sec_replay_claims.sql`: `namespace`, `claim_key`, `claimed_at`, `expires_at`; "Primary key `(tenant_id, namespace, claim_key)`"; row-level security forced (depends on T025)
 - [ ] T113 [US6] Create migration `db/migrations/050_sec_rate_counters.sql`: `bucket_key`, `window_start`, `count`, `expires_at`; "Primary key `(tenant_id, bucket_key, window_start)`"; row-level security forced (depends on T025)
 - [ ] T114 [US6] Create `packages/security/src/state/postgres/replay.ts` (`INSERT ... ON CONFLICT DO NOTHING`; zero rows inserted means duplicate) and `packages/security/src/state/postgres/rate-limiter.ts` (`INSERT ... ON CONFLICT DO UPDATE SET count = count + 1 RETURNING count`; block rows), and run T109 on memory and PostgreSQL (depends on T109, T110-T113)

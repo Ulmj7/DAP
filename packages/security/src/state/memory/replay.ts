@@ -1,6 +1,7 @@
 import type { Clock, ReplayGuard, TenantScope } from "@dap/contracts";
 import { BoundedState, MAX_STATE_SECONDS, positiveInteger, stateKey, type MemoryStateOptions } from "./bounded-state.js";
 
+/** DEV / TEST ONLY (production: PostgreSQL, T114): shares one process-wide capacity across tenants; see BoundedState. */
 export class InMemoryReplayGuard implements ReplayGuard {
   private readonly state: BoundedState<{ readonly expiresAt: number }>;
   constructor(clock: Clock, options: MemoryStateOptions = {}) { this.state = new BoundedState(clock, options); }

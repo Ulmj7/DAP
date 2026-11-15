@@ -21,9 +21,16 @@ export function stateKey(scope: TenantScope, key: string): string {
 export interface MemoryStateOptions { readonly maxEntries?: number }
 
 /**
- * Hard per-store cap (default 10,000; configurable up to 1,000,000) plus 1024-byte keys.
- * Sweep expired entries on every operation. Full stores throw; live entries are NEVER evicted.
- * In-memory adapters are process-local, not suitable for multi-replica production security state.
+ * DEV / TEST ONLY. Production replay and rate-limit state lives in PostgreSQL (T114); these in-memory adapters exist for
+ * tests, the reference host and local development, and are process-local (not shared between replicas).
+ *
+ * Hard per-store cap (default 10,000; configurable up to 1,000,000) plus 1024-byte keys. Expired entries are swept on every
+ * operation. A full store throws; live entries are NEVER evicted.
+ *
+ * Known limitation (accepted): the cap is one process-wide budget, not per tenant. One user can fill it (replay claims are
+ * kept for 86,400 s, so at 60 proposals a minute that takes about 2.8 hours), and while it is full every NEW key fails
+ * closed for ALL tenants (existing keys keep working) until entries expire. Do not run these adapters in front of real
+ * tenants. Every operation also scans all entries (about 0.04 ms at 10,000 entries, linear beyond).
  */
 export class BoundedState<T extends { readonly expiresAt: number }> {
   private readonly entries = new Map<string, T>();
