@@ -16,6 +16,8 @@ const limitsSchema = z.strictObject({
 const gatewaySchema = z.strictObject({
   limits: limitsSchema, maxPayloadBytes: integer(1_048_576), maxJsonDepth: integer(64),
   replayRetentionSeconds: seconds, confirmationDefaultTtlSeconds: integer(900), hookTimeoutMs: integer(60_000),
+  // Optional: omitted means the runner's own default (10 000 ms); it is never filled in here, so it can never be zero or unlimited.
+  proposalBudgetMs: integer(0x7fff_ffff).optional(),
 });
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") {
