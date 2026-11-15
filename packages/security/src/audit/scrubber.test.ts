@@ -88,12 +88,12 @@ describe("scrubText: secret-shaped text is redacted", () => {
     }
   });
 
-  it("treats every invisible character in each range as a disguise, and nothing just outside the ranges", () => {
+  it("treats invisible characters and split whitespace as disguises while preserving visible punctuation", () => {
     const hide = (code: number) => `sk-abcdefgh${String.fromCharCode(code)}ijklmnopqrstuvwx`;
     const invisible = [0xad, 0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff];
     for (const code of invisible) expect(scrubText(hide(code)), code.toString(16)).toBe(REDACTED);
-    // Visible characters just outside the ranges split the key for real: the text is not a secret and is left alone.
-    for (const code of [0xac, 0xae, 0x200a, 0x2010, 0x2029, 0x202f, 0x205f, 0x2065, 0xfefe]) expect(scrubText(hide(code)), code.toString(16)).toBe(hide(code));
+    for (const code of [0x200a, 0x2029, 0x202f, 0x205f, 0x2065]) expect(scrubText(hide(code)), code.toString(16)).toBe(REDACTED);
+    for (const code of [0xac, 0xae, 0x2010, 0xfefe]) expect(scrubText(hide(code)), code.toString(16)).toBe(hide(code));
   });
 
   it("keeps ordinary text with invisible characters that hide nothing", () => {
