@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+import * as ts from "typescript";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -39,6 +40,21 @@ function reachableFrom(graph: Graph, prefix: string): ReadonlySet<string> {
 const MINT_ENTRY = "packages/contracts/src/mint/index.ts";
 /** What the AI layer may reach at all among the workspace's own modules (node built-ins and external libraries are not packages of ours): itself and the contracts' public root with whatever the root re-exports. Executors (actions), the Gateway (security), the mint entry, the testkit and the apps are not on the list. */
 const outsideAiBoundary = (reached: ReadonlySet<string>): string[] => [...reached].filter((source) => /^(packages|apps)\//.test(source)).filter((source) => !source.startsWith("packages/ai/") && !source.startsWith("packages/contracts/src/") || source === MINT_ENTRY).sort();
+
+/** Guard implementations may use private registries; no runtime value from the mint tree may be PUBLICLY re-exported. */
+function publicMintExports(cwd: string): string[] {
+  const root = path.join(cwd, "packages/contracts/src/index.ts");
+  const program = ts.createProgram([root], { module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, target: ts.ScriptTarget.ES2022, skipLibCheck: true, types: [] });
+  const checker = program.getTypeChecker();
+  const source = program.getSourceFile(root);
+  const module = source && checker.getSymbolAtLocation(source);
+  if (!module) throw new Error("Contracts public surface was not resolved");
+  return checker.getExportsOfModule(module).filter((exported) => {
+    const symbol = exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported;
+    return Boolean(symbol.flags & ts.SymbolFlags.Value) && (symbol.declarations ?? []).some((declaration) =>
+      path.relative(cwd, declaration.getSourceFile().fileName).startsWith("packages/contracts/src/mint/"));
+  }).map((symbol) => symbol.name).sort();
+}
 
 /** plan.md "Allowed dependency edges", as manifest dependencies. */
 const ALLOWED_MANIFEST_EDGES: Readonly<Record<string, readonly string[]>> = {
@@ -74,6 +90,9 @@ describe("the AI layer has no path to executors, the mint entry or the Gateway's
     expect([...reached].filter((source) => source.startsWith("packages/ai/")).length, "the walk starts inside the AI layer").toBeGreaterThan(0);
     expect([...reached].some((source) => source.startsWith("packages/contracts/src/")), "and it does follow the edge into contracts (a vacuous walk would pass anything)").toBe(true);
     expect(outsideAiBoundary(reached)).toEqual([]);
+  });
+  it("the contracts root cannot expose a private mint value through an alias, namespace or star re-export", () => {
+    expect(publicMintExports(ROOT)).toEqual([]);
   });
   it("never reaches packages/actions (the executors), packages/security (the Gateway and the minters), the testkit, an app, or the mint entry", () => {
     for (const forbidden of ["packages/actions/", "packages/security/", "packages/testkit/", "apps/", MINT_ENTRY]) expect([...reached].filter((source) => source.startsWith(forbidden)), forbidden).toEqual([]);
@@ -161,6 +180,16 @@ describe("planted edges in a disposable workspace", () => {
     // The AI layer reaching the mint entry: contracts exposes it as a subpath, so it resolves in the workspace too.
     put("packages/contracts/src/mint/index.ts", "export const mintMarker = 1;\n");
     put("packages/ai/src/planted_mint.ts", 'import { mintMarker } from "@dap/contracts/mint";\nexport const plantedMint = mintMarker;\n');
+    // Real re-exports and every supported edge form, independent of the directly planted mint import.
+    put("packages/contracts/src/index.ts", 'export const marker = 1; export interface Marker { value: string }\nexport * from "./bridge.js";\nexport { mintContext as constructIdentity } from "./mint/context-registry.js";\n');
+    put("packages/contracts/src/bridge.ts", 'export * from "./mint/index.js";\n');
+    put("packages/contracts/src/mint/context-registry.ts", 'export function mintContext() { return {}; }\n');
+    for (const [name, code] of Object.entries({
+      reexport: 'export * from "@dap/contracts";',
+      types: 'import type { Marker } from "@dap/contracts"; export type Alias = Marker;',
+      dynamic: 'export const pending = import("@dap/contracts");',
+      require: 'export const loaded = require("@dap/contracts");',
+    })) put(`packages/ai/src/form_${name}.ts`, `${code}\n`);
     // A two-file cycle inside the AI layer.
     put("packages/ai/src/cycle_a.ts", 'import { b } from "./cycle_b.js";\nexport const a = () => b;\n');
     put("packages/ai/src/cycle_b.ts", 'import { a } from "./cycle_a.js";\nexport const b = () => a;\n');
@@ -192,6 +221,17 @@ describe("planted edges in a disposable workspace", () => {
     expect(dependencies.map((dependency) => [dependency.couldNotResolve, dependency.resolved])).toEqual([[false, MINT_ENTRY]]);
     expect(graph.summary.violations.filter((violation) => violation.from === "packages/ai/src/planted_mint.ts").map((violation) => violation.rule.name)).toContain("mint-entry-restricted");
     expect(outsideAiBoundary(reachableFrom(graph, "packages/ai/"))).toContain(MINT_ENTRY);
+  });
+
+  it.each(["reexport", "types", "dynamic", "require"])("follows a real %s edge through the contracts re-export chain", (form) => {
+    const entry = `packages/ai/src/form_${form}.ts`;
+    const dependencies = graph.modules.find((module) => module.source === entry)?.dependencies;
+    expect(dependencies).toBeDefined();
+    expect(dependencies!.map((dependency) => [dependency.couldNotResolve, dependency.resolved])).toEqual([[false, "packages/contracts/src/index.ts"]]);
+    expect(outsideAiBoundary(reachableFrom(graph, entry))).toContain(MINT_ENTRY);
+  });
+  it("an aliased private constructor and a star-exported mint value cannot hide behind the public root", () => {
+    expect(publicMintExports(workspace)).toEqual(["constructIdentity", "mintMarker"]);
   });
 
   it("a cycle between two modules is a violation", () => {
