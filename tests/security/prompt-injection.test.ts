@@ -142,21 +142,27 @@ describe("T054 through the REAL gateway, via withGateway() (REQUIRED: ATK-INJECT
 
     /** Free-text parameters of the test capabilities: the corpus is substituted for the benign value, everything else stays valid. */
     const FREE_TEXT = [
-      { action: "testSafeEcho", at: (params: Record<string, unknown>, text: string) => ({ ...params, message: text }), expected: "ALLOWED", executes: true },
-      { action: "testLowNavigate", at: (params: Record<string, unknown>, text: string) => ({ ...params, route: text }), expected: "ALLOWED", executes: true },
-      { action: "testMediumDraft", at: (params: Record<string, unknown>, text: string) => ({ ...params, draft: text }), expected: "REQUIRES_CONFIRMATION", executes: false },
+      { action: "testSafeEcho", parameter: "message", at: (params: Record<string, unknown>, text: string) => ({ ...params, message: text }), expected: "ALLOWED", executes: true },
+      { action: "testLowNavigate", parameter: "route", at: (params: Record<string, unknown>, text: string) => ({ ...params, route: text }), expected: "ALLOWED", executes: true },
+      { action: "testMediumDraft", parameter: "draft", at: (params: Record<string, unknown>, text: string) => ({ ...params, draft: text }), expected: "REQUIRES_CONFIRMATION", executes: false },
       // Audience entries are capped at 64 characters, so only the corpus strings that fit are substituted.
-      { action: "testHighPublish", at: (params: Record<string, unknown>, text: string) => ({ ...params, audience: [text] }), expected: "REQUIRES_CONFIRMATION", executes: false, fits: (text: string) => text.length <= 64 },
+      { action: "testHighPublish", parameter: "audience", at: (params: Record<string, unknown>, text: string) => ({ ...params, audience: [text] }), expected: "REQUIRES_CONFIRMATION", executes: false, fits: (text: string) => text.length <= 64 },
     ] as const;
 
     describe.each(FREE_TEXT)("$action", (field) => {
       const fits = "fits" in field ? field.fits : () => true;
       const texts = ["benign text", ...new Set([...injectionCorpus.filter(fits), ...LITERAL_TEXTS])];
+      const parameterText = (params: unknown): unknown => {
+        const value = (params as Record<string, unknown>)[field.parameter];
+        return field.parameter === "audience" ? (Array.isArray(value) ? value[0] : undefined) : value;
+      };
       const run = async (who: WorldUser, text: string) => {
         const world = withGateway({ config: WIDE_GATEWAY_CONFIG });
         const base = world.proposal(field.action).raw as { action: string; params: Record<string, unknown> };
-        const feedback = await world.submit(who, { callId: "meta", raw: { action: field.action, params: field.at(base.params, text) } });
-        return { world, feedback, sent: field.at(base.params, text), projection: JSON.stringify([feedback, world.events().map((event) => [event.type, event.outcome, event.reason, event.risk]), world.executorCalls()]) };
+        const sent = field.at(base.params, text);
+        expect(parameterText(sent), "the test must actually submit the hostile text").toBe(text);
+        const feedback = await world.submit(who, { callId: "meta", raw: { action: field.action, params: sent } });
+        return { world, feedback, sent, projection: JSON.stringify([feedback, world.events().map((event) => [event.type, event.outcome, event.reason, event.risk]), world.executorCalls()]) };
       };
       it("a permitted user: every corpus string gives the benign outcome, audit reasons and executor count, on independent fresh worlds", async () => {
         expect(texts.length).toBeGreaterThan(20); // not a vacuous loop
@@ -173,6 +179,7 @@ describe("T054 through the REAL gateway, via withGateway() (REQUIRED: ATK-INJECT
             const received = result.world.executor(field.action).receivedParams;
             expect(received, JSON.stringify(text)).toHaveLength(1);
             expect(received[0], JSON.stringify(text)).toEqual(result.sent);
+            expect(parameterText(received[0])).toBe(text);
           } else {
             // (b) a claim that the user confirmed never replaces the confirmation: no allow, no execution.
             expect(types(result.world).some((type) => type === "AI_ACTION_ALLOWED" || type === "AI_ACTION_EXECUTED"), JSON.stringify(text)).toBe(false);
