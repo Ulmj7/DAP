@@ -1,7 +1,7 @@
 import type { ActionRegistry, AnyActionDefinition } from "@dap/contracts";
 
 /** The only definition fields the stages after resolve use, each copied ONCE at the moment of proof. */
-export type ProvenDefinition = Pick<AnyActionDefinition, "id" | "version" | "inputSchema" | "resource" | "requiredPermission" | "allowedPages">;
+export type ProvenDefinition = Pick<AnyActionDefinition, "id" | "version" | "inputSchema" | "resource" | "requiredPermission" | "allowedPages" | "risk">;
 
 /**
  * The registered definition for the action resolve authorized, proven to be that very action: same id, same version, same
@@ -23,6 +23,7 @@ export function provenDefinition(get: ActionRegistry["get"], resolved: Readonly<
   if (id !== resolved.id || version !== resolved.version || definitionHash !== resolved.definitionHash) return undefined;
   return Object.freeze({
     id, version,
+    risk: Reflect.get(definition, "risk"),
     inputSchema: Reflect.get(definition, "inputSchema"),
     resource: Reflect.get(definition, "resource"),
     requiredPermission: Reflect.get(definition, "requiredPermission"),

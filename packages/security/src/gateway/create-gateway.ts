@@ -3,6 +3,7 @@ import type {
   IdGenerator, PageContextProvider, PermissionChecker, PolicyGateway, RateLimiter, ReplayGuard, ResourceAuthorizer,
   SecurityStateStore, TenantActionPolicyStore,
 } from "@dap/contracts";
+import { createLimiter } from "../limits/limiter.js";
 import { validateGatewayConfig } from "../limits/limit-config.js";
 import { snapshotAnswer } from "./answer-snapshot.js";
 import { createPipeline, type PipelineOptions, type StageMap } from "./pipeline.js";
@@ -86,13 +87,14 @@ function captureDependencies(source: GatewayDependencies): GatewayDependencies {
  */
 export function composeStages(deps: GatewayDependencies): StageMap {
   const options = { hookTimeoutMs: deps.config.hookTimeoutMs };
+  const limiter = createLimiter({ rateLimiter: deps.state.rateLimiter, config: deps.config.limits, clock: deps.clock, timeoutMs: deps.config.hookTimeoutMs });
   const caps = { maxPayloadBytes: deps.config.maxPayloadBytes, maxJsonDepth: deps.config.maxJsonDepth };
   return {
     context: createContextStage(deps.clock, options),
     intake: createIntakeStage(caps),
     resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),
     validate: createValidateStage(deps.registry, caps),
-    authorize: createAuthorizeStage({ registry: deps.registry, permissions: deps.hooks.permissions, resources: deps.hooks.resources, pages: deps.hooks.pages, clock: deps.clock }, options),
+    authorize: createAuthorizeStage({ registry: deps.registry, permissions: deps.hooks.permissions, resources: deps.hooks.resources, pages: deps.hooks.pages, clock: deps.clock, limiter }, options),
   };
 }
 
