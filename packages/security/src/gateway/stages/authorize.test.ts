@@ -7,6 +7,9 @@ import { z } from "zod";
 import { defineAction } from "@dap/contracts";
 import type { ActionId, ActionRegistry, ExecutorId, PageId, PermissionId, PolicyDecision, ResolvedResource } from "@dap/contracts";
 import { mintAuthorizationContext } from "@dap/contracts/mint";
+import { createLimiter } from "../../limits/limiter.js";
+import { DEFAULT_LIMIT_CONFIG } from "../../limits/limit-config.js";
+import { InMemoryRateLimiter } from "../../state/memory/rate-limiter.js";
 import { buildRegistry } from "../../registry/build-registry.js";
 import { createPipeline } from "../pipeline.js";
 import { allowedDecision } from "../decision.js";
@@ -16,6 +19,10 @@ import type { PipelineRecord, PolicyStage } from "../pipeline.js";
 import { toPlannerFeedback } from "../feedback.js";
 import { context, input, run, stageMap } from "../fixtures.test-support.js";
 
+const realLimiter = () => {
+  const clock = { now: () => "2026-01-01T00:00:00Z" as never };
+  return createLimiter({ rateLimiter: new InMemoryRateLimiter(clock), config: DEFAULT_LIMIT_CONFIG, clock });
+};
 const TENANT = "00000000-0000-4000-8000-000000000001";
 const OTHER_TENANT = "00000000-0000-4000-8000-000000000002";
 const NOW = "2026-01-01T00:00:00Z";
@@ -59,7 +66,7 @@ function harness(ports: Ports = {}) {
     return Promise.resolve(result).finally(() => { active--; });
   };
   const timer = ports.timer ?? new ManualTimer();
-  const stage = createAuthorizeStage({
+  const stage = createAuthorizeStage({ limiter: realLimiter(),
     registry: ports.registry ?? registry,
     permissions: { has: spy("has", ports.has ?? (() => true)) as never }, resources: { resolve: spy("resolve", ports.resolve ?? (() => resolvedFor())) as never },
     pages: { currentPage: spy("page", ports.page ?? (() => "page.edit")) as never }, clock: { now: spy("clock", ports.clock ?? (() => NOW)) as never },
@@ -337,11 +344,11 @@ describe("what the stage refuses to work from", () => {
 
   it("reads the registry once per request and each definition field once", async () => {
     const entry = registry.get("openProject")!;
-    let gets = 0; const reads = { requiredPermission: 0, allowedPages: 0 };
-    const counting = { ...registry, get: () => { gets++; return { definitionHash: entry.definitionHash, definition: { id: entry.definition.id, version: entry.definition.version, get requiredPermission() { reads.requiredPermission++; return "project:view"; }, get allowedPages() { reads.allowedPages++; return "any"; } } }; } } as unknown as ActionRegistry;
+    let gets = 0; const reads = { requiredPermission: 0, allowedPages: 0, risk: 0 };
+    const counting = { ...registry, get: () => { gets++; return { definitionHash: entry.definitionHash, definition: { id: entry.definition.id, version: entry.definition.version, get risk() { reads.risk++; return "SAFE"; }, get requiredPermission() { reads.requiredPermission++; return "project:view"; }, get allowedPages() { reads.allowedPages++; return "any"; } } }; } } as unknown as ActionRegistry;
     const test = harness({ registry: counting });
     expect((await test.stage(test.record(good())) as { kind: string }).kind).toBe("continue");
-    expect({ gets, ...reads }).toEqual({ gets: 1, requiredPermission: 1, allowedPages: 1 });
+    expect({ gets, ...reads }).toEqual({ gets: 1, requiredPermission: 1, allowedPages: 1, risk: 1 });
   });
 });
 
@@ -466,7 +473,7 @@ describe("host objects keep their own receiver", () => {
     class Pages { async currentPage() { receivers.pages = this; return "page.edit"; } }
     class Clock { now() { receivers.clock = this; return NOW; } }
     const [host, permissions, resources, pages, clock] = [new Registry(), new Permissions(), new Resources(), new Pages(), new Clock()];
-    const stage = createAuthorizeStage({ registry: host as never, permissions: permissions as never, resources: resources as never, pages: pages as never, clock: clock as never }, {});
+    const stage = createAuthorizeStage({ limiter: realLimiter(), registry: host as never, permissions: permissions as never, resources: resources as never, pages: pages as never, clock: clock as never }, {});
     const facts = { resolve: { id: "openProject", version: entry.definition.version, risk: "SAFE", definitionHash: entry.definitionHash }, validate: { params: {}, paramsDigest: "a".repeat(64), resource: PROJECT } };
     const result = await stage({ ...input(), run, context: context(), facts, budget: { remainingMs: () => 10_000 } } as unknown as PipelineRecord);
     expect(result).toMatchObject({ kind: "continue" });
@@ -480,7 +487,7 @@ describe("host objects keep their own receiver", () => {
     const receivers: unknown[] = [];
     const entry = registry.get("editOnPage")!;
     const pages = { async currentPage(this: unknown) { receivers.push(this); return "page.edit"; } };
-    const stage = createAuthorizeStage({ registry, permissions: { has: async () => true }, resources: { resolve: async () => null }, pages: pages as never, clock: { now: () => NOW as never } }, {});
+    const stage = createAuthorizeStage({ limiter: realLimiter(), registry, permissions: { has: async () => true }, resources: { resolve: async () => null }, pages: pages as never, clock: { now: () => NOW as never } }, {});
     const facts = { resolve: { id: "editOnPage", version: entry.definition.version, risk: "SAFE", definitionHash: entry.definitionHash }, validate: { params: {}, paramsDigest: "a".repeat(64), resource: null } };
     expect(await stage({ ...input(), run, context: context(), facts, budget: { remainingMs: () => 10_000 } } as unknown as PipelineRecord)).toMatchObject({ kind: "continue" });
     expect(receivers).toEqual([pages]);

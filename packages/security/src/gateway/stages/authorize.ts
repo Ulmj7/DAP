@@ -1,9 +1,11 @@
-import type { ActionRegistry, AuthorizationContext, Clock, PageContextProvider, PageId, PermissionChecker, PermissionId, ResourceAuthorizer, ResourceRef } from "@dap/contracts";
+import type { ActionRegistry, AuthorizationContext, Clock, PageContextProvider, PageId, PermissionChecker, PermissionId, ResourceAuthorizer, ResourceRef, RiskLevel } from "@dap/contracts";
 import { isMintedContext } from "@dap/contracts/mint";
 import { denyDecision } from "../decision.js";
 import { wrapHook, type HookKind, type HookOptions, type HookResult } from "../hook-wrapper.js";
 import type { PipelineRecord, PolicyStage } from "../pipeline.js";
 import { sessionVerdict } from "./context.js";
+import type { Limiter } from "../../limits/limiter.js";
+import { createLimitGate } from "./limit-gate.js";
 import { provenDefinition } from "./registered.js";
 
 const record = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
@@ -26,12 +28,13 @@ type Reason = "unauthenticated" | "session_expired" | "permission_missing" | "co
  * Every host call goes through `wrapHook`, with a timeout of `min(hookTimeoutMs, what is left of the proposal's
  * budget)`, so a slow host can never outlast the runner's overall deadline.
  */
-export function createAuthorizeStage({ registry, permissions, resources, pages, clock }: {
+export function createAuthorizeStage({ registry, permissions, resources, pages, clock, limiter }: {
   readonly registry: ActionRegistry;
   readonly permissions: PermissionChecker;
   readonly resources: ResourceAuthorizer;
   readonly pages: PageContextProvider;
   readonly clock: Clock;
+  readonly limiter: Pick<Limiter, "checkCapability" | "recordDenial">;
 }, options: HookOptions = {}): PolicyStage {
   const { hookTimeoutMs = 2000 } = options;
   const get = registry.get.bind(registry);
@@ -39,6 +42,8 @@ export function createAuthorizeStage({ registry, permissions, resources, pages, 
   const resolveResource = resources.resolve.bind(resources);
   const currentPage = pages.currentPage.bind(pages);
   const readClock = clock.now.bind(clock);
+  const checkCapability = limiter.checkCapability.bind(limiter);
+  const limitGate = createLimitGate(limiter, options);
   return async (request) => {
     const ids = { decisionId: request.decisionId, requestId: request.requestId, stage: "authorize" } as const;
     const resolved = record(request.facts.resolve);
@@ -92,6 +97,8 @@ export function createAuthorizeStage({ registry, permissions, resources, pages, 
       if (answer.ref.type !== ref.type || answer.ref.id !== ref.id) return stop("DENIED", "resource_not_available");
       resource = { type: answer.ref.type, id: answer.ref.id, displayName: answer.displayName };
     }
-    return { kind: "continue", data: { resource } };
+    const limited = await limitGate(request, "authorize", () => checkCapability({ scope: ctx as AuthorizationContext,
+      userId: (ctx as AuthorizationContext).userId, actionId: definition.id, risk: definition.risk as RiskLevel }));
+    return limited ?? { kind: "continue", data: { resource } };
   };
 }

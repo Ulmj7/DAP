@@ -4,7 +4,8 @@
 
 **Created**: 2026-11-13
 
-**Status**: Draft
+**Status**: Implementation in progress. Reconciled with Constitution 2.0.0 on 2026-11-16 (see the
+Scope Declaration).
 
 **Input**: User description:
 
@@ -24,6 +25,67 @@
 > features can use without bypassing the security boundary. Success means malicious or invalid AI
 > action requests fail closed before reaching application execution.
 
+## Scope Declaration (Constitution 2.0.0)
+
+This specification was written under Constitution 1.0.0 and has been **reconciled, not rewritten**,
+with **Constitution 2.0.0**. Everything already built stays in the codebase. What changed is which
+parts are required to call this feature complete.
+
+- **What this is.** A production-shaped, modular-monolith **security foundation**: the
+  deterministic Policy Gateway through which later DAP AI features propose application
+  capabilities. It is not a production-scale commercial platform.
+- **Tier A invariants are mandatory** (Principles I-X, XII, XIV-XVII): untrusted planner, no
+  LLM-only authorization, single deterministic Gateway, default deny, no secrets to the model, no
+  arbitrary-execution capability, typed registry, authoritative backend authorization, no
+  privilege amplification, auditability, hostile-LLM resilience, focused security tests.
+- **Tier B requirements apply only when their trigger exists**: tenant isolation (a feature stores
+  or retrieves tenant-owned data), confirmation (a HIGH or CRITICAL capability, or a MEDIUM one
+  that policy marks confirmation-required, is delivered), replay protection (retry-sensitive or
+  state-changing actions), shared state across copies (more than one copy actually runs).
+- **Tier C work is Future Work** (see "Future Work" at the end). It never blocks this feature.
+- **Classification used in this document**: **REQUIRED** (needed for the medium-sized project, or
+  to complete an already-used security boundary), **OPTIONAL** (useful, implement only when a later
+  capability needs it), **FUTURE** (production hardening or infrastructure). Implemented code in
+  OPTIONAL or FUTURE areas stays in the repository.
+
+### Milestone M1: Executable Security Boundary
+
+This feature is **REQUIRED complete** when M1 holds. M1 is the independently demonstrable slice:
+
+*AI/action proposal, trusted session/security context, strict intake validation, registered
+capability resolution, strict parameter validation, backend authorization, applicable risk
+decision, required audit, trusted executor, deterministic result.*
+
+1. A valid SAFE or LOW registered capability passes through the real Policy Gateway and executes
+   exactly once.
+2. The executor receives only the validated, frozen parameters and the requesting user's trusted
+   security context.
+3. An unknown capability is rejected before any executor is invoked.
+4. Malformed or extra parameters are rejected before any executor is invoked.
+5. An unauthorized user is denied.
+6. AI-provided claims about identity, tenant, role, permission, or confirmation have no effect on
+   authorization.
+7. The relevant audit record must succeed before a state-changing execution.
+8. A representative secret-canary test shows secrets do not appear in planner feedback or audit
+   output.
+9. A representative architecture test shows the AI layer cannot reach a trusted executor without
+   the Gateway.
+10. Relevant dependency failures remain fail-closed.
+11. A minimal reference-host composition root wires the registry, Gateway, state dependencies,
+    audit sink, executors, and development authentication into one runnable integration path.
+
+**Risk decision (REQUIRED, small).** The Gateway applies a deterministic risk decision without any
+confirmation machinery: SAFE and LOW continue; MEDIUM continues only when its definition opts out
+of confirmation with a recorded justification; MEDIUM that requires confirmation, HIGH, and
+CRITICAL return `REQUIRES_CONFIRMATION` and never `ALLOWED`; FORBIDDEN is denied. This creates no
+confirmation record and does not depend on the confirmation service.
+
+**Representative security tests required for M1** (Constitution XVII): unknown action; malformed
+parameters; a prompt-injected or hostile proposal; unauthorized user; cross-tenant or resource
+denial where tenant context applies; direct Gateway bypass prevention; a secret-leakage canary; a
+positive allowed execution; audit-before-state-change; fail-closed dependency failure. The
+exhaustive original catalogue is Future Work.
+
 ## User Scenarios & Testing *(mandatory)*
 
 **Who is involved.** The *platform developer* builds AI features on top of this boundary. The
@@ -36,7 +98,10 @@ model, or a malicious document the model read.
 The boundary is exercised with a stand-in for the AI planner in every scenario below. No real
 LLM is needed or involved.
 
-### User Story 1 - Hostile or invalid AI action requests fail closed (Priority: P1)
+### User Story 1 - Hostile or invalid AI action requests fail closed (Priority: P1, REQUIRED)
+
+> **Scope (Constitution 2.0.0)**: REQUIRED. M1 demonstrates this through the representative scenarios listed in the Scope
+> Declaration, not the exhaustive attack catalogue.
 
 Every action the AI asks for is stopped by the boundary before it can touch the application unless
 the boundary can positively prove it is allowed. Requests for unknown actions, malformed
@@ -71,7 +136,9 @@ request receives the expected result type.
 
 ---
 
-### User Story 2 - Developers add capabilities only through a typed, allowlisted registry (Priority: P1)
+### User Story 2 - Developers add capabilities only through a typed, allowlisted registry (Priority: P1, REQUIRED)
+
+> **Scope (Constitution 2.0.0)**: REQUIRED. Implemented; retained as is.
 
 A platform developer can describe each thing the AI is allowed to ask for as a *capability*:
 its name, the exact inputs it accepts, its risk class, the permission it requires, where it may
@@ -105,7 +172,10 @@ changed while the platform runs.
 
 ---
 
-### User Story 3 - Identity, tenant, and permissions are enforced; the AI can never exceed the user (Priority: P1)
+### User Story 3 - Identity, tenant, and permissions are enforced; the AI can never exceed the user (Priority: P1, REQUIRED)
+
+> **Scope (Constitution 2.0.0)**: REQUIRED. Tenant isolation follows its Tier B trigger: the architecture stays tenant-ready and
+> the demo may run with one active tenant.
 
 For every proposal, the boundary determines who the user is, which tenant they belong to, and
 whether they may do this, using the host application's own trusted authentication and
@@ -141,7 +211,11 @@ compare each outcome with what the same user would get acting directly.
 
 ---
 
-### User Story 4 - Every proposal and decision is auditable (Priority: P1)
+### User Story 4 - Every proposal and decision is auditable (Priority: P1, REQUIRED)
+
+> **Scope (Constitution 2.0.0)**: REQUIRED to the extent of M1: the audit record must succeed before a state-changing execution,
+> and a usable persistent audit sink exists. Exhaustive database-role audit isolation tests are
+> OPTIONAL.
 
 A security reviewer can reconstruct what the AI attempted, why it was allowed or denied, who
 authorized it, and what resource changed, from the audit trail alone. A state-changing action can
@@ -172,7 +246,13 @@ unavailable and confirm state-changing actions do not run.
 
 ---
 
-### User Story 5 - Dangerous operations require server-verified confirmation (Priority: P2)
+### User Story 5 - Dangerous operations require server-verified confirmation (Priority: P2, CONDITIONAL / OPTIONAL for the current delivery)
+
+> **Scope (Constitution 2.0.0)**: CONDITIONAL (Tier B, Constitution XIII). Required only when a delivered capability is HIGH or
+> CRITICAL, or MEDIUM with confirmation required. Until then only the small deterministic risk
+> decision is REQUIRED (it returns `REQUIRES_CONFIRMATION`, never `ALLOWED`). The confirmation
+> store, binding, and service already built are retained; the service, persistence endpoints, and
+> deep concurrency/bypass suites are OPTIONAL.
 
 For capabilities that can cause significant or irreversible effects, the boundary does not act on
 the AI's say-so. It issues a confirmation request that the user must explicitly accept through a
@@ -210,7 +290,12 @@ fabrication) and verify each is rejected.
 
 ---
 
-### User Story 6 - Abuse is limited and replays are rejected (Priority: P2)
+### User Story 6 - Abuse is limited and replays are rejected (Priority: P2, bounded execution REQUIRED; remainder OPTIONAL / FUTURE)
+
+> **Scope (Constitution 2.0.0)**: Bounded AI/tool execution (per-turn action, chain, and time limits) is REQUIRED. The replay guard,
+> rate limiter, their pipeline stages, and Postgres adapters already built are retained. Replay
+> protection is mandatory for retry-sensitive or state-changing actions. Durable multi-replica
+> guarantees, distributed rate limiting, and exhaustive abuse or flood suites are not required for M1.
 
 A looping, runaway, or hostile AI cannot drive the application with thousands of requests, keep
 retrying forbidden actions, or resubmit a previously used request or confirmation. Limits and
@@ -242,7 +327,12 @@ replay is rejected, including after a simulated restart.
 
 ---
 
-### User Story 7 - Reusable security test infrastructure for every future capability (Priority: P2)
+### User Story 7 - Reusable security test infrastructure for every future capability (Priority: P2, FUTURE security hardening; representative tests REQUIRED)
+
+> **Scope (Constitution 2.0.0)**: FUTURE as an exhaustive, reusable security framework (full attack catalogue, coverage gate,
+> double-run determinism, dependency-failure matrix, mutation testing). The testkit already built is
+> retained. The representative tests Constitution XVII requires are REQUIRED and counted under the
+> other stories.
 
 A platform developer who adds a capability gets a ready-made way to attack it. A scripted
 "hostile planner" replays a shared catalogue of attack scenarios against it, with ready-made
@@ -339,9 +429,12 @@ required scenario and confirm the quality gate fails and names the gap.
   script execution, shell commands, query execution, outbound requests, selector-based element
   control) as FORBIDDEN so attempts are classified distinctly. This is a supplement to the
   allowlist, not a replacement for it.
-- **FR-010**: HIGH and CRITICAL capabilities MUST always require confirmation. MEDIUM capabilities
-  MUST require confirmation unless their definition explicitly opts out with a recorded
-  justification. SAFE and LOW capabilities do not require it.
+- **FR-010** [REQUIRED decision; CONDITIONAL machinery]: The Gateway MUST apply a deterministic risk
+  decision. SAFE and LOW continue. MEDIUM continues only when its definition explicitly opts out of
+  confirmation with a recorded justification. MEDIUM that requires confirmation, HIGH, and CRITICAL
+  MUST return `REQUIRES_CONFIRMATION` and never `ALLOWED`. FORBIDDEN is denied. This decision MUST
+  NOT create confirmation records. The confirmation machinery (FR-027 to FR-033) is CONDITIONAL on a
+  delivered capability that needs it (Constitution XIII).
 
 **Deterministic Policy Gateway**
 
@@ -399,9 +492,10 @@ required scenario and confirm the quality gate fails and names the gap.
 - **FR-025**: For capabilities that target a resource, the Gateway MUST ask the resource
   authorization hook about that exact resource. "Not found" and "not permitted" MUST be
   indistinguishable to the AI.
-- **FR-026**: All security state (audit events, confirmations, replay records, limit counters)
-  MUST be partitioned by tenant so one tenant's records can never be read by, or affect, another
-  tenant.
+- **FR-026** [REQUIRED, tenant-ready]: All tenant-owned security state (audit events, tenant policy,
+  and, where they exist, confirmations, replay records, limit counters) MUST be partitioned by
+  tenant so one tenant's records can never be read by, or affect, another tenant. The reference
+  deployment MAY run with one active tenant (Constitution XI).
 
 **Server-side confirmation framework**
 
@@ -431,9 +525,12 @@ required scenario and confirm the quality gate fails and names the gap.
   by tenant, and how it behaves across restarts and multiple service copies) MUST be defined and
   documented as part of this feature, and enforced at least for confirmations and state-changing
   proposals.
-- **FR-036**: Security state (confirmations, replay records, limit counters) MUST survive restarts
-  and be shared across all running copies of the service, so that bypassing a control by
-  restarting or choosing another copy is impossible.
+- **FR-036** [OPTIONAL; multi-copy guarantee FUTURE]: Security state (confirmations, replay records,
+  limit counters) MUST be held in server-side trusted code, never in the client or the model
+  context. It MUST survive restarts and be shared across running copies only when the deployment
+  actually runs more than one copy or needs the guarantee to survive a restart. The default
+  single-process deployment MAY use the in-memory adapters, documented as such. The audit sink used
+  for state-changing execution MUST be persistent (M1).
 
 **Audit logging**
 
@@ -457,29 +554,31 @@ required scenario and confirm the quality gate fails and names the gap.
 
 **Rate limiting hooks**
 
-- **FR-043**: The system MUST provide limit-checking points for: requests per user, per tenant,
-  per capability, and per risk class; destructive-action attempts; and repeated denials. It MUST
-  also enforce a per-turn maximum for actions, chained steps, and total execution time. All
-  values MUST be configurable.
+- **FR-043** [REQUIRED bounded execution; the rest retained, not required]: The system MUST enforce a
+  per-turn maximum for actions, chained steps, and total execution time. All values MUST be
+  configurable. The further limit-checking points (per user, per tenant, per capability, per risk
+  class, destructive-action attempts, repeated denials) are implemented primitives that stay in the
+  codebase; distributed and exhaustive guarantees are FUTURE.
 - **FR-044**: When a limit is exceeded, the result MUST be `DENIED` with a rate-limited reason
   and an audit event. A limit-checking facility that is unavailable MUST cause denial.
 
 **Security test infrastructure**
 
-- **FR-045**: The system MUST provide a scripted hostile planner that submits proposals,
+- **FR-045** [REQUIRED, implemented]: The system MUST provide a scripted hostile planner that submits proposals,
   including worst-case ones, without a real LLM.
-- **FR-046**: The system MUST provide a shared attack catalogue covering at least: prompt
+- **FR-046** [FUTURE as the exhaustive catalogue; REQUIRED as the representative M1 set]: The system MUST provide a shared attack catalogue covering at least: prompt
   injection, retrieved-content injection, unknown action, parameter injection, other-user
   resource access, cross-tenant access, privilege escalation, confirmation bypass, secret
   extraction, replay, rate-limit abuse, check-dependency failure, and audit failure. It MUST also
-  reserve a place for hidden-data exposure scenarios that later features will fill.
-- **FR-047**: The system MUST provide ready-made test tenants, users with varying permissions, a
+  reserve a place for hidden-data exposure scenarios that later features will fill. For M1 only the
+  representative set listed in the Scope Declaration is REQUIRED; the full catalogue is Future Work.
+- **FR-047** [REQUIRED, implemented]: The system MUST provide ready-made test tenants, users with varying permissions, a
   test capability for each risk class, stand-in checks, a recording application stand-in that
   reveals whether it was ever invoked, and capture of audit events.
-- **FR-048**: The system MUST report, per capability, which applicable catalogue scenarios are
+- **FR-048** [FUTURE]: The system MUST report, per capability, which applicable catalogue scenarios are
   covered and which are missing or justified as not applicable, and a capability with unjustified
   gaps MUST fail the quality gate.
-- **FR-049**: Security tests MUST be deterministic and MUST NOT need a live LLM or network access.
+- **FR-049** [REQUIRED]: Security tests MUST be deterministic and MUST NOT need a live LLM or network access.
 
 **Boundaries of this feature**
 
@@ -490,11 +589,39 @@ required scenario and confirm the quality gate fails and names the gap.
 - **FR-051**: This feature MUST NOT include or depend on an LLM. The Gateway accepts proposals
   from any source and treats all of them as untrusted.
 - **FR-052**: This feature MUST NOT ship production capabilities. It ships only the test-only
-  capabilities needed to exercise the boundary.
-- **FR-053**: The system MUST provide a documented contract for later features covering: how to
+  capabilities needed to exercise the boundary. M1 executes through these test-only capabilities:
+  at least one SAFE or LOW capability, and one state-changing capability whose execution is audited.
+- **FR-053** [REQUIRED, minimal]: The system MUST provide a documented contract for later features covering: how to
   register a capability, how to submit a proposal, what results to expect, how to supply the
   application operation, and how to connect the hooks. The documented route to an application
   operation MUST go through the Gateway.
+
+### Requirement scope classification (Constitution 2.0.0)
+
+| Requirements | Scope | Note |
+|--------------|-------|------|
+| FR-001 to FR-009 (registry, risk classes, reserved names) | REQUIRED | Implemented |
+| FR-010 (risk decision) | REQUIRED | Small deterministic stage, no confirmation records |
+| FR-011 to FR-025 (Gateway, validation, hooks, authorization) | REQUIRED | Implemented except the pipeline stages listed under M1 |
+| FR-026 (tenant partitioning) | REQUIRED, tenant-ready | One active tenant allowed in the demo |
+| FR-027 to FR-033 (confirmation machinery) | CONDITIONAL / OPTIONAL | Store and binding built, retained; service not required for M1 |
+| FR-034, FR-035 (request identity, replay) | REQUIRED for state-changing actions | Implemented, retained |
+| FR-036 (durable, shared state) | OPTIONAL / FUTURE | Single process by default |
+| FR-037 to FR-042 (audit) | REQUIRED | Persistent sink required for M1 |
+| FR-043, FR-044 (limits) | REQUIRED bounded execution; rest retained | Distributed limits FUTURE |
+| FR-045, FR-047, FR-049 (hostile planner, fixtures, determinism by construction) | REQUIRED | Implemented |
+| FR-046 (attack catalogue) | Representative subset REQUIRED; exhaustive FUTURE | |
+| FR-048 (coverage gate) | FUTURE | |
+| FR-050 to FR-052 (boundaries) | REQUIRED | |
+| FR-053 (developer contract) | REQUIRED, minimal | M1 surface only |
+
+| Success criteria | Scope |
+|------------------|-------|
+| SC-001, SC-002, SC-003, SC-004, SC-007, SC-008, SC-009 | REQUIRED, evaluated on the representative M1 set |
+| SC-005 (confirmation) | CONDITIONAL / OPTIONAL |
+| SC-006 | REQUIRED as the per-turn bound; the 10,000-proposal flood run is FUTURE |
+| SC-010 | OPTIONAL; REQUIRED only for one SAFE or LOW and one state-changing capability |
+| SC-011, SC-012 | FUTURE (a single deterministic CI run is REQUIRED) |
 
 ### Key Entities *(include if feature involves data)*
 
@@ -528,44 +655,46 @@ required scenario and confirm the quality gate fails and names the gap.
 
 ### Measurable Outcomes
 
-- **SC-001**: In 100% of scenarios in the hostile-request catalogue, zero application operations
-  are executed, as confirmed by the recording application stand-in.
-- **SC-002**: 100% of proposals for unregistered, forbidden, or not-enabled capabilities, and 100%
+- **SC-001** [REQUIRED, representative]: In 100% of scenarios in the representative hostile-request
+  set defined for M1 (the exhaustive catalogue is Future Work), zero application operations are
+  executed, as confirmed by the recording application stand-in.
+- **SC-002** [REQUIRED]: 100% of proposals for unregistered, forbidden, or not-enabled capabilities, and 100%
   of proposals with invalid values, are rejected with the correct result type and have a
   matching audit record.
-- **SC-003**: When any single trusted dependency (identity, tenant, permission, resource
+- **SC-003** [REQUIRED for the dependencies on the M1 path; the full matrix is FUTURE]: When any single trusted dependency (identity, tenant, permission, resource
   authorization, limit tracking, replay tracking, confirmation storage, audit recording) is made to
   fail, time out, or return unreadable answers, 100% of proposals that depend on it are denied.
-- **SC-004**: In every tested combination of user, tenant, and capability, the outcome through the
+- **SC-004** [REQUIRED, focused]: In every tested combination of user, tenant, and capability, the outcome through the
   AI path matches the outcome of the same user acting directly, and no AI-visible response
   reveals another tenant's data or whether an inaccessible resource exists.
-- **SC-005**: 100% of expired, reused, mismatched (action, resource, values, user, tenant), and
+- **SC-005** [CONDITIONAL / OPTIONAL]: 100% of expired, reused, mismatched (action, resource, values, user, tenant), and
   AI-fabricated confirmations are rejected, and across 100 repeated concurrent acceptances of one
   confirmation, exactly one succeeds each time.
-- **SC-006**: When a hostile planner submits 10,000 proposals in one turn, executions never exceed
+- **SC-006** [REQUIRED as the per-turn bound; the 10,000-proposal flood run is FUTURE]: When a hostile planner submits 10,000 proposals in one turn, executions never exceed
   the configured per-turn maximum, and every excess proposal is denied and audited.
-- **SC-007**: For 100% of evaluated proposals there is exactly one final decision record, and
+- **SC-007** [REQUIRED]: For 100% of evaluated proposals there is exactly one final decision record, and
   across audit-recorder failure tests, zero state-changing actions execute without a preceding
   durable audit record.
-- **SC-008**: In a review exercise, a security reviewer can answer "what did the AI attempt, why
+- **SC-008** [REQUIRED, one representative audit-trail test]: In a review exercise, a security reviewer can answer "what did the AI attempt, why
   was it allowed or denied, who authorized it, what changed" for 100% of sampled actions using
   only the audit trail.
-- **SC-009**: An automated scan of every AI-visible response across the full attack catalogue
+- **SC-009** [REQUIRED, representative set]: An automated scan of every AI-visible response across the representative M1 set (the full attack catalogue is Future Work)
   finds zero occurrences of internal error details, secret-like values, policy or permission
   names, or confirmation tokens.
-- **SC-010**: A developer can add a new narrow capability of each of the six risk classes by
+- **SC-010** [OPTIONAL; REQUIRED for one SAFE or LOW and one state-changing capability]: A developer can add a new narrow capability of each of the six risk classes by
   following the documented contract, with every boundary check applying to it automatically and no
   changes to the Gateway itself.
-- **SC-011**: 100% of registered capabilities have every applicable attack scenario covered or
+- **SC-011** [FUTURE]: 100% of registered capabilities have every applicable attack scenario covered or
   carry a recorded justification, and a capability with an unjustified gap fails the quality gate.
-- **SC-012**: Two consecutive runs of the full security test suite, with no live LLM and no
+- **SC-012** [FUTURE; one deterministic CI run is REQUIRED]: Two consecutive runs of the full security test suite, with no live LLM and no
   network access, produce identical results.
 
 ## Assumptions
 
-- **Governing rules**: The project constitution (v1.0.0), in particular Principles I-XVII, binds
-  this feature. This feature is the "Security Foundation" phase of the constitution's phased
-  delivery plan.
+- **Governing rules**: The project constitution (v2.0.0) binds this feature: the Tier A principles
+  always, each Tier B principle when its trigger exists, and Principles XVIII (Delivery Scope) and
+  XIX (Scope Discipline). This feature is the "Security Foundation" phase of the constitution's
+  phased delivery plan.
 - **Host application**: The host application provides, or will provide, its own authentication,
   permission model, and resource ownership data. This feature defines how the boundary asks for
   those facts and does not build them. Until real checks are connected, the boundary denies
@@ -578,7 +707,8 @@ required scenario and confirm the quality gate fails and names the gap.
   is verified. The user interface that displays it is a later feature, and it must show the
   trusted consequence description.
 - **Default confirmation rules**: HIGH and CRITICAL always require confirmation. MEDIUM requires
-  it unless the capability explicitly opts out with a justification. SAFE and LOW do not.
+  it unless the capability explicitly opts out with a justification. SAFE and LOW do not. The risk
+  decision that applies these rules is REQUIRED; the confirmation machinery is CONDITIONAL.
 - **Configurable values**: Confirmation lifetime, replay window, rate limits, per-turn caps, and
   repeated-denial thresholds are configurable. Specific default numbers are chosen during
   planning.
@@ -590,9 +720,37 @@ required scenario and confirm the quality gate fails and names the gap.
 - **Audit destination and retention**: Where audit events are stored and for how long is a
   deployment decision outside this feature. Events must be readable by tenant-scoped reviewers
   and not alterable by the AI.
-- **Multiple service copies**: The platform may run as several copies, so security state is
-  shared rather than held privately by one copy.
+- **Default deployment**: A single process (modular monolith). Several copies are not required.
+  Shared-state guarantees across copies are FUTURE and apply only if a deployment actually runs
+  several copies.
+- **Browser boundary (resolved 2026-11-16)**: The browser is display-only guidance. The trusted
+  server derives identity and tenant, decides, and executes every application capability.
+- **Tenant model (resolved 2026-11-16)**: The architecture stays tenant-ready (one active tenant per
+  session context, tenant derived server-side). The demo may operate with one active tenant.
+- **What the model sees (resolved 2026-11-16)**: Feedback returned to the model exposes only
+  intentionally selected safe information: the outcome type, a generic category, and field paths.
+- **Tenant configuration (resolved 2026-11-16)**: Tenant configuration may narrow which capabilities
+  are enabled for a tenant. It never dynamically redefines trusted capability definitions.
 - **Out of scope (separate later features)**: the LLM planner and its prompts; retrieval over
   documents (RAG); the interface-element registry and the client-side privacy/redaction layer
   that precede AI context; the confirmation user interface; real application operations; rollback
   of executed actions; and any autonomous or multi-step agent behavior.
+
+## Future Work
+
+These items are Tier C or conditional work. They are recorded here so they do not silently become
+prerequisites (Constitution XVIII). Code already built for them stays in the repository.
+
+- The exhaustive attack catalogue (102 scenarios) and the capability-by-scenario coverage matrix
+  and gate (FR-046 in full, FR-048, SC-011).
+- The deterministic double-run script (SC-012) and the 36-case dependency-failure matrix.
+- Independent security oracle requirements beyond the useful oracle code already implemented.
+- Mutation testing and its nightly workflow.
+- Large-scale flood and concurrency suites (the 10,000-proposal run of SC-006).
+- Multi-replica security-state guarantees (FR-036 in full) and distributed rate limiting.
+- Prometheus and Grafana, Kubernetes and Minikube, distributed tracing, SIEM integration, and other
+  enterprise observability and deployment hardening.
+- OPTIONAL, to be pulled in only when a capability triggers it: the complete confirmation service,
+  persistence endpoints and deep bypass/concurrency suites; extended replay and rate-abuse suites;
+  detailed database-role audit isolation tests; readiness endpoint; Docker image; PR template; an
+  expanded testkit guide.

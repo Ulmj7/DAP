@@ -167,6 +167,42 @@ describe("proposalBudgetMs", () => {
   });
 });
 
+describe("per-stage deadlines for the stages added by T089", () => {
+  const hang = (stage: PipelineStage) => {
+    const timer = new ManualTimer();
+    const stages = costing(timer, 0);
+    stages[stage] = () => new Promise(() => {}) as never;
+    let settled = false;
+    const pending = createPipeline(stages, { timer, hookTimeoutMs: 100, proposalBudgetMs: 1000 }).run(input()).then((decision) => { settled = true; return decision; });
+    return { timer, pending, settled: () => settled };
+  };
+  const flush = async () => { for (let i = 0; i < 25; i++) await Promise.resolve(); };
+
+  it("audit gets the remaining budget, not a hook timeout", async () => {
+    const test = hang("audit");
+    await flush(); test.timer.advance(999); await flush();
+    expect(test.settled()).toBe(false);
+    test.timer.advance(1);
+    expect(await test.pending).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "audit" });
+  });
+
+  it("execute gets the remaining budget plus one hook timeout, exactly", async () => {
+    const test = hang("execute");
+    await flush(); test.timer.advance(1099); await flush();
+    expect(test.settled()).toBe(false);
+    test.timer.advance(1);
+    expect(await test.pending).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
+  });
+
+  it("authorize gets the remaining budget", async () => {
+    const test = hang("authorize");
+    await flush(); test.timer.advance(999); await flush();
+    expect(test.settled()).toBe(false);
+    test.timer.advance(1);
+    expect(await test.pending).toMatchObject({ stage: "authorize" });
+  });
+});
+
 describe("the gateway's proposalBudgetMs setting", () => {
   it.each([0, -1, 1.5, "60", null, 0x8000_0000])("rejects an invalid configured value %j at the config check", (value) => {
     const { deps } = dependencies();

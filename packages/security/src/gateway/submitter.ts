@@ -1,10 +1,10 @@
-import type { AuthorizationContext, IdGenerator, PlannerFeedback, PlannerRunMeta, PolicyDecision, PolicyGateway, ProposalCall, RequestId } from "@dap/contracts";
+import type { AuthorizationContext, IdGenerator, PlannerFeedback, PlannerRunMeta, PolicyGateway, ProposalCall, RequestId } from "@dap/contracts";
 import { snapshotAnswer } from "./answer-snapshot.js";
 import { toPlannerFeedback } from "./feedback.js";
-import type { PipelineInput } from "./pipeline.js";
+import type { PipelineEvaluation, PipelineInput } from "./pipeline.js";
 
 /** The only thing the proposal door needs from the pipeline; injectable so its invariants are testable. */
-export interface DecisionPipeline { run(input: PipelineInput): Promise<PolicyDecision> }
+export interface DecisionPipeline { evaluate(input: PipelineInput): Promise<PipelineEvaluation> }
 
 const unavailable: PlannerFeedback = Object.freeze({ outcome: "DENIED", category: "try_later" });
 
@@ -33,8 +33,9 @@ export function createProposalGateway({ pipeline, ids }: { readonly pipeline: De
             // events carry it as `requestId`; they are always equal. `callId` is the OTHER identifier: the trusted runner's
             // replay-protection key, which travels only in facts.intake and is never used as a request or decision id.
             // The proposal itself is only read if a stage asks.
-            const decision = await pipeline.run({ context, run: capturedRun, decisionId: id, requestId: id as RequestId, readProposal: () => call });
-            return toPlannerFeedback(decision);
+            const { decision, executionStatus } = await pipeline.evaluate({ context, run: capturedRun, decisionId: id, requestId: id as RequestId, readProposal: () => call });
+            // Only the execute stage reports a status: an authorized action that then failed is ALLOWED but the planner is told to try later.
+            return toPlannerFeedback(decision, executionStatus);
           } catch { return unavailable; }
         }),
       });
