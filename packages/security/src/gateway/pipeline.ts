@@ -141,7 +141,7 @@ export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer =
     const ensureProposed = async (record: PipelineRecord | undefined, attempted: string | undefined): Promise<void> => {
       if (proposed || audit === undefined || record === undefined) return;
       proposed = true;
-      await audit.proposed(record, attempted);
+      try { await audit.proposed(record, attempted); } catch { /* recording the proposal never changes what happens to it */ }
     };
     /** Records the decision (nothing it does can change it) and returns it. */
     const finish = async (decision: PolicyDecision, executionStatus?: ExecutionStatus, attempted?: string): Promise<PipelineEvaluation> => {

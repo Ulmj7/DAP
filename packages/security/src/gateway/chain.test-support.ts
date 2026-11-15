@@ -25,6 +25,8 @@ export interface ChainOptions {
   readonly execute?: (call: ExecutionCall<unknown>) => Promise<ExecutionResult> | ExecutionResult;
   readonly telemetry?: Partial<GatewayTelemetry>;
   readonly timer?: PipelineOptions["timer"];
+  /** What the host clock says; the context's own session runs 2026-01-01T00:00:00Z to 01:00:00Z. */
+  readonly now?: string;
   readonly config?: Partial<GatewayDependencies["config"]>;
 }
 
@@ -39,6 +41,7 @@ export function chain(options: ChainOptions = {}) {
     confirmation: (options.risk ?? "SAFE") === "SAFE" || options.risk === "LOW" ? { kind: "not-required" } : { kind: "required" }, changesState: false,
     audit: { params: [{ path: "/projectId", mode: "plain" }, { path: "/note", mode: "masked" }] }, executorId: "openProjectExecutor" as ExecutorId,
     resource: (params: { projectId: string }) => ({ type: "project", id: params.projectId }),
+    describeConsequence: () => ({ title: "Open the project", effects: ["Opens it"], irreversible: false }),
   } as never);
   const registry = buildRegistry([definition]);
   const executorCalls: ExecutionCall<unknown>[] = [];
@@ -64,7 +67,7 @@ export function chain(options: ChainOptions = {}) {
       resources: { resolve: async (_ctx, ref) => { hostCalls.push("resolve"); return (options.resolveResource ?? (() => ({ ...resolved(), ref })))() as ResolvedResource; } },
       pages: { currentPage: async () => "page" as PageId },
     },
-    clock: { now: () => "2026-01-01T00:00:00Z" as IsoInstant }, config: { ...base.config, ...options.config },
+    clock: { now: () => (options.now ?? "2026-01-01T00:00:00Z") as IsoInstant }, config: { ...base.config, ...options.config },
   };
   const pass: PolicyStage = () => ({ kind: "continue", data: {} });
   /** Stand-ins for the D6 positions that are not built yet, reporting the facts the real stages will. */
