@@ -19,3 +19,4 @@ export * from "./attacks/malformed-parameters.js";
 export * from "./attacks/injection-corpus.js";
 export * from "./attacks/prompt-injection.js";
 export * from "./hostile-planner.js";
+export * from "./oracle.js";
