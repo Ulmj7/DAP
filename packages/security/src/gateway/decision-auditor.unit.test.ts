@@ -24,7 +24,7 @@ function build(options: ChainOptions & { clock?: () => unknown } = {}) {
   const clock = options.clock === undefined ? world.deps.clock : { now: options.clock as never };
   const events = createAuditEventFactory({ clock });
   const writer = createAuditWriter({ sink: world.deps.audit, telemetry });
-  const auditor = createDecisionAuditor({ registry: world.registry, events, writer, telemetry });
+  const auditor = createDecisionAuditor({ registry: world.registry, events, writer, telemetry, registeredActionIds: new Set(["openProject"]) });
   return { world, auditor, seen, failures, rate, facts: () => goodFacts(world) };
 }
 const deny = (request: PipelineRecord, reason: ReasonCode, outcome: "DENIED" | "UNAUTHORIZED" | "INVALID_ACTION" | "FORBIDDEN_POLICY" | "INVALID_PARAMETERS" = "DENIED", extra: object = {}): PolicyDecision =>
@@ -65,6 +65,17 @@ describe("proposed", () => {
     expect(failures).toEqual(["proposed"]);
   });
   it("is frozen", () => { expect(Object.isFrozen(build().auditor)).toBe(true); });
+});
+
+describe("telemetry names only registered actions", () => {
+  it("labels an action the registry does not hold as `unknown`", async () => {
+    const world = chain();
+    const seen: unknown[] = [];
+    const auditor = createDecisionAuditor({ registry: world.registry, events: createAuditEventFactory({ clock: world.deps.clock }), writer: createAuditWriter({ sink: world.deps.audit }), telemetry: { decision: (sample) => { seen.push(sample); } }, registeredActionIds: new Set(["someOtherAction"]) });
+    const request = recordOf(goodFacts(world));
+    await auditor.decided(request, deny(request, "permission_missing", "UNAUTHORIZED"));
+    expect(seen).toEqual([{ outcome: "UNAUTHORIZED", reason: "permission_missing", risk: "SAFE", action: "unknown" }]);
+  });
 });
 
 describe("decided: allowed", () => {

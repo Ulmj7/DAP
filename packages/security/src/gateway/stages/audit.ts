@@ -30,7 +30,7 @@ export function createAuditStage({ registry, events, writer }: { readonly regist
     const definition = provenDefinition(get, request.facts.resolve as Readonly<Record<string, unknown>>);
     if (definition === undefined) return stop("dependency_failure");
     // One read of the allowlist, before any await.
-    const rules = definition.audit.params;
+    const rules = definition.auditParams;
     let event;
     try {
       event = await events.make({

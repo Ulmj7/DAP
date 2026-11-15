@@ -34,14 +34,16 @@ const RATE_SCOPES: Readonly<Partial<Record<ReasonCode, RateLimitScope>>> = Objec
 });
 const record = (value: unknown): Readonly<Record<string, unknown>> | undefined => (value !== null && typeof value === "object" && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined);
 
-export function createDecisionAuditor({ registry, events, writer, telemetry }: {
+export function createDecisionAuditor({ registry, events, writer, telemetry, registeredActionIds }: {
   readonly registry: ActionRegistry;
   readonly events: AuditEventFactory;
   readonly writer: AuditWriter;
   readonly telemetry?: Partial<GatewayTelemetry>;
+  /** The only action ids telemetry may name (anything else is labelled `unknown`). */
+  readonly registeredActionIds?: ReadonlySet<string>;
 }): DecisionAuditor {
   const get = registry.get.bind(registry);
-  const count = safeTelemetry(telemetry);
+  const count = safeTelemetry(telemetry, registeredActionIds);
 
   /** What the facts so far say about the action: the registered definition once resolved, else only an attempted name. */
   function describe(request: PipelineRecord, attempted: string | undefined, withParams: boolean): Pick<AuditEventInput, "action" | "risk" | "paramsView" | "resource"> {
@@ -53,7 +55,7 @@ export function createDecisionAuditor({ registry, events, writer, telemetry }: {
       const target = record(authorize?.resource);
       return {
         action: { kind: "registered", id: resolve.id, version: resolve.version }, risk: resolve.risk as never,
-        ...(withParams && validate !== undefined ? { paramsView: projectParams(validate.params, definition.audit.params) } : {}),
+        ...(withParams && validate !== undefined ? { paramsView: projectParams(validate.params, definition.auditParams) } : {}),
         ...(withParams && target !== undefined && typeof target.type === "string" && typeof target.id === "string" ? { resource: { type: target.type, id: target.id } } : {}),
       };
     }

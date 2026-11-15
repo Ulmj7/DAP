@@ -111,7 +111,7 @@ export function assemble(deps: GatewayDependencies, extras: GatewayExtras = {}):
       audit: createAuditStage({ registry: deps.registry, events, writer }),
       execute: createExecuteStage({ registry: deps.registry, executors: deps.executors, events, writer, ...telemetry }),
     },
-    auditor: createDecisionAuditor({ registry: deps.registry, events, writer, ...telemetry }),
+    auditor: createDecisionAuditor({ registry: deps.registry, events, writer, registeredActionIds: new Set(deps.registry.list().map((entry) => entry.definition.id)), ...telemetry }),
   });
 }
 export const composeStages = (deps: GatewayDependencies, extras: GatewayExtras = {}): StageMap => assemble(deps, extras).stages;

@@ -64,8 +64,8 @@ export function createExecuteStage({ registry, executors, events, writer, teleme
     const definition = provenDefinition(get, request.facts.resolve as Readonly<Record<string, unknown>>);
     if (definition === undefined) return fault();
     // Reads, once and before any await: which executor, and what the capability audits.
-    const executorId: unknown = Reflect.get(definition, "executorId");
-    const rules = definition.audit.params;
+    const executorId: unknown = definition.executorId;
+    const rules = definition.auditParams;
     const executor: unknown = isText(executorId) ? executorFor(executorId as never) : undefined;
     const run: unknown = executor !== null && typeof executor === "object" ? Reflect.get(executor, "execute") : undefined;
     if (typeof run !== "function") return fault();

@@ -1,7 +1,30 @@
-import type { ActionRegistry, AnyActionDefinition } from "@dap/contracts";
+import type { ActionRegistry, AnyActionDefinition, AuditParamRule } from "@dap/contracts";
 
 /** The only definition fields the stages after resolve use, each copied ONCE at the moment of proof. */
-export type ProvenDefinition = Pick<AnyActionDefinition, "id" | "version" | "inputSchema" | "resource" | "requiredPermission" | "allowedPages">;
+export type ProvenDefinition = Pick<AnyActionDefinition, "id" | "version" | "inputSchema" | "resource" | "requiredPermission" | "allowedPages"> & {
+  /** What the capability lets the audit trail record, copied once. Anything unreadable is dropped: nothing unlisted is ever recorded. */
+  readonly auditParams: readonly AuditParamRule[];
+  /** Which executor runs it; read once, and checked by the stage that uses it. */
+  readonly executorId: unknown;
+};
+
+/** The capability's audit allowlist as frozen plain rules; a malformed list or rule is dropped (fail closed: less is recorded, never more). */
+function auditRules(definition: object): readonly AuditParamRule[] {
+  try {
+    const audit: unknown = Reflect.get(definition, "audit");
+    const list: unknown = audit !== null && typeof audit === "object" ? Reflect.get(audit, "params") : undefined;
+    if (!Array.isArray(list)) return Object.freeze([]);
+    const rules: AuditParamRule[] = [];
+    for (let index = 0; index < Math.min(list.length, 256); index++) {
+      const rule: unknown = list[index];
+      if (rule === null || typeof rule !== "object") continue;
+      const path: unknown = Reflect.get(rule, "path");
+      const mode: unknown = Reflect.get(rule, "mode");
+      if (typeof path === "string" && (mode === "plain" || mode === "masked")) rules.push(Object.freeze({ path, mode }));
+    }
+    return Object.freeze(rules);
+  } catch { return Object.freeze([]); }
+}
 
 /**
  * The registered definition for the action resolve authorized, proven to be that very action: same id, same version, same
@@ -27,5 +50,7 @@ export function provenDefinition(get: ActionRegistry["get"], resolved: Readonly<
     resource: Reflect.get(definition, "resource"),
     requiredPermission: Reflect.get(definition, "requiredPermission"),
     allowedPages: Reflect.get(definition, "allowedPages"),
+    auditParams: auditRules(definition),
+    executorId: Reflect.get(definition, "executorId"),
   }) as ProvenDefinition;
 }
