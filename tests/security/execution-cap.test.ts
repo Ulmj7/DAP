@@ -68,8 +68,7 @@ describe("the execution cap", () => {
   });
 
   it("DENIED proposals (unknown action, invalid parameters, unauthorized user) do not spend execution slots", async () => {
-    let permitted = true;
-    const h = gatewaySequence({ config: config(), permit: () => permitted });
+    const h = gatewaySequence({ config: config() });
     const bad = [
       (id: string) => ({ callId: id, raw: { action: "deleteEverything", params: {} } }),
       (id: string) => ({ callId: id, raw: { action: "testSafeEcho", params: { message: "x", extra: 1 } } }),
@@ -79,9 +78,9 @@ describe("the execution cap", () => {
       const answer = await h.target.submitAs(actor(), bad[index % bad.length]!(`bad-${index}`));
       expect(answer).not.toEqual(allowed);
     }
-    permitted = false;
+    h.world.setPermissionAnswer(false);
     for (let index = 0; index < CAP; index++) expect(await h.target.submitAs(actor(), safe(`unauthorized-${index}`))).toEqual({ outcome: "UNAUTHORIZED", category: "not_available" });
-    permitted = true;
+    h.world.setPermissionAnswer(undefined);
     expect(h.target.executor.calls).toBe(0);
     const answers = await run(h, CAP, actor(), "good");
     expect(count(answers, allowed)).toBe(CAP);
