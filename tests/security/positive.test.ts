@@ -1,6 +1,6 @@
 /**
  * T083, POS-01 and ATK-PRIV-04. A suite of denials cannot tell a working Gateway from one that denies everything: these must ALLOW.
- * The oracles are proven able to fail; the scenarios run against the end-to-end world once it exists (T070).
+ * The oracles are proven able to fail; the scenarios run through the shared end-to-end world (T070).
  */
 import { describe, expect, it } from "vitest";
 import type { AttackScenario, AuthorizationContext, AuditEvent } from "@dap/contracts";
@@ -34,6 +34,15 @@ describe("POS-01 oracle", () => {
     const received = Object.freeze(Object.assign(Object.create(null) as Record<string, unknown>, { message: "hello" }));
     expect(scenario("POS-01").verify(good({ receivedParams: [received] }))).toEqual([]);
     expect(scenario("POS-01").verify(good({ receivedParams: [Object.freeze(Object.assign(Object.create(null) as Record<string, unknown>, { message: "other" }))] }))).toContain("the executor did not receive exactly the validated parameters");
+  });
+  it("rejects non-JSON and hidden extra parameters instead of serializing them away", () => {
+    for (const received of [
+      { message: "hello", extra: undefined }, { message: NaN }, new Date("2026-01-01"),
+      { message: "hello", [Symbol("hidden")]: 1 }, Object.defineProperty({ message: "hello" }, "hidden", { value: 1 }),
+      JSON.parse('{"message":"hello","__proto__":{}}'),
+    ]) expect(scenario("POS-01").verify(good({ receivedParams: [received] }))).toContain("the executor did not receive exactly the validated parameters");
+    expect(scenario("POS-01").verify(good({ validated: { message: null }, receivedParams: [{ message: NaN }] }))).not.toEqual([]);
+    expect(scenario("POS-01").verify(good({ validated: "2026-01-01T00:00:00.000Z", receivedParams: [new Date("2026-01-01")] }))).not.toEqual([]);
   });
   it.each([
     ["the proposal was denied", { feedback: [{ outcome: "DENIED", category: "not_available" }] }, "the proposal was not allowed"],
@@ -70,7 +79,7 @@ describe("ATK-PRIV-04 oracle", () => {
  * The scenarios against the REAL gateway, through withGateway(). What tests/security/test-world.gateway.test.ts (T070/T078) already proves is not repeated:
  * a permitted SAFE action runs once with the frozen params and the PROPOSED, ALLOWED, EXECUTED trail; the executor's `security` is the submitter's minted context;
  * two users are independent. What the two scenario oracles add, and this section runs: the independent expectation of the validated params, the identity of
- * the context object, the absence of any service identity, and the oracle's own sensitivity to a wrong world.
+ * the context object, the oracle's own sensitivity to a wrong world. There is no service-identity port; context substitution, rather than an unreachable bait counter, is the evidence.
  */
 describe("POS-01 and ATK-PRIV-04 against the REAL gateway, through withGateway()", () => {
   const A_ALICE: WorldUser = { tenant: "A", user: ALICE };
@@ -79,7 +88,7 @@ describe("POS-01 and ATK-PRIV-04 against the REAL gateway, through withGateway()
     const submitter = await world.submitterFor(who);
     const base = world.targetFor("testSafeEcho", who);
     return { ...base, validProposal: () => ({ raw: world.proposal("testSafeEcho").raw, validated: { message: VALID_PARAMS.testSafeEcho.message } }),
-      requestingUser: submitter.context, executorContexts: () => world.executor("testSafeEcho").callLog.map((call) => call.security), serviceIdentityCalls: () => world.serviceIdentityCalls() };
+      requestingUser: submitter.context, executorContexts: () => world.executor("testSafeEcho").callLog.map((call) => call.security) };
   }
   /** These two scenarios read the context OBJECT and the received parameters from the observation, which runScenario's data snapshot would replace by copies, so the scenario's own `run` is called. */
   const drive = (entry: AttackScenario, target: object) => entry.run(target as never);
@@ -95,7 +104,7 @@ describe("POS-01 and ATK-PRIV-04 against the REAL gateway, through withGateway()
     expect(observation.auditEvents.map((event) => event.type)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED", "AI_ACTION_EXECUTED"]);
   });
 
-  it("ATK-PRIV-04: the executor's context is the requesting user's own object, in tenant B as in tenant A, and the host's service identity is never touched", async () => {
+  it("ATK-PRIV-04: the executor's context is the requesting user's own object, in tenant B as in tenant A, without substituting a service-shaped context", async () => {
     for (const who of [A_ALICE, { tenant: "B", user: ALICE } as WorldUser]) {
       const world = withGateway();
       const target = await positiveTarget(world, who);
@@ -103,15 +112,10 @@ describe("POS-01 and ATK-PRIV-04 against the REAL gateway, through withGateway()
       expect(scenario("ATK-PRIV-04").verify(observation)).toEqual([]);
       expect(target.executorContexts()[0]).toBe(target.requestingUser);
       expect(target.requestingUser.tenantId).toBe(world.tenants[who.tenant]);
-      expect(world.serviceIdentityCalls()).toBe(0);
     }
   });
 
-  it("the world's service identity bait counts a call (so the zero above can fail), and an unprivileged user's call neither executes nor is a positive control", async () => {
-    const world = withGateway();
-    expect(world.serviceIdentityCalls()).toBe(0);
-    world.hostServiceIdentity.serviceContext();
-    expect(world.serviceIdentityCalls()).toBe(1);
+  it("an unprivileged user's call does not count as a positive control", async () => {
     const carol = await positiveTarget(withGateway(), { tenant: "A", user: "carol" });
     const denied = await drive(scenario("POS-01"), carol);
     expect(scenario("POS-01").verify(denied).length).toBeGreaterThan(0); // a world that denies everything fails the positive control

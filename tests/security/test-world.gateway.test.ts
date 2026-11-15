@@ -196,15 +196,7 @@ describe("world controls added for the evidence scenarios", () => {
     expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"))).toEqual({ outcome: "ALLOWED", category: "ok" });
     expect(world.executor("testSafeEcho").calls).toBe(2);
   });
-  it("the host's service identity bait counts calls and a gateway run never makes one", async () => {
-    const world = withGateway();
-    await world.submit(A_ALICE, world.proposal("testSafeEcho"));
-    expect(world.serviceIdentityCalls()).toBe(0);
-    world.hostServiceIdentity.serviceContext();
-    expect(world.serviceIdentityCalls()).toBe(1);
-    world.reset();
-    expect(world.serviceIdentityCalls()).toBe(0);
-  });
+
 });
 
 describe("a wrong-tenant, inaccessible or nonexistent resource is denied with the same bytes", () => {

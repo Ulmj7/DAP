@@ -40,7 +40,7 @@ import { InMemoryAuditSink } from "./audit-capture.js";
 import { FakeClock } from "./clock.js";
 import { faulty } from "./fault-injection.js";
 import type { FaultMode } from "./fault-injection.js";
-import { FakePageContextProvider, FakePermissionChecker, createServiceIdentityHook, withServiceIdentityRecording } from "./host-fakes.js";
+import { FakePageContextProvider, FakePermissionChecker } from "./host-fakes.js";
 import { IdGenerator } from "./ids.js";
 import { RecordingExecutor } from "./recording-executor.js";
 import { snapshotData } from "./snapshot.js";
@@ -253,13 +253,6 @@ export interface GatewayWorld {
   setPermissionAnswer(answer: unknown): void;
   /** Make the host's permission hook throw an error with exactly this message (`undefined` stops it), for the tests that plant a secret in a dependency failure. */
   failPermissionsWith(message: string | undefined): void;
-  /**
-   * The host's service identity, as a recording bait: the Gateway has no port for a service identity (executors act as the requesting user, FR-024), so
-   * nothing it does can reach this object. Anything that tried to obtain a service identity through the host would have to call it, and every call is counted.
-   */
-  readonly hostServiceIdentity: { serviceContext(): unknown };
-  /** How many times `hostServiceIdentity` was invoked. ATK-PRIV-04 requires zero. */
-  serviceIdentityCalls(): number;
   /** Remove the `setPermissionAnswer` override: the host's real grants answer again. */
   clearPermissionAnswer(): void;
   /** Make the host's page provider report `page`. */
@@ -445,9 +438,7 @@ export function withGateway(options: GatewayWorldOptions = {}): GatewayWorld {
       authentication: { authenticate: through("authentication", authenticationPort, "authenticate") as never },
       clock: { now: through("clock", { now: () => clock.now() }, "now") as never },
     });
-    const serviceIdentity = createServiceIdentityHook();
-    const hostServiceIdentity = withServiceIdentityRecording({ serviceContext: (): unknown => null }, serviceIdentity);
-    return { serviceIdentity, hostServiceIdentity, clock, audit, ids, globalAllowlist, permissions, pages, stats, controls, deps, recorders, factory, gateways: new Map<number, PolicyGateway>(), contexts: new Map<string, AuthorizationContext>(), turns: new Map<string, string>(), counter: { calls: 0 }, latestEnd: { ms: 0 } };
+    return { clock, audit, ids, globalAllowlist, permissions, pages, stats, controls, deps, recorders, factory, gateways: new Map<number, PolicyGateway>(), contexts: new Map<string, AuthorizationContext>(), turns: new Map<string, string>(), counter: { calls: 0 }, latestEnd: { ms: 0 } };
   }
 
   let state = build();
@@ -523,8 +514,6 @@ export function withGateway(options: GatewayWorldOptions = {}): GatewayWorld {
     grantPermission(who, permission) { state.permissions.grant(who.user as UserId, permission as PermissionId, tenantKey(who.tenant)); },
     revokePermission(who, permission) { state.permissions.revoke(who.user as UserId, permission as PermissionId, tenantKey(who.tenant)); },
     setPermissionAnswer(answer) { state.controls.permissionOverride = true; state.controls.permissionAnswer = answer; },
-    get hostServiceIdentity() { return state.hostServiceIdentity; },
-    serviceIdentityCalls() { return state.serviceIdentity.calls.length; },
     failPermissionsWith(message) { state.controls.permissionFailure = message; },
     clearPermissionAnswer() { state.controls.permissionOverride = false; state.controls.permissionAnswer = undefined; },
     setReportedPage(page) { state.pages.setPage(page as PageId | null); },

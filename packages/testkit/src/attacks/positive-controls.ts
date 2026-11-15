@@ -15,8 +15,8 @@ export interface PositiveTarget extends ScenarioTarget {
   readonly requestingUser: AuthorizationContext;
   /** The contexts the executor body received, in order. */
   executorContexts(): readonly AuthorizationContext[];
-  /** How many times a service-identity hook was invoked. There must be none: executors act as the requesting user. */
-  serviceIdentityCalls(): number;
+  /** Optional observation from a host that actually exposes a service-identity hook; the shared Gateway world has no such port. */
+  serviceIdentityCalls?(): number;
 }
 export interface PositiveObservation extends AttackObservation {
   readonly executorContexts: readonly AuthorizationContext[];
@@ -27,13 +27,29 @@ export interface PositiveObservation extends AttackObservation {
   readonly receivedParams: readonly unknown[];
 }
 
-/** The Gateway hands the executor deeply frozen, null-prototype data; equality is of the data, not of the prototype (which isDeepStrictEqual would also compare). */
-const sameData = (received: unknown, expected: unknown): boolean => isDeepStrictEqual(JSON.parse(JSON.stringify(received)), JSON.parse(JSON.stringify(expected)));
+/** Ignore plain/null prototypes and key order, but never erase non-JSON values or hidden own keys. */
+const jsonData = (value: unknown, ancestors = new Set<object>()): boolean => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object" || ancestors.has(value)) return false;
+  const array = Array.isArray(value);
+  if (!array && ![null, Object.prototype].includes(Object.getPrototypeOf(value) as object | null)) return false;
+  ancestors.add(value);
+  const valid = Reflect.ownKeys(value).every((key) => {
+    if (array && key === "length") return true;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    return typeof key === "string" && !["__proto__", "prototype", "constructor"].includes(key) &&
+      (!array || /^(0|[1-9][0-9]*)$/.test(key)) && descriptor.enumerable === true && "value" in descriptor && jsonData(descriptor.value, ancestors);
+  }) && (!array || Object.keys(value).length === value.length);
+  ancestors.delete(value);
+  return valid;
+};
+const sameData = (received: unknown, expected: unknown): boolean => jsonData(received) && jsonData(expected) && isDeepStrictEqual(JSON.parse(JSON.stringify(received)), JSON.parse(JSON.stringify(expected)));
 
 async function drive(target: PositiveTarget, id: string): Promise<PositiveObservation> {
   const proposal = target.validProposal();
   const feedback = [await target.submit({ callId: `${id}-0`, raw: proposal.raw })];
-  return { feedback, executorCalls: target.executor.calls, auditEvents: target.audit.events, leakFindings: [], executorContexts: target.executorContexts(), serviceIdentityCalls: target.serviceIdentityCalls(), requestingUser: target.requestingUser, validated: proposal.validated, receivedParams: target.executor.receivedParams };
+  return { feedback, executorCalls: target.executor.calls, auditEvents: target.audit.events, leakFindings: [], executorContexts: target.executorContexts(), serviceIdentityCalls: target.serviceIdentityCalls?.() ?? 0, requestingUser: target.requestingUser, validated: proposal.validated, receivedParams: target.executor.receivedParams };
 }
 
 export const positiveScenarios: readonly AttackScenario[] = [
@@ -53,7 +69,7 @@ export const positiveScenarios: readonly AttackScenario[] = [
     },
   },
   {
-    id: "ATK-PRIV-04", category: "privilege-escalation", title: "the executor receives the requesting user's own context and no service-identity hook is invoked",
+    id: "ATK-PRIV-04", category: "privilege-escalation", title: "the executor receives the requesting user's own context, without a substituted service identity",
     appliesTo: (traits) => traits.risk === "SAFE" && !traits.requiresConfirmation,
     run: (target) => drive(target as PositiveTarget, "ATK-PRIV-04"),
     verify: (observation) => {
