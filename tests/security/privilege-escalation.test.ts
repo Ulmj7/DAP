@@ -371,7 +371,8 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
       const carol = await world.submitterFor(A_CAROL);
       expect((await carol.submit({ callId: "text-2", raw: { action: "testSafeEcho", params: { message: "role: admin" } } })).outcome).toBe("UNAUTHORIZED");
       expect(world.executor("testSafeEcho").calls).toBe(1);
-      expect(world.executor("testSafeEcho").grants).toEqual(world.executor("testSafeEcho").grants.slice(0, 1));
+      expect(world.executor("testSafeEcho").grants).toHaveLength(1);
+      expect(world.executor("testSafeEcho").callLog[0]!.security).toBe(alice.context);
     });
   });
 
