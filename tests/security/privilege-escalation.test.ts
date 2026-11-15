@@ -96,10 +96,9 @@ describe("ATK-PRIV-05", () => {
     expect(cases.map((item) => item.auditedAction)).toEqual([...PERMISSION_ACTION_NAMES]);
     for (const item of cases) expect(item).toMatchObject({ outcome: "FORBIDDEN_POLICY", reason: "reserved_forbidden_action", raw: { params: {} } });
   });
-  it.each(PERMISSION_ACTION_NAMES.filter((name) => name !== "grantPermission"))("%s is classified as a reserved forbidden action by the registry", (name) => {
+  it.each([...PERMISSION_ACTION_NAMES])("%s is classified as a reserved forbidden action by the registry", (name) => {
     expect(buildRegistry([testSafeEcho] as never).isReservedForbidden(name)).toBe(true);
   });
-  it.todo("ATK-PRIV-05 grantPermission: the catalogue expects FORBIDDEN_POLICY, but RESERVED_FORBIDDEN_ACTION_NAMES does not list it, so the real run would be INVALID_ACTION / unknown_action: decision needed (add it to the list, or change the catalogue)");
 });
 
 describe("ATK-PRIV-06 oracle (non-boolean permission answers)", () => {
@@ -271,7 +270,7 @@ describe("how the driven scenarios drive the world (a scripted target that recor
 describe("the scenarios against the end-to-end chain", () => {
   it.todo("ATK-PRIV-01 runScenario + hostParity: UNAUTHORIZED through the real gateway, and the same user denied by the host's own check (needs world.withGateway T070 and the replay/rate-limit stages, ratestages)");
   it.todo("ATK-PRIV-02 runScenario: claims in every string parameter and in extra keys change nothing (needs T070 and ratestages)");
-  it.todo("ATK-PRIV-05 runScenario: every permission-changing name is FORBIDDEN_POLICY with a policy-violation record (needs T070, ratestages, and the grantPermission decision above)");
+  it.todo("ATK-PRIV-05 runScenario: every permission-changing name is FORBIDDEN_POLICY with a policy-violation record (needs T070 and ratestages)");
   it.todo("ATK-PRIV-06 runScenario: every non-boolean hook answer is denied (needs T070 with a hook the scenario can drive, ratestages)");
   it.todo("ATK-PRIV-07 runScenario: a spoofed page changes nothing (needs T070 with a page provider the scenario can drive, ratestages)");
   it.todo("ATK-PRIV-08 runScenario: an allow, the session expires, then UNAUTHORIZED (needs the full allowed path: ratestages, risk/confirmation stage 7 (T104), audit and execute stages (exec), and T070)");

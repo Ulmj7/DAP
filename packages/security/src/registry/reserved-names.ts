@@ -10,7 +10,7 @@ export const RESERVED_FORBIDDEN_ACTION_NAMES: readonly string[] = Object.freeze(
   "httpRequest", "outboundRequest", "callApi", "clickSelector", "typeSelector", "clickBySelector",
   "typeBySelector", "clickAnySelector", "typeAnySelector", "getPassword", "getCredentials", "getToken", "getSecret", "retrieveCredentials",
   "retrieveToken", "disableAudit", "disableAuditLog", "changePermissions", "setPermissions",
-  "changeOwnPermissions", "bypassAuthorization",
+  "changeOwnPermissions", "grantPermission", "bypassAuthorization",
 ]);
 
 export function normalizeForClassification(name: string): string {

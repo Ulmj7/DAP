@@ -42,7 +42,7 @@ describe("immutable startup registry", () => {
 
   it.each([
     "executeShell", "runShell", "executeJavaScript", "queryDatabase", "fetchAnyUrl", "clickAnySelector",
-    "typeAnySelector", "getPassword", "disableAudit", "changeOwnPermissions",
+    "typeAnySelector", "getPassword", "disableAudit", "changeOwnPermissions", "grantPermission",
   ])("classifies catalogue power %s and separator variants as forbidden", (name) => {
     const registry = buildRegistry([]);
     expect(registry.isReservedForbidden(name)).toBe(true);
