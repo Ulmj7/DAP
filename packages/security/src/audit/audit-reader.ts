@@ -14,6 +14,7 @@ import { z } from "zod";
 import { AUDIT_EVENT_TYPES } from "@dap/contracts";
 import type { AuditEvent, AuditQuery, AuditReader, AuthorizationContext } from "@dap/contracts";
 import { isMintedContext } from "@dap/contracts/mint";
+import { snapshotAnswer } from "../gateway/answer-snapshot.js";
 
 export const MAX_AUDIT_QUERY_LIMIT = 500;
 
@@ -49,7 +50,8 @@ export function createAuditReader(source: AuditEventSource): AuditReader {
       const types = query.types === undefined ? undefined : new Set<string>(query.types);
       let matching: { readonly event: AuditEvent }[];
       try {
-        matching = candidates
+        const captured = snapshotAnswer(candidates) as readonly AuditEvent[];
+        matching = captured
         .map((event) => ({ event, at: Date.parse(event.occurredAt) }))
         .filter(({ event, at }) => event.tenantId === tenantId && Number.isFinite(at)
           && (query.requestId === undefined || event.requestId === query.requestId) && (query.userId === undefined || event.userId === query.userId)

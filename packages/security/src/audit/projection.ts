@@ -65,7 +65,8 @@ export function projectParams(params: unknown, rules: readonly AuditParamRule[])
     for (const path of [...mode.keys()].sort()) {
       const hit = lookup(params, segments(path) as readonly string[]);
       if (!hit.found) continue;
-      view[path] = scrubJson(applyMasks(hit.value, path, masked));
+      const covered = [...masked].some((parent) => path.startsWith(`${parent}/`));
+      view[path] = covered ? MASKED : scrubJson(applyMasks(hit.value, path, masked));
     }
   } catch { /* A view that cannot be built is an empty one: nothing unlisted is ever recorded. */ return Object.freeze(Object.create(null) as { [path: string]: JsonValue }); }
   return Object.freeze(view);

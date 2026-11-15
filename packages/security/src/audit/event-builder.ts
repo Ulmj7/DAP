@@ -113,11 +113,13 @@ export function buildAuditEvent(input: AuditEventInput): AuditEvent {
   let actionId: string | null = null;
   let definitionVersion: number | null = null;
   if (action !== undefined) {
-    if (action.kind === "registered") {
-      if (!isValidActionId(action.id) || !Number.isSafeInteger(action.version) || action.version < 1) reject("action");
-      actionId = action.id;
-      definitionVersion = action.version;
-    } else if (action.kind === "attempted") actionId = attemptedName(action.name);
+    const kind = action.kind;
+    if (kind === "registered") {
+      const { id, version } = action;
+      if (!isValidActionId(id) || !Number.isSafeInteger(version) || version < 1) reject("action");
+      actionId = id;
+      definitionVersion = version;
+    } else if (kind === "attempted") actionId = attemptedName(action.name);
     else reject("action");
   }
   if (shape.action === "registered" && definitionVersion === null) reject("action");
