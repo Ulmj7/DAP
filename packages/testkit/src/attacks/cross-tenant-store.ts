@@ -33,6 +33,8 @@ export async function assertCrossTenantStores(pool: Pool, tenants: { readonly te
   const client = await pool.connect();
   const violations: string[] = [];
   const names: string[] = [];
+  // A probe that cannot even roll back leaves an unknown connection state: it is destroyed, never returned to the pool.
+  const health = { rollbackFailed: false };
   try {
     const role = await client.query("SELECT current_user AS name,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user");
     if (role.rows[0]?.name !== "dap_app" || role.rows[0]?.rolsuper !== false || role.rows[0]?.rolbypassrls !== false) throw new Error("Isolation probes require dap_app without SUPERUSER/BYPASSRLS");
@@ -47,12 +49,24 @@ export async function assertCrossTenantStores(pool: Pool, tenants: { readonly te
       const values = required.map((column) => fixtureValue(column, tenants.tenantB));
       const relation = `${quote(table.schema)}.${quote(table.name)}`;
       const insert = `INSERT INTO ${relation} (${required.map((column) => quote(column.name)).join(",")}) VALUES (${values.map((_, index) => `$${index + 1}`).join(",")})`;
-      await probeTable(client, relation, insert, values, tenants, label, violations);
+      await probeTable(client, relation, insert, values, tenants, label, violations, health);
     }
     return Object.freeze({ tables: Object.freeze(names), violations: Object.freeze(violations) });
-  } finally { client.release(); }
+  } finally { client.release(health.rollbackFailed); }
 }
-async function probeTable(client: PoolClient, relation: string, insert: string, values: readonly unknown[], tenants: { tenantA: string; tenantB: string }, label: string, violations: string[]): Promise<void> {
+/**
+ * One write that must NOT reach a row of another tenant: refused outright (42501, no privilege or policy) or matching no
+ * row. Any other error is unexpected and fails loudly; a statement that touched a row is a violation.
+ */
+async function mustTouchNothing(client: PoolClient, savepoint: string, sql: string, params: readonly unknown[], violation: string, label: string, violations: string[]): Promise<void> {
+  await client.query(`SAVEPOINT ${savepoint}`);
+  try {
+    const result = await client.query(sql, [...params]);
+    if ((result.rowCount ?? 0) > 0) violations.push(`${label}: ${violation}`);
+  } catch (error) { if (!error || typeof error !== "object" || Reflect.get(error, "code") !== "42501") throw error; }
+  finally { await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`); }
+}
+async function probeTable(client: PoolClient, relation: string, insert: string, values: readonly unknown[], tenants: { tenantA: string; tenantB: string }, label: string, violations: string[], health: { rollbackFailed: boolean }): Promise<void> {
   await client.query("BEGIN");
   try {
     await client.query("SELECT set_config('app.tenant_id',$1,true)", [tenants.tenantB]);
@@ -68,7 +82,15 @@ async function probeTable(client: PoolClient, relation: string, insert: string, 
     try { await client.query(insert, [...values]); violations.push(`${label}: foreign write accepted`); }
     catch (error) { if (!error || typeof error !== "object" || Reflect.get(error, "code") !== "42501") throw error; }
     finally { await client.query("ROLLBACK TO SAVEPOINT foreign_write"); }
-  } finally { await client.query("ROLLBACK"); }
+    // The same tenant-A scope must not change or remove B's row either.
+    await mustTouchNothing(client, "foreign_update", `UPDATE ${relation} SET tenant_id = tenant_id WHERE tenant_id = $1`, [tenants.tenantB], "foreign update touched a row", label, violations);
+    await mustTouchNothing(client, "foreign_delete", `DELETE FROM ${relation} WHERE tenant_id = $1`, [tenants.tenantB], "foreign delete touched a row", label, violations);
+    // And the owner of a row (B) must not be able to hand it to another tenant.
+    await client.query("SELECT set_config('app.tenant_id',$1,true)", [tenants.tenantB]);
+    await mustTouchNothing(client, "foreign_rekey", `UPDATE ${relation} SET tenant_id = $1 WHERE tenant_id = $2`, [tenants.tenantA, tenants.tenantB], "row can be re-keyed to another tenant", label, violations);
+  } finally {
+    try { await client.query("ROLLBACK"); } catch (error) { health.rollbackFailed = true; throw error; }
+  }
 }
 
 export function testCrossTenantCanary(tenantId: TenantId): { readonly canary: string; readonly resource: ResolvedResource } {

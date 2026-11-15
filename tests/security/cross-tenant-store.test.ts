@@ -22,6 +22,25 @@ describe("T124 store and resource isolation", () => {
     expect(report.tables).toEqual(catalog.rows.map((row) => `${row.schema}.${row.name}`));
     expect(report.violations).toEqual([]);
   });
+  it("the probes leave NO residue: after the run neither tenant owns a row in any sec_* table", async () => {
+    const a = randomUUID(); const b = randomUUID();
+    const report = await assertCrossTenantStores(app, { tenantA: a, tenantB: b });
+    expect(report.violations).toEqual([]);
+    const client = await owner.connect();
+    try {
+      for (const table of report.tables) {
+        const [schema, name] = table.split(".") as [string, string];
+        for (const tenant of [a, b]) {
+          await client.query("BEGIN");
+          try {
+            await client.query("SELECT set_config('app.tenant_id',$1,true)", [tenant]);
+            const { rows } = await client.query(`SELECT count(*)::int AS n FROM "${schema}"."${name}" WHERE tenant_id=$1`, [tenant]);
+            expect(rows, `${table} for ${tenant}`).toEqual([{ n: 0 }]);
+          } finally { await client.query("ROLLBACK"); }
+        }
+      }
+    } finally { client.release(); }
+  });
   it("ATK-XTENANT-10 foreign resource display-name canary is absent from A's host answer", async () => {
     const host = new FakeResourceAuthorizer();
     const { resource, canary } = testCrossTenantCanary(TENANT_B);
@@ -34,5 +53,5 @@ describe("T124 store and resource isolation", () => {
     expect(scanner.scan(foreign)).toEqual([]);
     expect(scanner.scan(own).some((item) => item.kind === "canary")).toBe(true);
   });
-  it.todo("ATK-XTENANT-10 real gateway response/audit for foreign resource never contains display-name canary; needs authorize/resource/audit stages");
+  it.todo("ATK-XTENANT-10 real gateway response/audit for foreign resource never contains display-name canary; needs complete production chain (rate/replay, risk/confirmation, execute)");
 });
