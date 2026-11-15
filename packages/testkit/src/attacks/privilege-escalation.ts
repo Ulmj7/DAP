@@ -2,12 +2,12 @@
  * @dap/testkit: attacks/privilege-escalation.ts (T072): ATK-PRIV-01, 02, 05, 06, 07, 08.
  *
  * ATK-PRIV-03 (permission revoked after a confirmation) belongs to the confirmation service and ATK-PRIV-04 (executor context) to the positive
- * controls. Scenarios that only submit scripted proposals reuse the denial oracle; the rest drive the world through `PrivilegeTarget` and carry
+ * controls. Scenarios that only submit scripted proposals reuse the denial oracle; the rest drive the world through `PrivilegeTarget` (targets.ts) and carry
  * their own oracle, which recomputes the expectation from the scenario's stated facts and never asks the Gateway what it decided.
  */
 import { isDeepStrictEqual } from "node:util";
 import type { AttackObservation, AttackScenario, AuditEvent, CapabilityTraits, PlannerFeedback, ProposalCall } from "@dap/contracts";
-import type { ScenarioTarget } from "../scenario-runner.js";
+import type { PrivilegeTarget } from "./targets.js";
 import { denialScenario } from "./denial-scenario.js";
 import type { DenialScenario } from "./denial-scenario.js";
 import { stringParamNames, validParamsFor } from "./valid-params.js";
@@ -24,18 +24,6 @@ export const PERMISSION_ACTION_NAMES: readonly string[] = Object.freeze(["grantP
 export const NON_BOOLEAN_ANSWERS: readonly unknown[] = Object.freeze(["yes", "true", 1, "1", {}, [], [true], { allowed: true }, 0, null, undefined, "", () => true]);
 /** Pages a spoofed page context might claim. */
 export const SPOOFED_PAGES: readonly string[] = Object.freeze(["page.admin", "page.settings", "page.anything", "any"]);
-
-/** What these attacks need from the world beyond a plain target. Implemented by the end-to-end world (T070). */
-export interface PrivilegeTarget extends ScenarioTarget {
-  /** A proposal for the capability under test with valid parameters. */
-  validProposal(): unknown;
-  /** Make the host's permission hook answer exactly `answer` to every question. */
-  setPermissionAnswer(answer: unknown): void;
-  /** Make the host's page provider report `page` as the current page. */
-  setReportedPage(page: string | null): void;
-  /** Move the host clock past the end of the calling session. */
-  expireSession(): void;
-}
 
 const notFor = (traits: CapabilityTraits) => traits.risk === "FORBIDDEN";
 const withApplies = (scenario: DenialScenario, appliesTo: (traits: CapabilityTraits) => boolean): DenialScenario => ({ ...scenario, appliesTo });

@@ -8,27 +8,13 @@
  */
 import { isDeepStrictEqual } from "node:util";
 import type { AttackObservation, AttackScenario, AuditEvent, CapabilityTraits, PlannerFeedback, ProposalCall } from "@dap/contracts";
-import type { ScenarioTarget } from "../scenario-runner.js";
+import type { ResourceKind, TenantAttackTarget } from "./targets.js";
 import { denialScenario } from "./denial-scenario.js";
 import { validParamsFor } from "./valid-params.js";
 import { TENANT_B } from "../world.js";
 
-export type ResourceKind = "other-tenant" | "nonexistent" | "same-tenant-unauthorized";
-
 /** The only thing a planner may be told about a resource it cannot use, whatever the reason. */
 export const NOT_AVAILABLE_BYTES = JSON.stringify({ outcome: "DENIED", category: "not_available" });
-
-/** What these attacks need from the world beyond a plain target. Implemented by the end-to-end world (T070). */
-export interface TenantAttackTarget extends ScenarioTarget {
-  /** A proposal for the capability under test aimed at a resource of the given kind. */
-  resourceProposal(kind: ResourceKind): unknown;
-  /** Make the host's resource check answer `answer` (null, or a resolved resource) for every question. */
-  setResourceAnswer(answer: unknown): void;
-  /** What the host's resource check returns for a resource of ANOTHER tenant when it is asked: a resolved resource of that tenant. */
-  foreignResource(): unknown;
-  /** Display names planted in the other tenant's resources: they must never appear in this tenant's output. */
-  readonly foreignDisplayNames: readonly string[];
-}
 
 const targetsResource = (traits: CapabilityTraits) => traits.targetsResource && traits.risk !== "FORBIDDEN";
 const call = (id: string, index: number, raw: unknown): ProposalCall => ({ callId: `${id}-${index}`, raw });
