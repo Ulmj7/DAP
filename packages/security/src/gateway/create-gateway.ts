@@ -7,6 +7,7 @@ import { createLimiter } from "../limits/limiter.js";
 import { validateGatewayConfig } from "../limits/limit-config.js";
 import { snapshotAnswer } from "./answer-snapshot.js";
 import { createPipeline, type PipelineOptions, type StageMap } from "./pipeline.js";
+import { auditRateDenial } from "./rate-audit.js";
 import { createProposalGateway } from "./submitter.js";
 import { createIntakeStage } from "./stages/intake.js";
 import { createRateLimitStage } from "./stages/rate-limit.js";
@@ -110,7 +111,13 @@ export function pipelineOptions(config: GatewayConfig): PipelineOptions {
 export function createPolicyGateway(source: GatewayDependencies): Readonly<{ proposals: PolicyGateway; confirmations: ConfirmationService }> {
   const deps = captureDependencies(source);
   const pipeline = createPipeline(composeStages(deps), pipelineOptions(deps.config));
-  const proposals = createProposalGateway({ pipeline, ids: deps.ids });
+  const proposals = createProposalGateway({ pipeline: {
+    async run(input) {
+      const decision = await pipeline.run(input);
+      await auditRateDenial(deps, input, decision);
+      return decision;
+    },
+  }, ids: deps.ids });
   const confirmations: ConfirmationService = Object.freeze({
     decide: Object.freeze(async () => Object.freeze({ status: "not_valid", category: "not_found" } as const)),
     listPending: Object.freeze(async () => Object.freeze([])),
