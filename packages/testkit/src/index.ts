@@ -24,3 +24,4 @@ export * from "./attacks/cross-tenant-store.js";
 export * from "./attacks/dependency-failure.js";
 export * from "./attacks/sequence-scenario.js";
 export * from "./attacks/replay.js";
+export * from "./attacks/rate-abuse.js";
