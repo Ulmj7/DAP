@@ -1,7 +1,7 @@
 import type { ActionRegistry, AnyActionDefinition, AuditParamRule } from "@dap/contracts";
 
 /** The only definition fields the stages after resolve use, each copied ONCE at the moment of proof. */
-export type ProvenDefinition = Pick<AnyActionDefinition, "id" | "version" | "inputSchema" | "resource" | "requiredPermission" | "allowedPages"> & {
+export type ProvenDefinition = Pick<AnyActionDefinition, "id" | "version" | "inputSchema" | "resource" | "requiredPermission" | "allowedPages" | "risk"> & {
   /** What the capability lets the audit trail record, copied once. Anything unreadable is dropped: nothing unlisted is ever recorded. */
   readonly auditParams: readonly AuditParamRule[];
   /** Which executor runs it; read once, and checked by the stage that uses it. */
@@ -46,6 +46,7 @@ export function provenDefinition(get: ActionRegistry["get"], resolved: Readonly<
   if (id !== resolved.id || version !== resolved.version || definitionHash !== resolved.definitionHash) return undefined;
   return Object.freeze({
     id, version,
+    risk: Reflect.get(definition, "risk"),
     inputSchema: Reflect.get(definition, "inputSchema"),
     resource: Reflect.get(definition, "resource"),
     requiredPermission: Reflect.get(definition, "requiredPermission"),

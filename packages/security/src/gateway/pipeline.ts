@@ -122,7 +122,7 @@ export interface PipelineOptions extends HookOptions {
  * budget, and recording its result still has its own time.
  */
 function stageDeadline(stage: PipelineStage, left: number, hookTimeoutMs: number): number {
-  if (stage === "authorize" || stage === "audit") return left;
+  if (stage === "rate_limit" || stage === "authorize" || stage === "audit") return left;
   if (stage === "execute") return left + hookTimeoutMs;
   return Math.min(hookTimeoutMs, left);
 }

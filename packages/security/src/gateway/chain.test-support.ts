@@ -1,6 +1,6 @@
 /**
  * A whole proposal chain for tests: the real context, intake, resolve, validate, authorize, audit and execute stages and the real
- * decision auditor, with pass-through stand-ins for the stages that do not exist yet (rate_limit, replay, risk, confirmation), a
+ * decision auditor, with pass-through stand-ins for stage 7 (risk) and confirmation, which do not exist yet, and for rate_limit and replay, which exist but are covered by their own tests (these chains exercise audit and execute), a
  * recording executor behind `defineExecutor`, and an audit sink that can be made to fail.
  */
 import { z } from "zod";
@@ -72,7 +72,7 @@ export function chain(options: ChainOptions = {}) {
     clock: { now: (options.clock ?? (() => options.now ?? "2026-01-01T00:00:00Z")) as () => IsoInstant }, config: { ...base.config, ...options.config },
   };
   const pass: PolicyStage = () => ({ kind: "continue", data: {} });
-  /** Stand-ins for the D6 positions that are not built yet, reporting the facts the real stages will. */
+  /** Stand-ins for the D6 positions that are not built yet (risk, confirmation) or are tested elsewhere (rate_limit, replay), reporting the facts the real stages will. Tests only: the real gateway has no stage 7. */
   const standIns: StageMap = {
     rate_limit: pass, replay: pass,
     risk: (request) => ({ kind: "continue", data: { risk: (request.facts.resolve as { risk: string }).risk, confirmation: "not_required" } }),

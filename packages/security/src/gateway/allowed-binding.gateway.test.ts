@@ -75,13 +75,14 @@ describe("the untampered chain is the only one that executes", () => {
 });
 
 describe("through the real gateway ALLOWED is not reachable yet", () => {
-  it("is denied fail-closed at the first absent stage, records the proposal and the denial, and never executes", async () => {
+  it("is denied fail-closed at the absent stage 7 (risk), records the proposal and the denial, and never executes", async () => {
     const world = chain();
     const gateway = createPolicyGateway(world.deps);
     const feedback = await gateway.proposals.forSession(context(), run).submit({ callId: "c", raw: world.text({ projectId: "p1" }) });
     expect(feedback).toEqual(TRY_LATER);
     expect(world.executorCalls).toHaveLength(0);
-    expect(world.hostCalls).toEqual([]);
+    // The real chain now runs rate limit, replay, resolve, validate and authorize (permission and resource checks) and stops at the absent stage 7.
+    expect(world.hostCalls).toEqual(["has", "resolve"]);
     const events = await world.events();
     expect(types(events)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_DENIED"]);
     expect(events[1]).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", actionId: "openProject" });
@@ -92,7 +93,8 @@ describe("through the real gateway ALLOWED is not reachable yet", () => {
     const world = chain();
     const gateway = createPolicyGateway(world.deps, { telemetry: { decision: (sample) => { seen.push(sample); } } });
     await gateway.proposals.forSession(context(), run).submit({ callId: "c", raw: world.text({ projectId: "p1" }) });
-    expect(seen).toEqual([{ outcome: "DENIED", reason: "dependency_failure", risk: null, action: null }]);
+    // The proposal now gets as far as authorize, so the decision is attributed to the resolved action and its risk.
+    expect(seen).toEqual([{ outcome: "DENIED", reason: "dependency_failure", risk: "SAFE", action: "openProject" }]);
     const hostile = createPolicyGateway(world.deps, { telemetry: { decision: () => { throw new Error("CANARY"); } } });
     expect(await hostile.proposals.forSession(context(), run).submit({ callId: "c2", raw: world.text({ projectId: "p1" }) })).toEqual(TRY_LATER);
   });
