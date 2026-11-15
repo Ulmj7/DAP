@@ -21,3 +21,4 @@ export * from "./attacks/prompt-injection.js";
 export * from "./hostile-planner.js";
 export * from "./oracle.js";
 export * from "./attacks/cross-tenant-store.js";
+export * from "./attacks/dependency-failure.js";
