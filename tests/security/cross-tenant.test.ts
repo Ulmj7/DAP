@@ -132,6 +132,36 @@ describe("ATK-XTENANT-04 oracle (the host returns a resource of another tenant)"
   ] as const)("reports: %s", (_name, over, message) => expect(scenario("ATK-XTENANT-04").verify({ ...good, ...over } as AttackObservation)).toContain(message));
 });
 
+/** A scripted target that only RECORDS what a scenario does to the world: it decides nothing, so it is no gateway. */
+function scriptedTarget() {
+  const log: string[] = [];
+  const target = {
+    ...traits(), planner: { script: [] }, visibleOutput: undefined, executor: { calls: 0, grantsSeen: 0, receivedParams: [] }, audit: { events: [] }, foreignDisplayNames: FOREIGN,
+    resourceProposal: (kind: string) => ({ kind }), foreignResource: () => "FOREIGN", setResourceAnswer: (answer: unknown) => { log.push(`answer:${JSON.stringify(answer)}`); },
+    submit: async (call: { callId: string; raw: unknown }) => { log.push(`submit:${call.callId}:${(call.raw as { kind: string }).kind}`); return generic; },
+  };
+  return { target, log };
+}
+
+describe("how the scenarios drive the world (a scripted target that records, not a gateway)", () => {
+  it("ATK-XTENANT-01 submits another tenant's resource, then a nonexistent one", async () => {
+    const { target, log } = scriptedTarget();
+    const observation = await scenario("ATK-XTENANT-01").run(target as never) as AttackObservation & { foreignDisplayNames: string[] };
+    expect(log).toEqual(["submit:ATK-XTENANT-01-0:other-tenant", "submit:ATK-XTENANT-01-1:nonexistent"]);
+    expect(observation.foreignDisplayNames).toEqual(FOREIGN);
+  });
+  it("ATK-XTENANT-02 submits a same-tenant unauthorized resource, then another tenant's", async () => {
+    const { target, log } = scriptedTarget();
+    await scenario("ATK-XTENANT-02").run(target as never);
+    expect(log).toEqual(["submit:ATK-XTENANT-02-0:same-tenant-unauthorized", "submit:ATK-XTENANT-02-1:other-tenant"]);
+  });
+  it("ATK-XTENANT-04 makes the host answer null for the baseline and the foreign resource for the mismatch, each before its own proposal", async () => {
+    const { target, log } = scriptedTarget();
+    await scenario("ATK-XTENANT-04").run(target as never);
+    expect(log).toEqual(["answer:null", "submit:ATK-XTENANT-04-0:nonexistent", 'answer:"FOREIGN"', "submit:ATK-XTENANT-04-1:other-tenant"]);
+  });
+});
+
 describe("the scenarios against the end-to-end chain", () => {
   it.todo("ATK-XTENANT-01 runScenario: other-tenant and nonexistent resources through the real gateway, byte-identical feedback (needs world.withGateway T070 with a resource authorizer the scenario can drive, and ratestages)");
   it.todo("ATK-XTENANT-02 runScenario: a same-tenant resource the user may not use looks like another tenant's (needs T070 and ratestages)");

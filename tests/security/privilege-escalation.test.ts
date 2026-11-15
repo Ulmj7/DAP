@@ -8,7 +8,7 @@ import type { AttackObservation, AuditEvent, CapabilityTraits, PermissionId, Pla
 import { buildRegistry } from "@dap/security";
 import {
   ALICE, BOB, CAROL, CLAIM_KEYS, FakePermissionChecker, NON_BOOLEAN_ANSWERS, PERMISSION_ACTION_NAMES, PRIVILEGE_CLAIMS, SPOOFED_PAGES, TENANT_A, TENANT_B, VALID_PARAMS,
-  ctx, hostParity, parityViolations, privilegeEscalationScenarios, stringParamNames, testCriticalDelete, testHighPublish, testLowNavigate, testMediumDraft, testSafeEcho,
+  ctx, hostParity, parityViolations, privilegeEscalationScenarios, stringParamNames, testCriticalDelete, testHighPublish, testLowNavigate, testMediumDraft, testSafeEcho, validParamsFor, validParamsForDocument,
 } from "@dap/testkit";
 import type { DenialScenario } from "@dap/testkit";
 
@@ -44,7 +44,8 @@ describe("ATK-PRIV-01 cases", () => {
   it("hands out fresh parameters each time, so one run cannot disturb the next", () => {
     const first = denial("ATK-PRIV-01").cases(safe)[0]!.raw as { params: { message: string } };
     first.params.message = "changed";
-    expect((denial("ATK-PRIV-01").cases(safe)[0]!.raw as { params: { message: string } }).params.message).toBe(VALID_PARAMS.testSafeEcho.message);
+    expect((denial("ATK-PRIV-01").cases(safe)[0]!.raw as { params: { message: string } }).params.message).toBe("hello from the test kit");
+    expect(VALID_PARAMS.testSafeEcho.message).toBe("hello from the test kit");
   });
 });
 
@@ -61,6 +62,13 @@ describe("ATK-PRIV-02 cases", () => {
     expect(extra).toHaveLength(CLAIM_KEYS.length);
     for (const item of extra) expect(item).toMatchObject({ reason: "invalid_parameters", issues: [{ path: "", code: "unknown_key" }] });
     expect(extra.map((item) => Object.keys((item.raw as { params: object }).params).filter((key) => key !== "message")[0])).toEqual([...CLAIM_KEYS]);
+  });
+  it("the valid parameters are the test kit's, with the opt-out capability sharing the draft capability's", () => {
+    expect(validParamsFor("testMediumOptOut")).toEqual(VALID_PARAMS.testMediumDraft);
+    expect(validParamsFor("testMediumOptOut")).not.toBe(validParamsFor("testMediumOptOut"));
+    expect(validParamsFor("nobody")).toEqual({});
+    expect(validParamsForDocument("testCriticalDelete", "doc-9")).toEqual({ documentId: "doc-9" });
+    expect(validParamsForDocument("testMediumDraft", "doc-9")).toEqual({ documentId: "doc-9", draft: VALID_PARAMS.testMediumDraft.draft });
   });
   it("covers every string parameter of every capability that has one", () => {
     expect(stringParamNames("testMediumDraft")).toEqual(["documentId", "draft"]);
@@ -106,6 +114,10 @@ describe("ATK-PRIV-06 oracle (non-boolean permission answers)", () => {
     expect(scenario("ATK-PRIV-06").verify(good)).toEqual([]);
     expect(scenario("ATK-PRIV-06").verify(obs({ feedback: Array.from({ length: n }, () => denied("UNAUTHORIZED", "not_available")) }))).toEqual([]);
   });
+  it("reports a missing answer inside the list without throwing", () => {
+    const sparse = { ...good, feedback: [undefined, ...good.feedback.slice(1)] } as unknown as AttackObservation;
+    expect(scenario("ATK-PRIV-06").verify(sparse)).toContain("a non-boolean answer was not denied at 0");
+  });
   it.each([
     ["the executor ran", { executorCalls: 1 }, "executor ran"], ["a missing answer", { feedback: good.feedback.slice(1) }, "submission count mismatch"],
     ["an allow", { feedback: [denied("ALLOWED", "ok"), ...good.feedback.slice(1)] }, "a non-boolean answer was not denied at 0"],
@@ -124,6 +136,13 @@ describe("ATK-PRIV-07 oracle (spoofed page context)", () => {
   const unknownKey = denied("INVALID_PARAMETERS", "invalid_input", { issues: [{ path: "", code: "unknown_key" }] });
   const goodEvents = Array.from({ length: pages }, (_, i) => event({ id: `d${i}`, reason: "permission_missing" }));
   const good = obs({ feedback: [...Array.from({ length: pages }, () => unauthorized), unknownKey, unknownKey, unknownKey], auditEvents: goodEvents });
+  it("reads the first decision records only, ignoring PROPOSED records between them", () => {
+    const proposed = event({ type: "AI_ACTION_PROPOSED", reason: null, outcome: null });
+    const interleaved = obs({ ...good, auditEvents: goodEvents.flatMap((decision) => [proposed, decision]) });
+    expect(scenario("ATK-PRIV-07").verify(interleaved)).toEqual([]);
+    const wrong = obs({ ...good, auditEvents: [proposed, event({ reason: "context_not_allowed" }), ...goodEvents.slice(1)] });
+    expect(scenario("ATK-PRIV-07").verify(wrong)).toContain("a spoofed page was recorded as something other than a missing permission");
+  });
   it("passes: a claimed page changes nothing, and the planner cannot name a page at all", () => expect(scenario("ATK-PRIV-07").verify(good)).toEqual([]));
   it.each([
     ["the executor ran", { executorCalls: 1 }, "executor ran"], ["a missing answer", { feedback: good.feedback.slice(1) }, "submission count mismatch"],
@@ -149,6 +168,17 @@ describe("ATK-PRIV-08 oracle (session expires mid-turn)", () => {
     ["no decision records", { auditEvents: [] }, "the denial after expiry was not recorded as an expired session"],
     ["a leak", { leakFindings: ["x"] }, "planner output leaked"],
   ] as const)("reports: %s", (_name, over, message) => expect(scenario("ATK-PRIV-08").verify({ ...good, ...over } as AttackObservation)).toContain(message));
+  it("reports a second answer that carries extra fields", () => {
+    const extra = { ...good, feedback: [denied("ALLOWED", "ok"), denied("UNAUTHORIZED", "not_available", { note: "x" })] } as AttackObservation;
+    expect(scenario("ATK-PRIV-08").verify(extra)).toContain("the proposal after expiry was not unauthorized");
+  });
+  it("reads the LAST decision record, ignoring PROPOSED records around it", () => {
+    const proposed = event({ type: "AI_ACTION_PROPOSED", reason: null, outcome: null });
+    const interleaved = { ...good, auditEvents: [proposed, event({ type: "AI_ACTION_ALLOWED", reason: "allowed" }), proposed, event({ reason: "session_expired" }), proposed] } as AttackObservation;
+    expect(scenario("ATK-PRIV-08").verify(interleaved)).toEqual([]);
+    const wrong = { ...good, auditEvents: [proposed, event({ type: "AI_ACTION_ALLOWED", reason: "allowed" }), proposed, event({ reason: "permission_missing" }), proposed] } as AttackObservation;
+    expect(scenario("ATK-PRIV-08").verify(wrong)).toContain("the denial after expiry was not recorded as an expired session");
+  });
   it("reports a missing second answer", () => expect(scenario("ATK-PRIV-08").verify({ ...good, feedback: [denied("ALLOWED", "ok")] } as AttackObservation)).toEqual(["submission count mismatch"]));
 });
 
@@ -194,6 +224,47 @@ describe("the parity oracle (the same user through the host's own check)", () =>
       const host = { has: async () => answer };
       expect(await hostParity(host as never, ctx(TENANT_A, ALICE), "p" as PermissionId, unauthorized, "denied"), String(answer)).toEqual([]);
     }
+  });
+});
+
+/** A scripted target that only RECORDS what a scenario does to the world and answers with the given feedback: it decides nothing, so it is no gateway. */
+function scriptedTarget(answers: PlannerFeedback[], overrides: object = {}) {
+  const log: string[] = [];
+  const submitted: unknown[] = [];
+  let next = 0;
+  const target = {
+    ...safe, planner: { script: [] }, visibleOutput: undefined, executor: { calls: 0, grantsSeen: 0, receivedParams: [] }, audit: { events: [] },
+    validProposal: () => ({ action: "testSafeEcho", params: { message: "hello" } }),
+    setPermissionAnswer: (answer: unknown) => { log.push(`answer:${typeof answer === "function" ? "fn" : JSON.stringify(answer) ?? "undefined"}`); },
+    setReportedPage: (page: string | null) => { log.push(`page:${page}`); },
+    expireSession: () => { log.push("expire"); },
+    submit: async (call: { callId: string; raw: unknown }) => { log.push(`submit:${call.callId}`); submitted.push(call.raw); return answers[next++] ?? denied("DENIED", "not_available"); },
+    ...overrides,
+  };
+  return { target, log, submitted };
+}
+
+describe("how the driven scenarios drive the world (a scripted target that records, not a gateway)", () => {
+  it("ATK-PRIV-06 sets each non-boolean answer, then submits one valid proposal, in order", async () => {
+    const { target, log, submitted } = scriptedTarget([]);
+    const observation = await scenario("ATK-PRIV-06").run(target as never);
+    expect(log).toEqual(NON_BOOLEAN_ANSWERS.flatMap((answer, index) => [`answer:${typeof answer === "function" ? "fn" : JSON.stringify(answer) ?? "undefined"}`, `submit:ATK-PRIV-06-${index}`]));
+    expect(submitted).toEqual(NON_BOOLEAN_ANSWERS.map(() => ({ action: "testSafeEcho", params: { message: "hello" } })));
+    expect(observation.feedback).toHaveLength(NON_BOOLEAN_ANSWERS.length);
+  });
+  it("ATK-PRIV-07 reports each spoofed page before its proposal, then puts a page claim into the parameters under three names", async () => {
+    const { target, log, submitted } = scriptedTarget([]);
+    await scenario("ATK-PRIV-07").run(target as never);
+    expect(log).toEqual([...SPOOFED_PAGES.flatMap((page, index) => [`page:${page}`, `submit:ATK-PRIV-07-${index}`]), ...["page", "currentPage", "context"].map((_, i) => `submit:ATK-PRIV-07-${SPOOFED_PAGES.length + i}`)]);
+    expect(submitted.slice(SPOOFED_PAGES.length)).toEqual(["page", "currentPage", "context"].map((key) => ({ action: "testSafeEcho", params: { message: "hello", [key]: "page.admin" } })));
+  });
+  it("ATK-PRIV-08 submits, remembers the executions so far, expires the session, then submits again", async () => {
+    const executor = { calls: 1, grantsSeen: 0, receivedParams: [] };
+    const { target, log } = scriptedTarget([denied("ALLOWED", "ok"), denied("UNAUTHORIZED", "not_available")], { executor });
+    const observation = await scenario("ATK-PRIV-08").run(target as never) as AttackObservation & { executedBefore: number };
+    expect(log).toEqual(["submit:ATK-PRIV-08-0", "expire", "submit:ATK-PRIV-08-1"]);
+    expect(observation.executedBefore).toBe(1);
+    expect(observation.feedback).toEqual([denied("ALLOWED", "ok"), denied("UNAUTHORIZED", "not_available")]);
   });
 });
 
