@@ -53,6 +53,18 @@ describe("sequence oracle: every invariant is checked on its own", () => {
     expect(verifySequence([replayRound], goodReplay())).toEqual([]);
     expect(verifySequence([rateRound], goodRate())).toEqual([]);
   });
+  it("rejects an extra execution even inside a loose declared range, and invalid measurements", () => {
+    expect(verifySequence([replayRound], { ...goodReplay(), executorCalls: 2 })).not.toEqual([]);
+    for (const value of [NaN, Infinity, -1, 0.5]) {
+      expect(verifySequence([rateRound], { ...goodRate(), executorCalls: value })).not.toEqual([]);
+      expect(verifySequence([rateRound], { ...goodRate(), sharedStoreCalls: value }, 10)).not.toEqual([]);
+    }
+  });
+  it("rejects arbitrary echoed feedback fields and denial events assigned to the wrong outcome/request", () => {
+    expect(verifySequence([rateRound], { ...goodRate(), feedback: [{ ...tryLater, extra: "planner-value" } as never] })).not.toEqual([]);
+    expect(verifySequence([rateRound], { ...goodRate(), auditEvents: goodRate().auditEvents.map((event) => event.type === "AI_RATE_LIMITED" ? { ...event, outcome: "ALLOWED" } : event) })).not.toEqual([]);
+    expect(verifySequence([replayRound], { ...goodReplay(), auditEvents: goodReplay().auditEvents.map((event) => event.id === "d2" ? { ...event, requestId: "r1" as never } : event) })).not.toEqual([]);
+  });
   it("an empty fixture is a violation", () => {
     expect(verifySequence([], obs([], [], 0))).toContain("empty attack fixture");
   });
@@ -99,13 +111,13 @@ describe("sequence oracle: every invariant is checked on its own", () => {
     const orphan = [...goodReplay().auditEvents, ev("d9", "AI_ACTION_DENIED", "unknown-request", "replayed_request")];
     expect(verifySequence([replayRound], { ...goodReplay(), auditEvents: orphan })).toContain("decision without a proposed request");
   });
-  it("rate denials must be audited as AI_RATE_LIMITED (a DENIED event alone is not enough; both together are accepted)", () => {
+  it("rate denials have exactly one AI_RATE_LIMITED event; duplicate decisions are refused", () => {
     const deniedOnly = obs([tryLater], [...proposed(1), ev("d0", "AI_ACTION_DENIED", "r0", "rate_limited_user")], 0);
     const violations = verifySequence([rateRound], deniedOnly);
     expect(violations).toContain("rate denial not audited as AI_RATE_LIMITED");
     expect(violations).toContain("audit AI_RATE_LIMITED/rate_limited_user: 0, expected 1..1");
     const both = obs([tryLater], [...proposed(1), ev("d0", "AI_ACTION_DENIED", "r0", "rate_limited_user"), ev("d1", "AI_RATE_LIMITED", "r0", "rate_limited_user")], 0);
-    expect(verifySequence([rateRound], both)).toEqual([]);
+    expect(verifySequence([rateRound], both)).toContain("multiple decisions for one request");
   });
   it("audited reasons are counted within range and never unexpected", () => {
     const twice = obs([tryLater], [...proposed(1), ev("d0", "AI_RATE_LIMITED", "r0", "rate_limited_user"), ev("d1", "AI_RATE_LIMITED", "r0", "rate_limited_user")], 0);

@@ -154,32 +154,35 @@ export function sequenceScenario(options: SequenceOptions): SequenceScenario {
 /** Recomputes every expectation from the declared rounds; trusts nothing but the recorded evidence. */
 export function verifySequence(rounds: readonly Round[], observation: SequenceObservation, budget?: number): string[] {
   const violations: string[] = [];
+  if (!Number.isSafeInteger(observation.executorCalls) || observation.executorCalls < 0) violations.push("invalid executor count");
   if (rounds.length === 0) violations.push("empty attack fixture");
   const total = rounds.reduce((sum, round) => sum + round.submissions.length, 0);
   if (observation.leakFindings.length !== 0) violations.push("planner output leaked");
   if (observation.feedback.length !== total) { violations.push("submission count mismatch"); return violations; }
 
   let offset = 0;
-  let minExecutions = 0; let maxExecutions = 0;
-  const expectedReasons = new Map<string, { type: string; min: number; max: number }>();
+  let minExecutions = 0; let maxExecutions = 0; let actualAllows = 0;
+  const expectedReasons = new Map<string, { type: string; outcome: Outcome; min: number; max: number }>();
   for (const [index, round] of rounds.entries()) {
     const slice = observation.feedback.slice(offset, offset + round.submissions.length);
     offset += round.submissions.length;
+    actualAllows += slice.filter((item) => isDeepStrictEqual(item, proceedFeedback("ALLOWED"))).length;
     const passed = slice.filter((item) => isDeepStrictEqual(item, proceedFeedback(round.proceeds.as))).length;
     if (passed < round.proceeds.min || passed > round.proceeds.max) violations.push(`round ${index}: ${passed} proceeded, expected ${round.proceeds.min}..${round.proceeds.max}`);
     if (round.proceeds.as === "ALLOWED") { minExecutions += round.proceeds.min; maxExecutions += round.proceeds.max; }
     const classes = round.denials.map((item) => ({ outcome: item.outcome, category: expectedCategory(item.outcome, item.reason) }));
     for (const expectation of round.denials) {
-      const entry = expectedReasons.get(expectation.reason) ?? { type: expectedAuditType(expectation.outcome, expectation.reason), min: 0, max: 0 };
+      const entry = expectedReasons.get(expectation.reason) ?? { type: expectedAuditType(expectation.outcome, expectation.reason), outcome: expectation.outcome, min: 0, max: 0 };
       expectedReasons.set(expectation.reason, { ...entry, min: entry.min + expectation.min, max: entry.max + expectation.max });
     }
     // Reasons are proven through the audit trail; planner feedback only carries outcome and category.
-    const unexpected = slice.filter((item) => !isDeepStrictEqual(item, proceedFeedback(round.proceeds.as)) && !classes.some((wanted) => item.outcome === wanted.outcome && item.category === wanted.category)).length;
+    const unexpected = slice.filter((item) => !isDeepStrictEqual(item, proceedFeedback(round.proceeds.as)) && !classes.some((wanted) => isDeepStrictEqual(item, wanted))).length;
     if (unexpected > 0) violations.push(`round ${index}: unexpected planner feedback`);
     const denialMin = round.denials.reduce((sum, item) => sum + item.min, 0);
     const denialMax = round.denials.reduce((sum, item) => sum + item.max, 0);
     if (slice.length - passed < denialMin || slice.length - passed > denialMax) violations.push(`round ${index}: denial count outside ${denialMin}..${denialMax}`);
   }
+  if (observation.executorCalls !== actualAllows) violations.push("executor count differs from observed ALLOWED feedback");
   if (observation.executorCalls < minExecutions || observation.executorCalls > maxExecutions) violations.push(`executor ran ${observation.executorCalls} times, expected ${minExecutions}..${maxExecutions}`);
 
   const proposed = observation.auditEvents.filter((event) => event.type === "AI_ACTION_PROPOSED");
@@ -189,12 +192,15 @@ export function verifySequence(rounds: readonly Round[], observation: SequenceOb
   if (requests.size !== proposed.length) violations.push("proposed request ids repeat");
   const decisionTypes = new Set(["AI_ACTION_DENIED", "AI_RATE_LIMITED", "AI_POLICY_VIOLATION"]);
   const decisions = observation.auditEvents.filter((event) => decisionTypes.has(event.type));
+  if (new Set(decisions.map((event) => event.requestId)).size !== decisions.length) violations.push("multiple decisions for one request");
+  const actualDenials = observation.feedback.filter((item) => item.outcome !== "ALLOWED" && item.outcome !== "REQUIRES_CONFIRMATION").length;
+  if (decisions.length !== actualDenials) violations.push("denial audit count differs from observed feedback");
   for (const event of decisions) {
     if (!requests.has(event.requestId)) violations.push("decision without a proposed request");
-    if (isRateReason(event.reason ?? "") && event.type !== "AI_RATE_LIMITED" && !decisions.some((other) => other.requestId === event.requestId && other.type === "AI_RATE_LIMITED")) violations.push("rate denial not audited as AI_RATE_LIMITED");
+    if (isRateReason(event.reason ?? "") && event.type !== "AI_RATE_LIMITED") violations.push("rate denial not audited as AI_RATE_LIMITED");
   }
   for (const [reason, expectation] of expectedReasons) {
-    const count = decisions.filter((event) => event.reason === reason && event.type === expectation.type).length;
+    const count = decisions.filter((event) => event.reason === reason && event.type === expectation.type && event.outcome === expectation.outcome).length;
     if (count < expectation.min || count > expectation.max) violations.push(`audit ${expectation.type}/${reason}: ${count}, expected ${expectation.min}..${expectation.max}`);
   }
   const allowedReasons = new Set(expectedReasons.keys());
@@ -202,6 +208,7 @@ export function verifySequence(rounds: readonly Round[], observation: SequenceOb
 
   if (budget !== undefined) {
     if (typeof observation.sharedStoreCalls !== "number") violations.push("shared store calls not measured");
+    else if (!Number.isSafeInteger(observation.sharedStoreCalls) || observation.sharedStoreCalls < 0) violations.push("invalid shared store count");
     else if (observation.sharedStoreCalls > budget) violations.push(`shared store calls ${observation.sharedStoreCalls} exceed ${budget}`);
   }
   return violations;
