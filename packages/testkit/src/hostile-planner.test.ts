@@ -13,13 +13,14 @@ describe("T122 scripted hostile planner", () => {
     const planner = new HostilePlanner([toProposalCall("id", raw)]);
     const emitted = await planner.plan([]);
     expect(emitted).not.toBeNull();
+    expect(Object.isFrozen(emitted)).toBe(true);
     expect(toProposalCall("trusted-id", emitted!.arguments)).toEqual({ callId: "trusted-id", raw });
     expect(emitted!.arguments.length).toBe(raw.length);
   });
   it("snapshots script metadata, freezes exposed values and gives independent cursors", async () => {
     const input = [{ callId: "first", raw: "original" }];
     const first = new HostilePlanner(input); const second = new HostilePlanner(input);
-    input[0]!.raw = "changed"; input.length = 0;
+    input[0]!.raw = "changed"; input[0]!.callId = "changed-id"; input.length = 0;
     expect(Object.isFrozen(first.script)).toBe(true);
     expect(Object.isFrozen(first.script[0])).toBe(true);
     expect(await first.plan([])).toEqual(await second.plan([]));
@@ -29,5 +30,6 @@ describe("T122 scripted hostile planner", () => {
     const planner = new HostilePlanner([{ callId: "a", raw: "a" }, { callId: "b", raw: "b" }]);
     expect(await Promise.all([planner.plan([]), planner.plan([]), planner.plan([])])).toEqual([{ providerCallId: "a", arguments: "a" }, { providerCallId: "b", arguments: "b" }, null]);
     expect(() => new HostilePlanner([{ callId: "a", raw: {} }])).toThrow(TypeError);
+    expect(() => new HostilePlanner([{ callId: 1, raw: "{}" }] as never)).toThrow(TypeError);
   });
 });

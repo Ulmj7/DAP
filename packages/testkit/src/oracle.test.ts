@@ -34,6 +34,8 @@ describe("T125 independent execution oracle", () => {
     expect(mayReachExecutor({ ...permittedFacts, get userPermitted() { throw new Error("fault"); } })).toBe(false);
     expect(executionViolations({ ...permittedFacts, schemaValid: false }, 1)).toEqual(["execution without all world prerequisites"]);
     expect(executionViolations(permittedFacts, 1)).toEqual([]);
-    expect(executionViolations(permittedFacts, -1)).toEqual(["invalid executor count"]);
+    for (const count of [-1, NaN, Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1]) expect(executionViolations(permittedFacts, count)).toEqual(["invalid executor count"]);
+    expect(executionViolations({ ...permittedFacts, registered: false }, 0)).toEqual([]);
+    for (const tenantId of ["", null, 1]) expect(mayReachExecutor({ ...permittedFacts, tenantId, targetsResource: false } as never)).toBe(false);
   });
 });
