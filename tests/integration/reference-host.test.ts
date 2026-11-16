@@ -254,7 +254,7 @@ describe("QA host boundary probes",()=>{
    {providerCallId:{toString(){coerced++;return "forged";}},arguments:JSON.stringify({action:"demoSaveNote",params:SAVE})},
    new Proxy({}, {get(){throw new Error("SECRET proxy");}}),
   ]){
-   const answer=await session.submit(call as never);expect(answer).toEqual({outcome:"DENIED",category:"try_later"});expect(JSON.stringify(answer)).not.toContain("SECRET");
+   const pending=session.submit(call as never);await expect(pending).resolves.toEqual({outcome:"DENIED",category:"try_later"});const answer=await pending;expect(JSON.stringify(answer)).not.toContain("SECRET");
   }
   expect(coerced).toBe(0);expect(run.trusted.executorCalls()).toBe(0);
   const cyclic:Record<string,unknown>={};cyclic.self=cyclic;
