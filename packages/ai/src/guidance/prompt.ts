@@ -7,8 +7,9 @@
  * verbatim (it is already bounded and free of control characters by the request schema) and never appears in the system section. Nothing here can carry
  * a definition, identity, permission or key: the request type has no place for one.
  *
- * Budget: if the prompt exceeds `MAX_PROMPT_CHARS`, sources are dropped from the END first, then trailing context elements (the route is kept); the query
- * and the walkthrough summaries are never dropped. If it still does not fit the request is refused.
+ * Budget: `fitRequestToBudget` is the single drop policy (sources from the END first, then trailing context elements; the route, the query and the walkthrough
+ * summaries are never dropped; a request that still does not fit is refused). `renderGuidancePrompt` uses it, and the guidance service passes the fitted request
+ * to the model, so a provider adapter rendering that request drops nothing further.
  */
 import { MAX_ANSWER_CHARS, MAX_MESSAGE_CHARS, MAX_PROMPT_CHARS, MAX_SOURCES } from "./limits.js";
 import { parseGuidanceModelRequest } from "./request.js";
@@ -66,8 +67,17 @@ function renderUser(data: PromptData): string {
 }
 
 export type RenderedPrompt = { readonly ok: true; readonly prompt: { readonly system: string; readonly user: string } } | { readonly ok: false; readonly reason: "context_invalid" };
+export type FittedRequest =
+  | { readonly ok: true; readonly request: GuidanceModelRequest; readonly prompt: { readonly system: string; readonly user: string } }
+  | { readonly ok: false; readonly reason: "context_invalid" };
 
-export function renderGuidancePrompt(request: GuidanceModelRequest): RenderedPrompt {
+/**
+ * THE budget routine, and the only drop policy: validates the request, then drops sources from the END first and trailing context elements next (never the
+ * query, the route or the summaries) until system plus user text fits `MAX_PROMPT_CHARS`. It returns the ADJUSTED request together with the prompt rendered
+ * from it, so what the model is asked about and what a provider adapter renders are the same thing: rendering the returned request drops nothing further, and
+ * a source that was dropped here is not in the returned request, so it cannot be cited as supplied. Refuses (`context_invalid`) a request that still cannot fit.
+ */
+export function fitRequestToBudget(request: GuidanceModelRequest): FittedRequest {
   const parsed = parseGuidanceModelRequest(request);
   if (!parsed.ok) return { ok: false, reason: "context_invalid" };
   const { input } = parsed.request;
@@ -77,9 +87,26 @@ export function renderGuidancePrompt(request: GuidanceModelRequest): RenderedPro
   const kept = { elements: elements.length, sources: sources.length };
   for (;;) {
     const user = renderUser({ query: input.query, route: input.semanticContext.route, elements: elements.slice(0, kept.elements), summaries, sources: sources.slice(0, kept.sources) });
-    if (GUIDANCE_SYSTEM_PROMPT.length + user.length <= MAX_PROMPT_CHARS) return { ok: true, prompt: Object.freeze({ system: GUIDANCE_SYSTEM_PROMPT, user }) };
+    if (GUIDANCE_SYSTEM_PROMPT.length + user.length <= MAX_PROMPT_CHARS) {
+      const fitted: GuidanceModelRequest = {
+        input: {
+          query: input.query,
+          semanticContext: { route: input.semanticContext.route, elements: input.semanticContext.elements.slice(0, kept.elements).map((e) => Object.freeze({ ...e })) },
+          walkthroughSummaries: input.walkthroughSummaries,
+          sources: input.sources.slice(0, kept.sources),
+        },
+        maxOutputChars: parsed.request.maxOutputChars,
+      };
+      Object.freeze(fitted.input.semanticContext.elements); Object.freeze(fitted.input.semanticContext); Object.freeze(fitted.input.sources); Object.freeze(fitted.input); Object.freeze(fitted);
+      return { ok: true, request: fitted, prompt: Object.freeze({ system: GUIDANCE_SYSTEM_PROMPT, user }) };
+    }
     if (kept.sources > 0) kept.sources--;
     else if (kept.elements > 0) kept.elements--;
     else return { ok: false, reason: "context_invalid" };
   }
+}
+
+export function renderGuidancePrompt(request: GuidanceModelRequest): RenderedPrompt {
+  const fitted = fitRequestToBudget(request);
+  return fitted.ok ? { ok: true, prompt: fitted.prompt } : { ok: false, reason: "context_invalid" };
 }

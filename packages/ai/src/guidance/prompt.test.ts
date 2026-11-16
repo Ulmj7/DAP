@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { GUIDANCE_SYSTEM_PROMPT, renderGuidancePrompt } from "./prompt.js";
+import fc from "fast-check";
+import { GUIDANCE_SYSTEM_PROMPT, fitRequestToBudget, renderGuidancePrompt } from "./prompt.js";
 import { MAX_PROMPT_CHARS } from "./limits.js";
 import type { GuidanceModelRequest } from "./types.js";
 
@@ -159,5 +160,72 @@ describe("the budget", () => {
     expect(renderGuidancePrompt({ input: {}, maxOutputChars: 1 } as never)).toEqual({ ok: false, reason: "context_invalid" });
     expect(renderGuidancePrompt({ ...make(), extra: "x" } as never)).toEqual({ ok: false, reason: "context_invalid" });
     expect(renderGuidancePrompt(null as never)).toEqual({ ok: false, reason: "context_invalid" });
+  });
+});
+
+describe("fitRequestToBudget: ONE drop policy, shared by the service and the renderer (QA #22)", () => {
+  const big = (n: number, len = 800) => ({ id: `doc-${n}.1`, title: `Doc ${n}`, text: `${n} `.repeat(len).slice(0, len) });
+  const heavyElements = (count: number) => Array.from({ length: count }, (_, i) => element(i, { description: "d".repeat(240), label: "l".repeat(80) }));
+  const fit = (request: GuidanceModelRequest) => { const r = fitRequestToBudget(request); if (!r.ok) throw new Error("refused"); return r; };
+
+  it("a request within budget comes back equal and unchanged", () => {
+    const request = make({ sources: [big(1, 200), big(2, 200)] });
+    expect(fit(request).request).toEqual(request);
+  });
+  it("a large context drops sources from the end first: the fitted request lists exactly the kept sources", () => {
+    const request = make({ elements: heavyElements(36), sources: [big(1), big(2), big(3), big(4)] });
+    const fitted = fit(request);
+    const ids = fitted.request.input.sources.map((s) => s.id);
+    expect(ids.length).toBeLessThan(4);
+    expect(ids).toEqual(["doc-1.1", "doc-2.1", "doc-3.1", "doc-4.1"].slice(0, ids.length)); // a prefix: the best chunks stay
+    expect(fitted.request.input.semanticContext.elements).toHaveLength(36); // sources went first
+    expect(fitted.prompt.system.length + fitted.prompt.user.length).toBeLessThanOrEqual(MAX_PROMPT_CHARS);
+  });
+  it("rendering the fitted request drops NOTHING further and gives the same prompt", () => {
+    const fitted = fit(make({ elements: heavyElements(60), sources: [big(1), big(2), big(3), big(4)] }));
+    const again = render(fitted.request);
+    expect(again).toEqual(fitted.prompt);
+    expect(fit(fitted.request).request).toEqual(fitted.request); // idempotent
+  });
+  it("renderGuidancePrompt and fitRequestToBudget agree on every request", () => {
+    for (const request of [make(), make({ elements: heavyElements(60), sources: [big(1), big(2), big(3), big(4)] }), make({ sources: [] })]) expect(render(request)).toEqual(fit(request).prompt);
+  });
+  it("the fitted request keeps the query, route, summaries and maxOutputChars and is deeply frozen", () => {
+    const request = make({ elements: heavyElements(60), sources: [big(1), big(2), big(3), big(4)] });
+    const { request: fitted } = fit(request);
+    expect(fitted.input.query).toBe(request.input.query);
+    expect(fitted.input.semanticContext.route).toBe("profile");
+    expect(fitted.input.walkthroughSummaries).toEqual(request.input.walkthroughSummaries);
+    expect(fitted.maxOutputChars).toBe(1200);
+    expect([fitted, fitted.input, fitted.input.sources, fitted.input.semanticContext, fitted.input.semanticContext.elements].every(Object.isFrozen)).toBe(true);
+    expect(request.input.sources).toHaveLength(4); // the caller's request is not modified
+  });
+  it("an invalid request is refused, never fitted", () => {
+    expect(fitRequestToBudget({ input: {}, maxOutputChars: 1 } as never)).toEqual({ ok: false, reason: "context_invalid" });
+  });
+  it("PROPERTY: for any request, the rendered prompt contains every supplied source id and no dropped one, and fits the budget", () => {
+    fc.assert(fc.property(
+      fc.integer({ min: 0, max: 4 }), fc.integer({ min: 0, max: 60 }), fc.integer({ min: 1, max: 800 }), fc.integer({ min: 1, max: 240 }), fc.integer({ min: 1, max: 20 }),
+      (sourceCount, elementCount, sourceLength, descriptionLength, summaryCount) => {
+        const sources = Array.from({ length: sourceCount }, (_v, i) => ({ ...big(i + 1, sourceLength), id: `kb-article-${i + 1}.1` }));
+        const elements = Array.from({ length: elementCount }, (_v, i) => element(i, { description: "d".repeat(descriptionLength), label: "l".repeat(80) }));
+        const summaries = Array.from({ length: summaryCount }, (_v, i) => ({ id: `walk${i}`, title: "t".repeat(80), description: "d".repeat(240) }));
+        const request = make({ sources, elements, summaries });
+        const fitted = fit(request);
+        const kept = new Set(fitted.request.input.sources.map((s) => s.id));
+        for (const source of sources) {
+          const present = fitted.prompt.user.includes(`source: ${source.id} |`);
+          expect(present).toBe(kept.has(source.id));
+        }
+        expect([...kept]).toEqual(sources.slice(0, kept.size).map((s) => s.id));
+        expect(fitted.prompt.system.length + fitted.prompt.user.length).toBeLessThanOrEqual(MAX_PROMPT_CHARS);
+        expect(render(fitted.request)).toEqual(fitted.prompt);
+        // dropping stops as soon as it fits: while elements are untouched, one source more would not fit
+        if (kept.size < sourceCount && fitted.request.input.semanticContext.elements.length === elementCount) {
+          const more = fitRequestToBudget({ ...request, input: { ...request.input, sources: sources.slice(0, kept.size + 1), semanticContext: fitted.request.input.semanticContext } });
+          expect(more.ok && more.request.input.sources.length === kept.size + 1).toBe(false);
+        }
+      },
+    ), { numRuns: 150 });
   });
 });
