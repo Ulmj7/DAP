@@ -128,6 +128,7 @@ describe("P2 chain B: a genuine PostgreSQL write failure fails closed and execut
     // tried to record (also under the lock, also abandoned). So PROPOSED is the only row of the request.
     expect(new Set(attempted.map((event) => event.requestId)).size).toBe(1);
     expect(attempted.map((event) => event.type)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED", "AI_ACTION_DENIED"]);
+    expect(attempted[2]).toMatchObject({ outcome: "DENIED", reason: "audit_unavailable" });
     expect(rows.map((row) => row.event_type)).toEqual(["AI_ACTION_PROPOSED"]);
   });
 

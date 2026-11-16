@@ -15,8 +15,8 @@
  * (the same id), so a sink that is idempotent on `event.id` never ends up with two rows even when the first attempt did commit.
  *
  * Every attempt passes the sink an abandonment signal (`AuditAppendOptions.signal`) and aborts it when the attempt did not end in a confirmed commit,
- * so a sink that is still working (a blocked statement) rolls back instead of committing an event the Gateway has already treated as not recorded.
- * It is never aborted after a confirmed commit.
+ * Cancellation-aware sinks roll back if they observe abandonment before issuing COMMIT; already-issued commits remain uncertain.
+ * Signals are never aborted after a confirmed commit.
  *
  * Only events made by `buildAuditEvent` are written: anything else is refused without touching the sink, counted as a failure.
  * Nothing here throws, and no error text (which could hold anything) is kept or forwarded.
