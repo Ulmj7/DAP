@@ -211,8 +211,8 @@ describe("T107 replay attacks against the real guards (ReplayGuard level)", () =
   });
 });
 
-describe("T107 end-to-end replay attacks (pending)", () => {
-  const waiting = "full catalogue verify() needs complete audit linkage and risk/execute stages; stage-3 real-gateway controls run in rate-replay.gateway.test.ts";
-  for (const scenario of replayScenarios) it.todo(`${scenario.id} ${scenario.title}: run against the real gateway and verify(); ${waiting}`);
-  it.todo("ATK-REPLAY-05 replay of a consumed confirmation: covered by ATK-CONFIRM-05 (needs ConfirmationService and the confirmation stage)");
+describe("T107 end-to-end replay attacks (OPTIONAL as catalogue runs)", () => {
+  const waiting = "the bounded representative real-gateway replay controls (duplicate callId, a new instance on the same store, 50 parallel submissions, model-supplied ids, per-tenant independence) are REQUIRED and run in rate-replay.gateway.test.ts; this catalogue verify() form is T107 (OPTIONAL)";
+  for (const scenario of replayScenarios) it.todo(`${scenario.id} (OPTIONAL, T107) ${scenario.title}: run against the real gateway and verify(); ${waiting}`);
+  it.todo("ATK-REPLAY-05 (OPTIONAL, T096): replay of a consumed confirmation; covered by ATK-CONFIRM-05 and needs the confirmation service, which Feature 001 M1 does not build");
 });
