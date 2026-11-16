@@ -1,6 +1,6 @@
 /**
  * T081, ATK-AUDIT-01..05 and 07. Each oracle is proven able to FAIL: a good observation passes, and each violation is reported.
- * The scenarios themselves run against the end-to-end world once it exists (T070); ATK-AUDIT-07 is static and runs now.
+ * Representative real-chain proof lives in review-fixes.test.ts and integration/audit-postgres.test.ts; the optional exhaustive scenarios remain below.
  */
 import { describe, expect, it } from "vitest";
 import type { AuditEvent } from "@dap/contracts";

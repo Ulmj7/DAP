@@ -66,7 +66,7 @@ describe("T125 catalogue invariants (recorded seed 125001)", () => {
     }), settings);
     expect(admitted).toBeGreaterThan(10); expect(refused).toBeGreaterThan(10);
   });
-  it.todo("1: real gateway executor call implies every oracle prerequisite incl. durable allow-event; needs complete production chain incl. risk/confirmation/execute and positive control (no gateway stub)");
+  // SC-007 real-chain evidence: review-fixes.test.ts (preconditions and post-ALLOW faults) and integration/audit-postgres.test.ts (durable ALLOW before the body).
 
   it("2: same proposal and scope produce byte-identical validation and digest; the digest is bound to tenant and user", () => {
     let accepted = 0; let rejected = 0;
