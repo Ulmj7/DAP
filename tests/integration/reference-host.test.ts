@@ -9,7 +9,7 @@
  * and reads only that tenant's rows, so the file can run again and again on the same database and never depends on a global row count.
  */
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import { composeReferenceHost } from "../../apps/reference-host/src/index.js";
 import type { AiSession, ReferenceHost, TrustedHandle } from "../../apps/reference-host/src/index.js";
@@ -243,4 +243,40 @@ describe("6. the AI-facing handle (the call boundary; the import and type bounda
       expect(name in session, name).toBe(false);
     }
   });
+});
+
+describe("QA host boundary probes",()=>{
+ it("throwing accessors and object call ids never escape/coerce, and a clean control executes",async()=>{
+  const run=await start(); const session=await open(run,"alice");let coerced=0;
+  for(const call of [
+   {get providerCallId(){throw new Error("SECRET provider getter");},arguments:"{}"},
+   {providerCallId:"getter",get arguments(){throw new Error("SECRET argument getter");}},
+   {providerCallId:{toString(){coerced++;return "forged";}},arguments:JSON.stringify({action:"demoSaveNote",params:SAVE})},
+   new Proxy({}, {get(){throw new Error("SECRET proxy");}}),
+  ]){
+   const answer=await session.submit(call as never);expect(answer).toEqual({outcome:"DENIED",category:"try_later"});expect(JSON.stringify(answer)).not.toContain("SECRET");
+  }
+  expect(coerced).toBe(0);expect(run.trusted.executorCalls()).toBe(0);
+  const cyclic:Record<string,unknown>={};cyclic.self=cyclic;
+  for(const raw of [cyclic, {__proto__:null}, "x".repeat(20000)])expect((await session.submit({providerCallId:randomUUID(),arguments:raw} as never)).outcome).not.toBe("ALLOWED");
+  // New trusted turn avoids a local turn limit; same authenticated user's permission still works.
+  expect((await (await open(run,"alice")).submit(proposal("demoSaveNote",SAVE))).outcome).toBe("ALLOWED");
+ });
+ it("an already opened session expires at the Gateway on a later submit",async()=>{
+  const run=await start();const session=await open(run,"alice");
+  expect((await session.submit(proposal("demoLookup",{topic:"before"}))).outcome).toBe("ALLOWED");
+  vi.useFakeTimers({toFake:["Date"]});
+  try{vi.setSystemTime(Date.now()+7200000);expect(await session.submit(proposal("demoSaveNote",SAVE))).toEqual({outcome:"UNAUTHORIZED",category:"not_available"});expect(run.trusted.executorCalls()).toBe(1);}finally{vi.useRealTimers();}
+ });
+ it("submit is bound by closure, not this, and reflective access reveals no captured state",async()=>{
+  const run=await start();const session=await open(run,"bob");const submit=session.submit;
+  expect(await Reflect.apply(submit,{userId:"alice",trusted:run.trusted},[proposal("demoSaveNote",SAVE)])).toEqual({outcome:"UNAUTHORIZED",category:"not_available"});
+  expect(run.trusted.executorCalls()).toBe(0);
+  expect(Function.prototype.toString.call(submit)).not.toContain(run.token.bob);
+  expect(Object.getOwnPropertyDescriptors(session).submit?.value).toBe(submit);
+  // Function constructors have global scope, never the submit closure. This is not a JS sandbox.
+  const constructor=Reflect.get(Object.getPrototypeOf(submit),"constructor");
+  expect(await constructor("return typeof bound")()).toBe("undefined");
+  expect(await submit(proposal("demoLookup",{topic:"control"}))).toEqual({outcome:"ALLOWED",category:"ok"});
+ });
 });

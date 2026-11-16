@@ -104,8 +104,16 @@ export async function composeReferenceHost(env: Environment): Promise<ComposedHo
         const run: PlannerRunMeta = Object.freeze({ aiSessionId: context.sessionId, turnId: randomUUID(), model: "reference-host", depth: 0, turnStartedAt: clock.now() });
         const bound = proposals.forSession(context, run);
         return Object.freeze({
-          submit: Object.freeze(async (call: RawToolCall): Promise<PlannerFeedback> =>
-            bound.submit(toProposalCall(`${run.aiSessionId}.${run.turnId}.${call.providerCallId}`, call.arguments))),
+          submit: Object.freeze(async (call: RawToolCall): Promise<PlannerFeedback> => {
+            let providerCallId: unknown; let argumentsText: unknown;
+            try {
+              providerCallId = call.providerCallId;
+              argumentsText = call.arguments;
+            } catch { return bound.submit(toProposalCall("", "")); }
+            // Do not coerce provider objects or let transport getters escape the generic Gateway feedback.
+            if (typeof providerCallId !== "string" || !/^[\x21-\x7e]{1,256}$/.test(providerCallId)) return bound.submit(toProposalCall("", ""));
+            return bound.submit(toProposalCall(`${run.aiSessionId}.${run.turnId}.${providerCallId}`, typeof argumentsText === "string" ? argumentsText : ""));
+          }),
         });
       },
       close: async () => { await pool.end(); },
