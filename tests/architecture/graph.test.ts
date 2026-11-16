@@ -183,22 +183,31 @@ describe("the reference host (T131, T136): its AI-facing handle is a submit func
   });
   it("wires the trusted pieces in the composition root alone: only compose.ts (and config.ts, for the default limits) import the security package, only compose.ts imports the AI package, nothing imports the actions package", () => {
     expect(appImportersOf(graph, "packages/security/")).toEqual([`${APP}src/compose.ts`, `${APP}src/config.ts`]);
-    // Feature 003: the trusted knowledge loader (src/guidance/) takes pure parsing and chunking from the AI package; it imports no other trusted package (scrub is injected).
-    expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`, `${APP}src/guidance/knowledge-loader.ts`]);
+    // Feature 003: the trusted guidance modules (src/guidance/) use the AI package's pure parsing, chunking, validation and result helpers; they import no other trusted package
+    // (the scrubber is injected, the capability and its executor use the contracts only).
+    expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`, `${APP}src/guidance/capability.ts`, `${APP}src/guidance/knowledge-loader.ts`, `${APP}src/guidance/start-bridge.ts`, `${APP}src/guidance/walkthrough-summaries.ts`]);
     expect(appImportersOf(graph, "packages/actions/")).toEqual([]);
+  });
+  it("Feature 003 Slice 3: no production module of the host imports the walkthrough runtime or the testkit (the starter is a structural interface the composition root fills)", () => {
+    expect(appImportersOf(graph, "packages/walkthrough/")).toEqual([]);
+    expect(appImportersOf(graph, "packages/testkit/")).toEqual([]);
   });
   it("nothing reaches the host from the AI layer (the transitive walk above already excludes apps/): the AI layer is handed the submit function and cannot name the host", () => {
     expect([...reachableFrom(graph, "packages/ai/")].filter((source) => source.startsWith("apps/"))).toEqual([]);
   });
   const host = surface(path.join(ROOT, "apps/reference-host/src/index.ts"));
   it("the host's public exports are exactly the composition function, the configuration and dev-auth entry points and the demo's trusted-view types: no registry, executor table, store, pool, audit reader, mint API or confirmation service", () => {
-    expect(host.exports).toEqual(["AiSession", "ComposedHost", "ConfigError", "DEMO_ACTION_IDS", "DevAuthError", "DevSession", "Effect", "Environment", "HostConfig", "ReceivedCall", "ReferenceHost", "TrustedHandle", "composeReferenceHost", "loadConfig"]);
+    expect(host.exports).toEqual(["AiSession", "ComposeOptions", "ComposedHost", "ConfigError", "DEMO_ACTION_IDS", "DevAuthError", "DevSession", "Effect", "Environment", "HostConfig", "HostExtension", "ReceivedCall", "ReferenceHost", "TrustedHandle", "composeReferenceHost", "loadConfig"]);
   });
   it("the type the AI layer receives has exactly one member, `submit`; the host side has exactly openSession and close; the trusted view and the composition result are separate objects", () => {
     expect(host.members("AiSession")).toEqual(["submit"]);
     expect(host.members("ReferenceHost")).toEqual(["close", "openSession"]);
     expect(host.members("TrustedHandle")).toEqual(["effects", "executorCalls", "receivedCalls"]);
     expect(host.members("ComposedHost")).toEqual(["host", "trusted"]);
+  });
+  it("Feature 003 Slice 3: a host extension is exactly { definitions, executors } and the options carry only extensions: no hook, no pool, store or registry access", () => {
+    expect(host.members("HostExtension")).toEqual(["definitions", "executors"]);
+    expect(host.members("ComposeOptions")).toEqual(["extensions"]);
   });
 });
 

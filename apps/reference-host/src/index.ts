@@ -1,5 +1,5 @@
 /** The reference host's public surface. */
-export { ExtensionError, composeReferenceHost } from "./compose.js";
+export { composeReferenceHost } from "./compose.js";
 export type { AiSession, ComposeOptions, ComposedHost, HostExtension, ReferenceHost } from "./compose.js";
 export { ConfigError, loadConfig } from "./config.js";
 export type { Environment, HostConfig } from "./config.js";
