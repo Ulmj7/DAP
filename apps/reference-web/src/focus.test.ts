@@ -23,3 +23,12 @@ it("while saving, Save and the name field are busy but never disabled, so focus 
  expect(button.getAttribute("aria-disabled")).toBe("false"); expect(button.getAttribute("aria-busy")).toBe("false"); expect(name.readOnly).toBe(false);
  expect(document.activeElement).toBe(button);
 });
+it("the polite status line is rewritten only when its text changes, not on every keystroke", () => {
+ const { root } = mount({});
+ const name = root.querySelector<HTMLInputElement>("#name")!; const status = root.querySelector('[role="status"]')!;
+ const type = (value: string) => { name.value = value; name.dispatchEvent(new Event("input", { bubbles: true })); };
+ type("A"); expect(status.textContent).toMatch(/unsaved/i);
+ const observer = new MutationObserver(() => {}); observer.observe(status, { subtree: true, childList: true, characterData: true });
+ type("Ad"); type("Ada");
+ expect(observer.takeRecords()).toEqual([]); observer.disconnect();
+});

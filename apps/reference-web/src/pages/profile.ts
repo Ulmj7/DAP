@@ -25,6 +25,7 @@ export function profilePage(actions: ProfileActions) {
   error.hidden = state.error === null; error.textContent = state.error === null ? "" : c[state.error];
   name.input.setAttribute("aria-invalid", String(state.error !== null)); name.input.setAttribute("aria-describedby", state.error === null ? "name-hint" : "name-hint name-error");
   const messages = { ready: c.ready, dirty: c.dirty, "validation-error": c.validation, saving: c.saving, saved: c.saved, "save-failed": c.failed };
-  status.textContent = messages[state.status];
+  // role="status" is a polite live region: write only a real change, or every keystroke may be announced again.
+  if (status.textContent !== messages[state.status]) status.textContent = messages[state.status];
  } };
 }

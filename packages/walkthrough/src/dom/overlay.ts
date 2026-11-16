@@ -9,6 +9,8 @@ let serial=0;
 export function createOverlay(doc:Document):Overlay {
  let cleanup:(()=>void)|null=null;let card:HTMLElement|null=null;let ring:HTMLElement|null=null;let scrim:HTMLElement|null=null;let content:OverlayContent|null=null;let update:()=>void=()=>{};let place:()=>void=()=>{};
  const hide=()=>{cleanup?.();cleanup=null;card?.remove();ring?.remove();scrim?.remove();card=null;ring=null;scrim=null;content=null;place=()=>{};update=()=>{};};
+ // The card is a polite live region: rewriting text that did not change can make assistive technology read it out again.
+ const put=(el:HTMLElement,text:string)=>{if(el.textContent!==text)el.textContent=text;};
  const node=(tag:string,kind:string)=>{const el=doc.createElement(tag);el.setAttribute("data-ai-overlay",kind);el.setAttribute(ATTR_IGNORE,"");return el;};
  return Object.freeze({hide,isShowing:()=>card!==null,update(patch:Partial<OverlayContent>){if(content){content={...content,...patch};update();place();}},reposition:()=>place(),
  show(target:TargetHandle|null,value:string|OverlayContent,callbacks:OverlayCallbacks={}) {
@@ -23,7 +25,7 @@ export function createOverlay(doc:Document):Overlay {
   status.setAttribute("role","status");const ack=node("button","ack") as HTMLButtonElement;const cancel=node("button","cancel") as HTMLButtonElement;ack.type="button";cancel.type="button";ack.className="button primary";cancel.className="button";
   ack.addEventListener("click",()=>{if(legacy)hide();callbacks.onAck?.();});cancel.addEventListener("click",()=>{if(legacy)hide();callbacks.onCancel?.();});
   controls.append(ack,cancel);if(legacy)card.append(title,message,progress,hint,status,escape,controls);else card.append(title,progress,message,hint,status,escape,controls);doc.body.append(card);
-  update=()=>{if(!content)return;title.textContent=content.title;message.textContent=content.text;progress.textContent=content.progress??"";hint.textContent=content.hint??"";status.textContent=content.status??"";escape.textContent=content.escapeHint??"";ack.textContent=content.ackLabel??"Got it";cancel.textContent=content.cancelLabel??"Cancel";ack.hidden=content.ack!==true;ack.disabled=content.ackDisabled===true;};update();
+  update=()=>{if(!content)return;put(title,content.title);put(message,content.text);put(progress,content.progress??"");put(hint,content.hint??"");put(status,content.status??"");put(escape,content.escapeHint??"");put(ack,content.ackLabel??"Got it");put(cancel,content.cancelLabel??"Cancel");const hidden=content.ack!==true;if(ack.hidden!==hidden)ack.hidden=hidden;const off=content.ackDisabled===true;if(ack.disabled!==off)ack.disabled=off;};update();
   place=()=>{
    if(!card)return;
    if(target){const el=target.element;let visible=el.isConnected;for(let n:Element|null=el;n;n=n.parentElement){if(n.hasAttribute("hidden")||n.hasAttribute("inert")||n.getAttribute("aria-hidden")==="true"||view.getComputedStyle(n).display==="none")visible=false;}if(view.getComputedStyle(el).visibility==="hidden")visible=false;if(!visible){hide();return;}}
