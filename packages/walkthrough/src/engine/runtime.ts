@@ -72,6 +72,7 @@ export function createWalkthroughRuntime(options: RuntimeOptions): WalkthroughRu
   const listeners = new Set<(snapshot: EngineSnapshot) => void>();
   const queue: Input[] = [];
   let draining = false;
+  let cancelRequested = false;
   const cancelers: Record<TimerKey, Cancel | null> = { targetWait: null, verify: null };
   // A timer or an async result only counts if its sequence number is still the current one: leaving a step bumps it.
   const sequence: Record<TimerKey, number> = { targetWait: 0, verify: 0 };
@@ -164,7 +165,11 @@ export function createWalkthroughRuntime(options: RuntimeOptions): WalkthroughRu
       for (let input = queue.shift(); input !== undefined; input = queue.shift()) {
         const next = transition(catalog, state, input);
         if (next.state !== state) { state = next.state; notify(); }
-        for (const effect of next.effects) run(effect);
+        if (input.type === "cancel") cancelRequested = false;
+        for (const effect of next.effects) {
+          if (cancelRequested && effect.type !== "clear" && effect.type !== "cancelTimer") continue;
+          run(effect);
+        }
       }
     } catch {
       queue.length = 0;
@@ -181,7 +186,10 @@ export function createWalkthroughRuntime(options: RuntimeOptions): WalkthroughRu
       feed({ type: "start", id });
       return { ok: true };
     },
-    cancel(): void { feed({ type: "cancel" }); },
+    cancel(): void {
+      if (["RESOLVING", "PRESENTING", "WAITING", "VERIFYING"].includes(state.status)) cancelRequested = true;
+      feed({ type: "cancel" });
+    },
     getState: snapshot,
     subscribe(listener: (snapshot: EngineSnapshot) => void): Unsubscribe {
       if (typeof listener !== "function") return () => undefined;
