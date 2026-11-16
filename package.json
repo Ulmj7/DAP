@@ -20,7 +20,9 @@
     "test:conformance": "vitest run --project conformance",
     "test:integration": "vitest run --project integration",
     "coverage:security": "node packages/testkit/dist/cli/coverage.js",
-    "db:migrate": "node db/migrate.mjs"
+    "db:migrate": "node db/migrate.mjs",
+    "build:host": "tsc -b apps/reference-host/tsconfig.build.json",
+    "start:host": "node --env-file-if-exists=.env.local apps/reference-host/dist/index.js"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

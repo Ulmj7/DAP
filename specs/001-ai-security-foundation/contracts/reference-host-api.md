@@ -7,6 +7,30 @@ boundary over HTTP, gives the container and observability work something to depl
 Authentication is a **development-only stub** behind the `AuthenticationPort`. It must be enabled
 explicitly (`DAP_ALLOW_DEV_AUTH=1`) and the process refuses to start when `NODE_ENV=production`.
 
+## Implemented product guidance endpoint
+
+### `POST /guidance`
+
+Requires a development bearer session. Body is exactly `{ "topicId": "getting-started" }`
+or `{ "topicId": "security-overview" }`. Additional properties are rejected. The host creates
+the `getGuidance` proposal, all identifiers and run metadata server-side. A caller cannot choose
+an action, raw proposal, identity or permission. The registered SAFE action requires
+`guidance:read`, the global allowlist and tenant policy to permit it. It passes through the real
+gateway and PostgreSQL adapters, including durable audit before execution.
+
+Success: `200 { "feedback": { "outcome": "ALLOWED", "category": "ok" }, "guide": { "topicId": "...", "title": "...", "steps": ["..."] } }`.
+No session: `401 { "error": "unauthenticated" }`. Invalid body/topic: `400 { "error": "invalid_request" }`.
+Gateway refusals: `403 { "feedback": ... }`; dependency or execution failure: `503 { "feedback": ... }`.
+An unavailable readiness check returns `503` with generic `DENIED/try_later` feedback.
+Denied or failed requests never include a guide. `PlannerFeedback` is unchanged; guide data
+travels through a host-owned request-local collector only after successful execution.
+
+`GET /healthz` and `GET /readyz` are implemented without authentication. Readiness verifies
+the restricted DB role, required state/audit tables, forced RLS and privileges without writing
+probe audit events. It does not guarantee the next append will succeed: the actual durable
+allow-event still gates execution. Confirmation, hostile-run and metrics endpoints below
+remain planned. Setup: [`docs/reference-host.md`](../../../docs/reference-host.md).
+
 ## Confirmation endpoints (trusted human path)
 
 Both require an authenticated user session. Neither is reachable from AI-layer code, and neither

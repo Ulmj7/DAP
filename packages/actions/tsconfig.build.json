@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test-support.ts",
+    "src/state/conformance/**"
+  ],
+  "references": [
+    {
+      "path": "../contracts/tsconfig.build.json"
+    }
+  ]
+}

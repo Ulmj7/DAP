@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test-support.ts",
+    "src/state/conformance/**"
+  ],
+  "references": [
+    {
+      "path": "../../packages/contracts/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/actions/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/ai/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/security/tsconfig.build.json"
+    }
+  ]
+}
