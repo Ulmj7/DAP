@@ -1,0 +1,20 @@
+[
+  {
+    "request_id": "a99393f5-c7ff-429d-b6cd-7d86c216098d",
+    "event_type": "AI_ACTION_PROPOSED",
+    "outcome": null,
+    "execution_result": null
+  },
+  {
+    "request_id": "a99393f5-c7ff-429d-b6cd-7d86c216098d",
+    "event_type": "AI_ACTION_ALLOWED",
+    "outcome": "ALLOWED",
+    "execution_result": null
+  },
+  {
+    "request_id": "a99393f5-c7ff-429d-b6cd-7d86c216098d",
+    "event_type": "AI_ACTION_EXECUTED",
+    "outcome": "ALLOWED",
+    "execution_result": "success"
+  }
+]

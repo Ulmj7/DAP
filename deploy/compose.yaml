@@ -5,7 +5,7 @@ name: dap-foundation
 
 services:
   migrate:
-    image: ai-tuslah:lab08
+    image: ai-tuslah-be:local
     pull_policy: never
     command: ["node", "db/migrate.mjs"]
     environment:
@@ -16,7 +16,7 @@ services:
     restart: "no"
 
   app:
-    image: ai-tuslah:lab08
+    image: ai-tuslah-be:local
     build:
       context: ..
       dockerfile: Dockerfile

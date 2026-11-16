@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-tuslah-be
+  namespace: ai-tuslah-local
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ai-tuslah-be
+  template:
+    metadata:
+      labels:
+        app: ai-tuslah-be
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: backend
+          image: ai-tuslah-be:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - secretRef:
+                name: ai-tuslah-runtime
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 3000
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

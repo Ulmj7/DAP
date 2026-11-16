@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Lab 09 — Pod replacement / self-healing</title><style>body{margin:28px;background:#f4f6f8;color:#172235;font:16px system-ui}h1{font-size:26px;margin:0 0 12px}p{color:#4a5568;margin:0 0 20px}pre{padding:22px;background:#111827;color:#e8edf5;border-radius:8px;font:14px/1.65 monospace;white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>Lab 09 — Pod replacement / self-healing</h1><p>Captured kubectl output from ai-tuslah-local. Source: self-healing.txt. This is a log viewer, not a terminal window.</p><pre>BEFORE — three Ready BE pods
+NAME                            UID                                    READY
+ai-tuslah-be-59f44bf7bf-h5wz2   5e6e8a13-8a1c-450b-9f0d-5349aa5322b8   true
+ai-tuslah-be-59f44bf7bf-ltstn   6789523a-6b92-4084-9894-19d8e8797f63   true
+ai-tuslah-be-59f44bf7bf-n29dg   26bfed39-8a2a-4e14-9081-77582826ba63   true
+
+COMMAND: kubectl -n ai-tuslah-local delete pod ai-tuslah-be-59f44bf7bf-h5wz2
+pod &quot;ai-tuslah-be-59f44bf7bf-h5wz2&quot; deleted from ai-tuslah-local namespace
+
+AFTER — replacement Ready; three Ready BE pods
+NAME                            UID                                    READY
+ai-tuslah-be-59f44bf7bf-c2wqb   7dd4cd53-0e3c-458f-8cbc-7757fc98fcdf   true
+ai-tuslah-be-59f44bf7bf-ltstn   6789523a-6b92-4084-9894-19d8e8797f63   true
+ai-tuslah-be-59f44bf7bf-n29dg   26bfed39-8a2a-4e14-9081-77582826ba63   true
+</pre></html>

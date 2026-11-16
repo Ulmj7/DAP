@@ -5,6 +5,7 @@ coverage
 .env*
 !.env.example
 !.env.docker.example
+.local-k8s/
 
 # Not part of the project: course material kept next to it
 *.pdf

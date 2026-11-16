@@ -1,0 +1,10 @@
+{
+  "sessionReused": true,
+  "sessionExpiresAt": "2026-11-16T18:17:11.103Z",
+  "runtimeConfigAccepted": true,
+  "allowlist": [
+    "getGuidance"
+  ],
+  "databaseNetwork": "ai-tuslah-local",
+  "databaseIP": "192.168.49.3"
+}

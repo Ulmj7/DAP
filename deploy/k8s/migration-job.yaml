@@ -1,0 +1,21 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ai-tuslah-migrate
+  namespace: ai-tuslah-local
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ai-tuslah-be:local
+          imagePullPolicy: Never
+          command: ["npm", "run", "db:migrate"]
+          env:
+            - name: DAP_MIGRATE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ai-tuslah-migration
+                  key: DAP_MIGRATE_DATABASE_URL

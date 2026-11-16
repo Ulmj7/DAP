@@ -1,0 +1,4 @@
+service/postgres unchanged
+endpointslice.discovery.k8s.io/postgres-external configured
+deployment.apps/ai-tuslah-be unchanged
+service/ai-tuslah-be unchanged

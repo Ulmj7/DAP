@@ -1,0 +1,14 @@
+NAME                           READY   UP-TO-DATE   AVAILABLE   AGE    CONTAINERS   IMAGES               SELECTOR
+deployment.apps/ai-tuslah-be   3/3     3            3           176m   backend      ai-tuslah-be:local   app=ai-tuslah-be
+
+NAME                   TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE    SELECTOR
+service/ai-tuslah-be   NodePort    10.108.143.89   <none>        3000:30080/TCP   172m   app=ai-tuslah-be
+service/postgres       ClusterIP   10.108.141.60   <none>        5432/TCP         179m   <none>
+
+NAME                          STATUS     COMPLETIONS   DURATION   AGE    CONTAINERS   IMAGES               SELECTOR
+job.batch/ai-tuslah-migrate   Complete   1/1           7s         177m   migrate      ai-tuslah-be:local   batch.kubernetes.io/controller-uid=6401c563-7a4e-48ed-90b4-d987939c1ff8
+
+NAME                            READY   STATUS    RESTARTS   AGE   IP           NODE              NOMINATED NODE   READINESS GATES
+ai-tuslah-be-59f44bf7bf-h5wz2   1/1     Running   0          82s   10.244.0.8   ai-tuslah-local   <none>           <none>
+ai-tuslah-be-59f44bf7bf-ltstn   1/1     Running   0          94s   10.244.0.6   ai-tuslah-local   <none>           <none>
+ai-tuslah-be-59f44bf7bf-n29dg   1/1     Running   0          88s   10.244.0.7   ai-tuslah-local   <none>           <none>

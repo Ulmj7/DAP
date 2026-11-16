@@ -1,0 +1,14 @@
+BEFORE — three Ready BE pods
+NAME                            UID                                    READY
+ai-tuslah-be-59f44bf7bf-h5wz2   5e6e8a13-8a1c-450b-9f0d-5349aa5322b8   true
+ai-tuslah-be-59f44bf7bf-ltstn   6789523a-6b92-4084-9894-19d8e8797f63   true
+ai-tuslah-be-59f44bf7bf-n29dg   26bfed39-8a2a-4e14-9081-77582826ba63   true
+
+COMMAND: kubectl -n ai-tuslah-local delete pod ai-tuslah-be-59f44bf7bf-h5wz2
+pod "ai-tuslah-be-59f44bf7bf-h5wz2" deleted from ai-tuslah-local namespace
+
+AFTER — replacement Ready; three Ready BE pods
+NAME                            UID                                    READY
+ai-tuslah-be-59f44bf7bf-c2wqb   7dd4cd53-0e3c-458f-8cbc-7757fc98fcdf   true
+ai-tuslah-be-59f44bf7bf-ltstn   6789523a-6b92-4084-9894-19d8e8797f63   true
+ai-tuslah-be-59f44bf7bf-n29dg   26bfed39-8a2a-4e14-9081-77582826ba63   true
