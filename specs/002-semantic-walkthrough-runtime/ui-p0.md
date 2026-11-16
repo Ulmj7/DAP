@@ -94,3 +94,4 @@ Everything the brief lists as not MVP, plus: C01 and its transport, admin and an
 - Guides are a Dashboard catalog card and a header link, not a popover; no generic Next exists.
 - Profile allows three failed Save attempts by bounding fixName to two recovery entries; only the engine declares completion/failure.
 - Result dialogs use native dialog when available, a semantic fallback in jsdom, and expose no request-denied state.
+- U1+U2 QA fixes: the bridge drops accepted-but-undelivered events when a run ends or begins (`clearPending`, called by `mountApp`); busy Save and name field use `aria-disabled`/`readOnly`, never `disabled`, so keyboard focus survives a save; live-region text (card, profile status) is written only when it changes. D5's "Back to guides" action was not built (see T239).
