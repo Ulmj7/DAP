@@ -1,4 +1,5 @@
 :root {
+ --dap-scrim: rgb(0 0 0 / 42%); --guide-width: 336px; --dialog-width: 440px; --guide-z: 2147483000; --guide-outline: 3px solid var(--dap-accent);
  --dap-bg: #F1F2F4; --dap-accent: #812F74; --dap-ink: #000000;
  --dap-surface: #FFFFFF; --dap-border: #D6D8DC; --dap-text-muted: #62646A;
  --dap-accent-wash: #F5EBF3; --dap-danger: #B42318; --dap-focus-ring: #812F74;

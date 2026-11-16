@@ -16,3 +16,6 @@ it("layout and accessibility CSS supplies constrained, responsive, accent-focus 
  const css=readFileSync(join(root,"styles/app.css"),"utf8");
  expect(css).toContain("max-width: var(--page-width)");expect(css).toContain("max-width: var(--form-width)");expect(css).toContain("max-width: 767px");expect(css).toContain(":focus-visible");expect(css).toContain("min-height: var(--touch)");expect(css).not.toMatch(/transition:|animation:|gradient\(/);
 });
+it("guide presentation has compact/reduced-motion rules and uses only theme colours",()=>{
+ const css=readFileSync(join(root,"styles/overlay.css"),"utf8");expect(css).toContain("prefers-reduced-motion: reduce");expect(css).toContain("max-width: 767px");expect(css).toContain("position: fixed");expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);expect(css).toContain("100dvh");
+});

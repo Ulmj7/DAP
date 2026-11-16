@@ -2,7 +2,7 @@ import { h } from "../dom.js";
 import { copy } from "../copy.js";
 import { button, card, field, heading, statusMessage } from "../ui/pieces.js";
 import type { ProfileState } from "../profile-state.js";
-export interface ProfileActions { readonly showMe: () => void; readonly showMissing: () => void; readonly edit: (draft: string) => void; readonly save: () => void }
+export interface ProfileActions { readonly edit: (draft: string) => void; readonly save: () => void }
 export function profilePage(actions: ProfileActions) {
  const c = copy.profile;
  const name = field("name", c.name, { type: "text", maxlength: "80", "data-ai-id": "profile.nameInput", "aria-describedby": "name-hint" });
@@ -15,10 +15,8 @@ export function profilePage(actions: ProfileActions) {
  const password = field("password", c.password, { type: "password", "data-ai-private": true, "data-ai-id": "profile.passwordInput" });
  const form = h("form", { class: "profile-form", novalidate: true }, h("h2", {}, c.section), name.element, email.element, phone.element, password.element, save, status);
  form.addEventListener("submit", event => { event.preventDefault(); actions.save(); });
- const show = button(c.show); show.id = "show-me"; show.addEventListener("click", actions.showMe);
- const missing = button(c.missing); missing.id = "show-missing"; missing.addEventListener("click", actions.showMissing);
  const billing = field("billing-note", c.billingLabel, { type: "text" });
- const element = h("section", {}, heading(c.title, c.intro), card(form), h("section", { class: "panel", "data-ai-ignore": true }, h("h2", {}, c.billing), h("p", {}, c.billingText), billing.element), h("section", { class: "demo" }, h("h2", {}, c.demo), show, missing));
+ const element = h("section", {}, heading(c.title, c.intro), card(form), h("section", { class: "panel", "data-ai-ignore": true }, h("h2", {}, c.billing), h("p", {}, c.billingText), billing.element));
  return { element, update(state: ProfileState) {
   if (name.input.value !== state.draft) name.input.value = state.draft;
   save.disabled = state.status === "saving"; name.input.disabled = state.status === "saving";
