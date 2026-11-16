@@ -16,9 +16,30 @@
  * The margin rule already implies the top-N rule (a summary 20% ahead of every other one is first); both are kept as separate one-liners so each can be read and tested.
  * No embeddings, no synonym list, no model call. Pure: the same input gives the same output, whatever the order of the summaries.
  */
+import { z } from "zod";
 import { MAX_SUMMARIES } from "./limits.js";
 import { bm25Doc, createBm25, round6, tokenize } from "./knowledge/retriever.js";
+import { summarySchema } from "./request.js";
+import { snapshotPlainData } from "./snapshot.js";
 import type { SafeWalkthroughSummary } from "./types.js";
+
+/** Feature 002 allows at most 100 walkthroughs; the catalog view may not return more. */
+export const MAX_CATALOG_SUMMARIES = 100;
+const catalogSchema = z.array(summarySchema).max(MAX_CATALOG_SUMMARIES);
+
+/**
+ * Validates what a `WalkthroughCatalogView.list()` returned (it is a host port, so it is checked, not trusted): a plain array of at most 100 strict
+ * summaries `{ id, title, description }` with plain-text titles and descriptions and unique ids. Anything else is `null`. Returns frozen copies.
+ */
+export function parseCatalogSummaries(raw: unknown): readonly SafeWalkthroughSummary[] | null {
+  try {
+    const snapshot = snapshotPlainData(raw);
+    if (!snapshot.ok) return null;
+    const parsed = catalogSchema.safeParse(snapshot.value);
+    if (!parsed.success || new Set(parsed.data.map((summary) => summary.id)).size !== parsed.data.length) return null;
+    return Object.freeze(parsed.data.map((summary) => Object.freeze({ id: summary.id, title: summary.title, description: summary.description })));
+  } catch { return null; }
+}
 
 /** The least BM25 score a proposed summary needs for the question. Tuned on the three demo summaries (see selection.test.ts and plan.md "Slice 3 decisions"). */
 export const MIN_SELECTION_SCORE = 0.5;

@@ -1,7 +1,7 @@
 /** Slice 2 demo, Scenario B, with the real shipped knowledge, the real loader and retriever, and the real answer path (an inline stand-in for the model). */
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { answerQuestion, createRetriever, renderGuidancePrompt } from "@dap/ai";
+import { createGuidanceService, createRetriever, renderGuidancePrompt } from "@dap/ai";
 import type { GuidanceModel, GuidanceModelRequest } from "@dap/ai";
 import { scrubText } from "@dap/security";
 import { loadKnowledge } from "./knowledge-loader.js";
@@ -10,6 +10,10 @@ const knowledge = loadKnowledge({ dir: fileURLToPath(new URL("../../knowledge", 
 const retriever = createRetriever(knowledge.chunks);
 const context = { route: "settings", elements: [{ id: "settings.twoFactorSetup", role: "button", label: "Two-factor setup", description: "Starts two-factor authentication setup", privacy: "public", available: false }] };
 const timers = { set: () => () => undefined };
+const sanitizeQuery = (raw: unknown): string | null => (typeof raw === "string" ? raw : null);
+/** Scenario B uses the real knowledge and retriever with no walkthrough catalog: only the answer path is in play (the walkthrough path is tested in guidance-scenarios.test.ts). */
+const answerQuestion = (args: { model: GuidanceModel; timers: { set: () => () => void }; retriever: typeof retriever; query: string; semanticContext: unknown }) =>
+  createGuidanceService({ model: args.model, catalog: { list: () => [] }, retriever: args.retriever, timers: args.timers, sanitizeQuery }).askGuidance({ query: args.query, semanticContext: args.semanticContext });
 const recording = (behaviour: (request: GuidanceModelRequest) => unknown) => {
   const requests: GuidanceModelRequest[] = [];
   const model: GuidanceModel = { generate: (request) => { requests.push(request); return Promise.resolve(behaviour(request)); } };

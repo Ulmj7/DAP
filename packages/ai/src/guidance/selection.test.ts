@@ -88,7 +88,7 @@ describe("the lexical guard (T313): verdicts", () => {
     expect(verdict("Start the admin walkthrough.", "adminWalkthrough")).toEqual({ verdict: "unknown" });
     expect(verdict("How do I export my invoices?", "__proto__")).toEqual({ verdict: "unknown" });
     expect(verdict("How do I export my invoices?", "invoiceexport")).toEqual({ verdict: "unknown" });
-    expect(verdict("How do I export my invoices?", 42)).toEqual({ verdict: "unknown" });
+    expect(verdict("How do I export my invoices?", 42 as never)).toEqual({ verdict: "unknown" });
   });
   it("picking a different existing walkthrough than the question is about is not accepted, even if the question names the other one", () => {
     expect(verdict("How do I export my invoices?", "findPrivacySettings")).toEqual({ verdict: "unrelated" });
