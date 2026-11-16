@@ -15,19 +15,70 @@
  * research D11) from the session, the turn and the provider's id; identity and the page never come from the proposal.
  */
 import { randomUUID } from "node:crypto";
-import type { AuditEvent, Clock, ConfirmationChannel, ConfirmationId, GatewayDependencies, IdGenerator, IsoInstant, PlannerFeedback, PlannerRunMeta, SecurityStateStore } from "@dap/contracts";
+import type { ActionExecutor, AnyActionDefinition, AuditEvent, Clock, ConfirmationChannel, ConfirmationId, GatewayDependencies, IdGenerator, IsoInstant, PlannerFeedback, PlannerRunMeta, SecurityStateStore } from "@dap/contracts";
 import { toProposalCall } from "@dap/ai";
 import type { RawToolCall } from "@dap/ai";
 import {
   PostgresAuditStore, PostgresRateLimiter, PostgresReplayGuard, PostgresTenantActionPolicyStore, bindExecutors, buildRegistry, createPolicyGateway,
   createPostgresPool, createSecurityContextFactory,
 } from "@dap/security";
-import { DEMO_DEFINITIONS, createDemoExecutors } from "./capabilities.js";
+import { DEMO_ACTION_IDS, DEMO_DEFINITIONS, createDemoExecutors } from "./capabilities.js";
 import type { TrustedHandle } from "./capabilities.js";
 import { loadConfig } from "./config.js";
 import type { Environment } from "./config.js";
 import { createDevAuthentication } from "./dev-auth/index.js";
 import { createPageContextProvider, createPermissionChecker, createResourceAuthorizer } from "./host-ports.js";
+
+/**
+ * What a host extension may add: capability definitions and their executors, nothing else. No hook, no plugin lifecycle, and no access to the pool,
+ * the stores, the registry, the clock or the configuration. An extension is data handed in by the composition root's caller (trusted host code).
+ */
+export interface HostExtension {
+  readonly definitions: readonly AnyActionDefinition[];
+  readonly executors: readonly ActionExecutor[];
+}
+export interface ComposeOptions {
+  readonly extensions?: readonly HostExtension[];
+}
+export class ExtensionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExtensionError";
+  }
+}
+
+/**
+ * Validates the extensions (fail closed, before anything is created) and returns the extra definitions and executors in order. Refused: an extension that
+ * is not exactly `{ definitions, executors }`, malformed lists, a capability id that collides with a demo capability or with another extension, and an
+ * executor id used twice.
+ */
+function collectExtensions(extensions: readonly HostExtension[] | undefined): { readonly definitions: readonly AnyActionDefinition[]; readonly executors: readonly ActionExecutor[] } {
+  if (extensions === undefined) return { definitions: [], executors: [] };
+  if (!Array.isArray(extensions)) throw new ExtensionError("extensions must be an array");
+  const definitions: AnyActionDefinition[] = [];
+  const executors: ActionExecutor[] = [];
+  const actionIds = new Set<string>(DEMO_ACTION_IDS);
+  const executorIds = new Set<string>();
+  for (const extension of extensions as readonly unknown[]) {
+    const bag = extension as Partial<HostExtension> | null;
+    if (bag === null || typeof bag !== "object" || Object.keys(bag).some((key) => key !== "definitions" && key !== "executors") || !Array.isArray(bag.definitions) || !Array.isArray(bag.executors)) {
+      throw new ExtensionError("an extension must be exactly { definitions, executors }");
+    }
+    for (const definition of bag.definitions) {
+      const id = definition.id as string;
+      if (typeof id !== "string" || actionIds.has(id)) throw new ExtensionError("an extension capability id is missing or collides with another capability");
+      actionIds.add(id);
+      definitions.push(definition);
+    }
+    for (const executor of bag.executors) {
+      const id = executor.id as string;
+      if (typeof id !== "string" || executorIds.has(id)) throw new ExtensionError("an extension executor id is missing or repeated");
+      executorIds.add(id);
+      executors.push(executor);
+    }
+  }
+  return { definitions, executors };
+}
 
 /** The ONLY thing the AI layer is given for one authenticated session. */
 export interface AiSession {
@@ -65,12 +116,16 @@ const confirmationStorePlaceholder: SecurityStateStore["confirmations"] = Object
 });
 const confirmationChannelPlaceholder: ConfirmationChannel = Object.freeze({ deliver: confirmationUnavailable });
 
-/** Validates `env` (throws on anything missing or malformed, before any connection is made) and assembles the host. */
-export async function composeReferenceHost(env: Environment): Promise<ComposedHost> {
-  const config = loadConfig(env);
-  const registry = buildRegistry(DEMO_DEFINITIONS);
+/**
+ * Validates `env` (throws on anything missing or malformed, before any connection is made) and assembles the host. Without `options` (or with no
+ * extensions) the host is exactly the Feature 001 host: the three demo capabilities and nothing else.
+ */
+export async function composeReferenceHost(env: Environment, options?: ComposeOptions): Promise<ComposedHost> {
+  const extra = collectExtensions(options?.extensions);
+  const config = loadConfig(env, extra.definitions.map((definition) => definition.id as string));
+  const registry = buildRegistry([...DEMO_DEFINITIONS, ...extra.definitions]);
   const { executors, trusted } = createDemoExecutors();
-  const executorTable = bindExecutors(registry, executors);
+  const executorTable = bindExecutors(registry, [...executors, ...extra.executors]);
   const pool = createPostgresPool(config.databaseUrl);
   try {
     const clock = systemClock;
