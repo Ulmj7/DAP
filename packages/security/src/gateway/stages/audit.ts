@@ -7,7 +7,7 @@ import { projectParams } from "../../audit/projection.js";
 import { denyDecision } from "../decision.js";
 import type { HookOptions } from "../hook-wrapper.js";
 import type { PolicyStage } from "../pipeline.js";
-import { readAllowFacts } from "./allow-facts.js";
+import { createAllowedCheckpoint, readAllowFacts } from "./allow-facts.js";
 import { createLimitGate } from "./limit-gate.js";
 import { provenDefinition } from "./registered.js";
 
@@ -67,7 +67,7 @@ export function createAuditStage({ registry, events, writer, limiter, executors 
     const committed = await writer.recordAllowedDurably(event, request.budget);
     if (!committed.ok) return stop("audit_unavailable");
     const data = { eventId: event.id, actionId: allow.actionId, version: allow.version, risk: allow.risk, paramsDigest: allow.paramsDigest, confirmationId: allow.confirmationId };
-    request.reportAllowed?.(data);
+    request.reportAllowed?.(createAllowedCheckpoint(request, request.facts, data));
     return { kind: "continue", data };
   };
 }

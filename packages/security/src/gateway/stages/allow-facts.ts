@@ -94,3 +94,27 @@ export function readAuditedFacts(facts: StageFacts): AuditedFacts | undefined {
   if (a.actionId !== base.actionId || a.version !== base.version || a.risk !== base.risk || a.paramsDigest !== base.paramsDigest || a.confirmationId !== base.confirmationId) return undefined;
   return Object.freeze({ ...base, eventId: a.eventId });
 }
+
+/** Internal, opaque checkpoints: JSON facts and structural copies cannot attest a commit or execution. */
+interface CheckpointScope { readonly requestId: string; readonly decisionId: string; readonly context: unknown; readonly budget: object }
+interface Checkpoint<T> extends CheckpointScope { readonly data: T }
+const allowedCheckpoints = new WeakMap<object, Checkpoint<AuditedFacts>>();
+const executionCheckpoints = new WeakMap<object, Checkpoint<"success" | "failure">>();
+function readCheckpoint<T>(entries: WeakMap<object, Checkpoint<T>>, scope: CheckpointScope, token: unknown): T | undefined {
+  const entry = token !== null && typeof token === "object" ? entries.get(token) : undefined;
+  return entry !== undefined && entry.requestId === scope.requestId && entry.decisionId === scope.decisionId && entry.context === scope.context && entry.budget === scope.budget ? entry.data : undefined;
+}
+/** Called only by the real audit stage, after its writer confirmed the durable append. Not a public package export. */
+export function createAllowedCheckpoint(scope: CheckpointScope, facts: StageFacts, data: Readonly<Record<string, JsonValue>>): object {
+  const audited = readAuditedFacts({ ...facts, audit: data });
+  if (audited === undefined) throw new TypeError("Invalid committed allow facts");
+  const token = Object.freeze({});
+  allowedCheckpoints.set(token, { requestId: scope.requestId, decisionId: scope.decisionId, context: scope.context, budget: scope.budget, data: snapshotAnswer(audited) as AuditedFacts });
+  return token;
+}
+export const readAllowedCheckpoint = (scope: CheckpointScope, token: unknown): AuditedFacts | undefined => readCheckpoint(allowedCheckpoints, scope, token);
+/** Called only after the real execute stage obtained an execution outcome. */
+export function createExecutionCheckpoint(scope: CheckpointScope, status: "success" | "failure"): object {
+  const token = Object.freeze({}); executionCheckpoints.set(token, { requestId: scope.requestId, decisionId: scope.decisionId, context: scope.context, budget: scope.budget, data: status }); return token;
+}
+export const readExecutionCheckpoint = (scope: CheckpointScope, token: unknown): "success" | "failure" | undefined => readCheckpoint(executionCheckpoints, scope, token);

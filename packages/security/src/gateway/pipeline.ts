@@ -2,7 +2,7 @@ import { z } from "zod";
 import { PIPELINE_STAGES } from "@dap/contracts";
 import type { AuthorizationContext, JsonValue, PipelineStage, PlannerRunMeta, PolicyDecision, ProposalCall, RequestId } from "@dap/contracts";
 import { isMintedContext } from "@dap/contracts/mint";
-import { readAuditedFacts } from "./stages/allow-facts.js";
+import { readAllowedCheckpoint, readExecutionCheckpoint } from "./stages/allow-facts.js";
 import { snapshotAnswer } from "./answer-snapshot.js";
 import { allowedDecision, confirmationDecision, denyDecision } from "./decision.js";
 import { assertTimeout, nativeTimer, underDeadline, type HookTimer } from "./deadline.js";
@@ -24,9 +24,9 @@ export interface PipelineInput {
 export interface ProposalBudget { readonly remainingMs: () => number }
 export interface PipelineRecord extends Omit<PipelineInput, "context" | "run"> {
   /** Only audit receives this receipt callback, after the writer confirms the durable append. */
-  readonly reportAllowed?: (data: Readonly<Record<string, JsonValue>>) => void;
+  readonly reportAllowed?: (checkpoint: unknown) => void;
   /** Only execute receives this checkpoint, before any post-execution recording. */
-  readonly reportExecution?: (status: ExecutionStatus) => void;
+  readonly reportExecution?: (checkpoint: unknown) => void;
   readonly budget: ProposalBudget;
   readonly context: AuthorizationContext | null;
   readonly run: PlannerRunMeta;
@@ -143,7 +143,7 @@ export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer =
     let request: PipelineRecord | undefined;
     let proposed = false;
     let executed: ExecutionStatus | undefined;
-    let committed: ReturnType<typeof readAuditedFacts>;
+    let committed: ReturnType<typeof readAllowedCheckpoint>;
     /** The proposal is recorded exactly once, before whatever decision follows it. */
     const ensureProposed = async (record: PipelineRecord | undefined, attempted: string | undefined): Promise<void> => {
       if (proposed || audit === undefined || record === undefined) return;
@@ -153,10 +153,10 @@ export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer =
     /** Records the decision (nothing it does can change it) and returns it. */
     const finish = async (decision: PolicyDecision, executionStatus?: ExecutionStatus, attempted?: string): Promise<PipelineEvaluation> => {
       // Once the consistent ALLOW receipt exists, later faults describe execution, never a second policy decision.
-      const allowed = committed ?? (request === undefined ? undefined : readAuditedFacts(request.facts));
+      const allowed = committed;
       if (allowed !== undefined && request !== undefined && isMintedContext(request.context)) {
         decision = allowedDecision({ ...identifiers, actionId: allowed.actionId as never, risk: allowed.risk, paramsDigest: allowed.paramsDigest as never });
-        executionStatus = executed ?? executionStatus ?? "failure";
+        executionStatus = executed ?? "failure";
       }
       try {
         if (audit !== undefined && request !== undefined) {
@@ -184,10 +184,11 @@ export function createPipeline(stages: StageMap, { hookTimeoutMs = 2000, timer =
         if (typeof fn !== "function") return await finish(failure(request, name, "dependency_failure"));
         const left = remaining();
         if (!(left > 0)) return await finish(failure(request, name, "dependency_failure"));
-        const priorFacts = request.facts;
+        if (name === "execute" && committed === undefined) return await finish(failure(request, name, "dependency_failure"));
+        const scope = request;
         const view: PipelineRecord = name === "intake" ? Object.freeze({ ...request, readProposal: proposal })
-          : name === "audit" ? Object.freeze({ ...request, reportAllowed: (data: Readonly<Record<string, JsonValue>>) => { committed ??= readAuditedFacts({ ...priorFacts, audit: data }); } })
-          : name === "execute" ? Object.freeze({ ...request, reportExecution: (status: ExecutionStatus) => { if (executed === undefined && (status === "success" || status === "failure")) executed = status; } }) : request;
+          : name === "audit" ? Object.freeze({ ...request, reportAllowed: (token: unknown) => { committed ??= readAllowedCheckpoint(scope, token); } })
+          : name === "execute" ? Object.freeze({ ...request, reportExecution: (token: unknown) => { executed ??= readExecutionCheckpoint(scope, token); } }) : request;
         const result = await runStage(fn, view, name, stageDeadline(name, left, hookTimeoutMs), timer);
         if (result.kind === "stop") return await finish(result.decision, result.executionStatus, name === "intake" ? (result.decision as { attemptedAction?: string }).attemptedAction : undefined);
         // Whatever the context stage is, nothing after it may run without a minted context.
