@@ -211,7 +211,7 @@ export function createWalkthroughRuntime(options: RuntimeOptions): WalkthroughRu
     catalog: Object.freeze({ list: () => catalog.list(), get: (id: unknown) => catalog.get(id) }),
     context(): SemanticContext {
       let route = "";
-      try { const current: unknown = router.current(); if (typeof current === "string") route = current; } catch { /* no route: nothing is listed */ }
+      try { const current: unknown = router.current(); if (typeof current === "string" && registry.routes.includes(current)) route = current; } catch { /* no route: nothing is listed */ }
       return buildSemanticContext(registry, route, (id) => { try { return targets.resolve(id) === "available"; } catch { return false; } });
     },
   });

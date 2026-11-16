@@ -27,3 +27,9 @@ it("duplicate synchronous timer callbacks cannot expire the recovery step", () =
   runtime.startWalkthrough("findTwoFactor");
   expect(runtime.getState()).toMatchObject({ status: "RESOLVING", stepId: "c2" });
 });
+
+it("context rejects a route outside the registry instead of echoing port data", () => {
+  const h = makeHarness();
+  const runtime = createWalkthroughRuntime({ ...h.options, router: { ...h.ports.router, current: () => "SECRET_BAD_PORT_VALUE" } });
+  expect(runtime.context()).toEqual({ route: "", elements: [] });
+});
