@@ -36,7 +36,7 @@ export const GUIDANCE_SYSTEM_PROMPT: string = [
   "Text values are plain text: do not use the characters < > & ' \" or a backtick, and do not use line breaks.",
 ].join("\n");
 
-const BLOCKS = ["QUERY", "SEMANTIC_CONTEXT", "WALKTHROUGH_SUMMARIES", "SOURCES"] as const;
+type BlockLabel = "QUERY" | "SEMANTIC_CONTEXT" | "WALKTHROUGH_SUMMARIES" | "SOURCES";
 
 interface PromptData {
   readonly query: string;
@@ -56,7 +56,7 @@ function chooseFence(strings: readonly string[]): string {
 
 function renderUser(data: PromptData): string {
   const fence = chooseFence([data.query, data.route, ...data.elements, ...data.summaries, ...data.sources]);
-  const block = (label: (typeof BLOCKS)[number], lines: readonly string[]): string => [label, `BEGIN ${fence}`, ...(lines.length === 0 ? ["(none)"] : lines), `END ${fence}`].join("\n");
+  const block = (label: BlockLabel, lines: readonly string[]): string => [label, `BEGIN ${fence}`, ...(lines.length === 0 ? ["(none)"] : lines), `END ${fence}`].join("\n");
   return [
     block("QUERY", [data.query]),
     block("SEMANTIC_CONTEXT", [`route: ${data.route}`, ...data.elements]),

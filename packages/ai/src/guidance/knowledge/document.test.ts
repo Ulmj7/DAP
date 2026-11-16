@@ -15,7 +15,8 @@ describe("a valid document", () => {
     expect(Object.isFrozen(r.doc.tags)).toBe(true);
   });
   it("the topic is optional; content may hold quotes, markup characters, tabs and line breaks", () => {
-    const { topic: _topic, ...withoutTopic } = doc();
+    const withoutTopic: Record<string, unknown> = doc();
+    delete withoutTopic.topic;
     expect(parse(withoutTopic)).toBe("ok");
     expect(parse(doc({ content: "Press \"Save\" & <wait>.\n\tIt's done." }))).toBe("ok");
   });

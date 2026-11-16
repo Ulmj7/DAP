@@ -107,8 +107,8 @@ describe("toProposalCall: raw text identity", () => {
 describe("@dap/ai export surface", () => {
   /** The complete public surface of @dap/ai (compile-time). */
   // Feature 003 added the guidance contract (Slice 1): its limits, its closed reason list, three functions and the types of the guidance port.
-  const GUIDANCE_VALUES = ["GUIDANCE_LIMITS", "GUIDANCE_REASONS", "MAX_ANSWER_CHARS", "MAX_CONTEXT_ELEMENTS", "MAX_DESCRIPTION_CHARS", "MAX_ID_CHARS", "MAX_LABEL_CHARS", "MAX_MESSAGE_CHARS", "MAX_MODEL_CALLS", "MAX_QUERY_CHARS", "MAX_ROUTE_CHARS", "MAX_SOURCES", "MAX_SOURCE_CHARS", "MAX_SUMMARIES", "MAX_TITLE_CHARS", "MODEL_DEADLINE_MS", "callGuidanceModel", "createModelCallGuard", "parseGuidanceDecision", "parseGuidanceModelRequest", "unsupportedResult"] as const;
-  const GUIDANCE_TYPES = ["Cancel", "GuidanceDecision", "GuidanceInput", "GuidanceModel", "GuidanceModelRequest", "GuidanceReason", "GuidanceResult", "GuidanceSource", "GuidanceTimers", "ModelCallFailure", "ModelCallGuard", "ModelCallOutcome", "RequestParse", "SafeWalkthroughSummary", "SanitizeQuery", "SemanticContextElementInput", "SemanticContextInput", "SemanticPrivacy", "SemanticRole", "WalkthroughCatalogView"] as const;
+  const GUIDANCE_VALUES = ["GUIDANCE_LIMITS", "GUIDANCE_REASONS", "MAX_ANSWER_CHARS", "MAX_CONTEXT_ELEMENTS", "MAX_DESCRIPTION_CHARS", "MAX_ID_CHARS", "MAX_LABEL_CHARS", "MAX_MESSAGE_CHARS", "MAX_MODEL_CALLS", "MAX_QUERY_CHARS", "MAX_ROUTE_CHARS", "MAX_SOURCES", "MAX_SOURCE_CHARS", "MAX_SUMMARIES", "MAX_TITLE_CHARS", "MODEL_DEADLINE_MS", "callGuidanceModel", "createModelCallGuard", "parseGuidanceDecision", "parseGuidanceModelRequest", "unsupportedResult", "MAX_KNOWLEDGE_DOCS", "MAX_DOC_CHARS", "MAX_DOC_TAGS", "MAX_TOPIC_CHARS", "MAX_PROMPT_CHARS", "chunkDocument", "chunkKnowledge", "parseKnowledgeDoc", "parseKnowledgeSet", "MIN_RELEVANCE", "createRetriever", "renderGuidancePrompt", "GUIDANCE_SYSTEM_PROMPT", "answerQuestion", "buildAnswerRequest", "groundDecision"] as const;
+  const GUIDANCE_TYPES = ["Cancel", "GuidanceDecision", "GuidanceInput", "GuidanceModel", "GuidanceModelRequest", "GuidanceReason", "GuidanceResult", "GuidanceSource", "GuidanceTimers", "ModelCallFailure", "ModelCallGuard", "ModelCallOutcome", "RequestParse", "SafeWalkthroughSummary", "SanitizeQuery", "SemanticContextElementInput", "SemanticContextInput", "SemanticPrivacy", "SemanticRole", "WalkthroughCatalogView", "DocParse", "KnowledgeChunk", "KnowledgeDoc", "SetParse", "RetrievedChunk", "Retriever", "RenderedPrompt", "AnswerChunk"] as const;
   const ALLOWLIST = ["PlannerPort", "RawToolCall", "toProposalCall", ...GUIDANCE_VALUES, ...GUIDANCE_TYPES] as const;
   it("exposes exactly the allowlisted names (compile-time, as the type checker sees them)", () => {
     expect(exportedNames().sort()).toEqual([...ALLOWLIST].sort());
@@ -128,13 +128,13 @@ describe("@dap/ai depends on @dap/contracts and zod only, and takes nothing but 
   const ALLOWED_CONTRACT_NAMES = new Set(["PlannerFeedback", "ProposalCall"]);
 
   it("finds the production sources it is about to check", () => {
-    expect(sources.map((file) => file.slice(PACKAGE_ROOT.length)).sort()).toEqual(["src/guidance/call-model.ts", "src/guidance/decision.ts", "src/guidance/limits.ts", "src/guidance/request.ts", "src/guidance/result.ts", "src/guidance/snapshot.ts", "src/guidance/text.ts", "src/guidance/types.ts", "src/index.ts", "src/planner-port.ts", "src/tool-call.ts"]);
+    expect(sources.map((file) => file.slice(PACKAGE_ROOT.length)).sort()).toEqual(["src/guidance/answer.ts", "src/guidance/call-model.ts", "src/guidance/decision.ts", "src/guidance/knowledge/document.ts", "src/guidance/knowledge/retriever.ts", "src/guidance/limits.ts", "src/guidance/prompt.ts", "src/guidance/request.ts", "src/guidance/result.ts", "src/guidance/snapshot.ts", "src/guidance/text.ts", "src/guidance/types.ts", "src/index.ts", "src/planner-port.ts", "src/tool-call.ts"]);
   });
 
   it("imports only relative modules, zod and @dap/contracts, and only the two allowlisted contract types", () => {
     for (const file of sources) {
       for (const { specifier, names } of importsOf(file)) {
-        if (specifier.startsWith("./") || specifier === "zod") continue;
+        if (specifier.startsWith("./") || specifier.startsWith("../") || specifier === "zod") continue; // relative imports stay inside the package (tests/architecture/ai-guidance-boundary.test.ts)
         expect(specifier, `${file}`).toBe("@dap/contracts");
         expect(names, `${file} must not use a namespace or dynamic import of @dap/contracts`).not.toBe("*");
         for (const name of names) expect(ALLOWED_CONTRACT_NAMES.has(name), `${file} imports ${name} from @dap/contracts`).toBe(true);

@@ -35,3 +35,7 @@ export { chunkDocument, chunkKnowledge, parseKnowledgeDoc, parseKnowledgeSet } f
 export type { DocParse, KnowledgeChunk, KnowledgeDoc, SetParse } from "./guidance/knowledge/document.js";
 export { MIN_RELEVANCE, createRetriever } from "./guidance/knowledge/retriever.js";
 export type { RetrievedChunk, Retriever } from "./guidance/knowledge/retriever.js";
+export { renderGuidancePrompt, GUIDANCE_SYSTEM_PROMPT } from "./guidance/prompt.js";
+export type { RenderedPrompt } from "./guidance/prompt.js";
+export { answerQuestion, buildAnswerRequest, groundDecision } from "./guidance/answer.js";
+export type { AnswerChunk } from "./guidance/answer.js";
