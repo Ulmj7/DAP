@@ -7,6 +7,7 @@ export function scanHost(file: string, text: string): string[] {
  const visit = (node: ts.Node) => {
   if (ts.isIdentifier(node) && node.text === "fetch" && file !== "guidance/anthropic-model.ts") errors.push("fetch");
   if (ts.isPropertyAccessExpression(node) && node.expression.getText(source) === "process" && node.name.text === "env" && file !== "guidance/demo.ts") errors.push("env");
+  if (!file.startsWith("packages/ai/") && ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && ["@dap/walkthrough", "@dap/testkit"].includes(node.moduleSpecifier.text)) errors.push("import");
   if (file.startsWith("packages/ai/") && ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && !["@dap/contracts", "zod"].includes(node.moduleSpecifier.text) && !node.moduleSpecifier.text.startsWith(".")) errors.push("import");
   ts.forEachChild(node, visit);
  }; visit(source); return errors;
@@ -24,4 +25,8 @@ it("planted violations are caught without mutating the repository", () => {
  expect(scanHost("guidance/demo.ts", "process.env.X;")).toEqual([]);
  expect(scanHost("x.ts", "// fetch process.env\nconst x = 'fetch';")).toEqual([]);
  expect(scanHost("packages/ai/src/x.ts", 'import "@dap/walkthrough"; import "node:fs";')).toHaveLength(2);
+});
+
+it("the actual host scan refuses direct runtime and testkit imports", () => {
+ expect(scanHost("guidance/capability.ts", 'import "@dap/walkthrough"; import "@dap/testkit";')).toEqual(["import", "import"]);
 });
