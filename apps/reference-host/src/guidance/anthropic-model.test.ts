@@ -56,6 +56,10 @@ describe("Anthropic offline adapter", () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(released).toBe(mode === "synchronous" ? 1 : 0);
   });
+  it.each(['unit-test-"quoted-secret', 'unit-test-\\escaped-secret'])("refuses an echoed printable key requiring JSON escaping", async apiKey => {
+    const model = createAnthropicGuidanceModel({ apiKey, fetchImpl: async () => response(JSON.stringify({ kind: "clarify", message: apiKey })) });
+    await expect(model.generate(request)).rejects.toMatchObject({ code: "bad_envelope" });
+  });
   it("invalid decision text stays unknown for core validation", async () => expect(await make(async () => response("not a decision")).generate(request)).toBe("not a decision"));
   it("rejects fit mismatch before HTTP", async () => {
     const fetcher = vi.fn<typeof fetch>();

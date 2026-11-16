@@ -46,7 +46,7 @@ export function createAnthropicGuidanceModel({ apiKey, modelId = "claude-haiku-5
       const fence = /^```(?:json)?\s*\n([\s\S]*?)\n```$/.exec(text); if (fence) text = fence[1]!;
       let decoded: unknown;
       try { decoded = JSON.parse(text) as unknown; } catch { return text; }
-      if (JSON.stringify(decoded).includes(apiKey)) throw new GuidanceProviderError("bad_envelope");
+      if (JSON.stringify(decoded).includes(JSON.stringify(apiKey).slice(1, -1))) throw new GuidanceProviderError("bad_envelope");
       return decoded;
     };
     try {
