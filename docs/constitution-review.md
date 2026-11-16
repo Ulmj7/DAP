@@ -16,9 +16,9 @@ representative tests, not by an exhaustive catalogue. **Maintainer sign-off is n
 | III. Deterministic Policy Gateway, single chokepoint | satisfied | Stage order in `packages/contracts/src/core.ts` and `create-gateway.ts`; executors need a single-use grant bound to five fields (`execution-runtime.ts`, `mint/grant-registry.ts`); package graph and mint restriction (`dependency-cruiser.config.cjs`, `tests/architecture/`) | Confirmation stage is a position only (limitation 9). Supply-chain compromise of in-process code can reach the mint functions (plan.md Remaining Risks 1) |
 | IV. Default deny, explicit allowlists | satisfied | Empty global allowlist denies (`unknown-action.test.ts` ATK-UNKNOWN-05; `reference-host.test.ts` group 1b; `packages/security/src/registry/enablement.test.ts`); exact-match registry; reserved names | Tenant narrowing can only disable (D16) |
 | V. No secrets or credentials to the AI | satisfied | Feedback is outcome + category + field paths (`gateway/feedback.ts`); audit projection and scrubber; canaries: `secret-extraction.test.ts` (ATK-SECRET-01..04), `audit-postgres.test.ts` P4 | The attempted action name is model-authored text kept in the trail (escaped, 64 characters, limitation 5); unknown secret-like strings inside it are not guaranteed removed |
-| VI. Client-side DOM redaction | **not applicable** to this feature | The feature accepts no DOM data (spec Out of scope) | Owned by the later UI/redaction feature |
+| VI. Client-side DOM redaction | **not applicable** to this feature | No browser DOM capture or browser-to-model transmission path is delivered (spec Out of scope); raw proposal text is still untrusted | Owned by the later UI/redaction feature |
 | VII. No arbitrary execution capability | satisfied | No `eval`, shell, network or selector capability in production code: `tests/architecture/static-scan.test.ts`, `module-loaders.test.ts`, ESLint rules; FORBIDDEN reserved names (`registry/reserved-names.ts`; `unknown-action.test.ts` ATK-UNKNOWN-02) | A future capability's executor is trusted code; this boundary does not review its body |
-| VIII. Registered typed capabilities | satisfied | `buildRegistry` rules R1 to R12 (`registry.rules.test.ts`), strict schemas, `bindExecutors`; drift test `tests/security/registry-drift.test.ts` | Three demo capabilities only; `@dap/actions` is empty |
+| VIII. Registered typed capabilities | satisfied | Registry validation plus executor/allowlist binding collectively enforce R1 to R12 (`registry.rules.test.ts`, `enablement.test.ts`); R7 and R10 are binding checks, not `buildRegistry` checks; drift test `tests/security/registry-drift.test.ts` | Three demo capabilities only; `@dap/actions` is empty |
 | IX. Backend authorization is authoritative | satisfied | The authorize stage asks the host live; the context carries no permissions; only a literal `true` allows (`gateway/stages/authorize.ts`; ATK-PRIV-01 parity and ATK-PRIV-06; `review-fixes.test.ts` AUTHZ-01) | The host's permission and resource ports are the host's responsibility; the demo ports are fakes (`apps/reference-host/src/host-ports.ts`) |
 | X. No privilege amplification | satisfied | Executors receive the requesting user's own minted context (`execute.ts`; `positive.test.ts` ATK-PRIV-04; `test-world.gateway.test.ts`) | "Delegated authority" at the executor edge is a convention a future executor could break by using a service credential (plan.md attention item 2) |
 | XII. RAG is untrusted data | satisfied for proposal text; retrieval-specific controls not applicable | XII also covers user prompts and tool text: strict intake and literal-string injection tests keep them from granting authority. No retrieval/prompt assembly exists here. Audit may retain allowlisted model-authored values | Retrieval-specific delimiting belongs to a later retrieval feature |
@@ -42,11 +42,11 @@ Principles XVIII and XIX are in section 4.
 
 | Item (constitution "Future Work") | State | Tracked in |
 |-----------------------------------|-------|------------|
-| Distributed rate limiting, denial throttling across replicas | not built | spec "Future Work"; plan.md Remaining Risks 3 (fixed-window limits allow up to twice the limit across a boundary) |
+| Distributed rate limiting, denial throttling across replicas | PostgreSQL shared-counter/block adapters exist; deployed distributed guarantees are not validated | spec "Future Work"; plan.md Remaining Risks 3 (fixed-window limits allow up to twice the limit across a boundary) |
 | Shared-state guarantees across replicas | not tested | spec "Future Work" (FR-036 in full) |
 | Exhaustive attack catalogue; coverage matrices and gate | catalogue partly defined in testkit, run only representatively; gate not built | tasks T126, T127 (FUTURE); [contracts/security-test-catalogue.md](../specs/001-ai-security-foundation/contracts/security-test-catalogue.md) status table |
-| Mutation testing, independent oracles | not built (some oracle code exists) | T128 (FUTURE) |
-| Flood and concurrency stress tests | one bounded in-memory case exists; the PostgreSQL flood is not built | `tests/security/rate-abuse.test.ts` todo (FUTURE) |
+| Automated mutation infrastructure, independent oracles | no automated mutation job; independent oracle implementations and manual QA mutations exist | T128 (FUTURE) |
+| Flood and concurrency stress tests | bounded adapter and in-process concurrency tests exist; the PostgreSQL real-Gateway flood is not built | `tests/security/rate-abuse.test.ts` todo (FUTURE) |
 | 36-case dependency matrix; double-run determinism | definitions exist; runs not built | T123, T121 (FUTURE) |
 | Kubernetes, Prometheus, Grafana, tracing, SIEM | not built | T138, T139 (FUTURE) |
 
@@ -84,7 +84,7 @@ Two honest notes: (a) tasks T081, T107, T108 and T123 have most of their testkit
 
 ## 5. Known limitations
 
-Each item below was checked against code, tests or documents; the pointer shows where.
+Each item below was checked against code, tests or documents; the pointer shows where. Owners follow section 4a: host integration owns 6–9, 12 and 17; operations owns 1–5, 15 and 16; tooling/docs owns 10, 11 and 13; dependency hygiene owns 14. Items 18–20 name their owners explicitly.
 
 1. **Audit commit-acknowledgement window.** If the audit writer gives up while a `COMMIT` is in flight, the outcome is uncertain: an `ALLOWED` row
    may exist for a request that was denied and never executed. The trail then shows `ALLOWED` without `EXECUTED`; EXECUTED failure may describe inability to start or an unknown outcome rather than a body invocation; a best-effort `DENIED` may also exist. Consumers must not infer execution from `ALLOWED` alone. A PostgreSQL write that has not

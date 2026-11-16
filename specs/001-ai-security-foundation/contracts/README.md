@@ -82,6 +82,4 @@ and confirmation, durable audit, grant-checked execution. Before a confirmed ALL
    (`package.json` still lists `npm run coverage:security`, but its target `packages/testkit/dist/cli/coverage.js` does not exist on `dev`, so the script fails; it is not part of M1 or CI).
 6. **Bump `version`** on any later change; the drift test enforces this.
 
-There is no step that adds a generic execution path, and none can be added: general execution
-capabilities are FORBIDDEN by registration rule R7 and by the production static scan
-(`tests/architecture/static-scan.test.ts`).
+Generic execution capabilities are prohibited by the Constitution. Reserved-name registration checks and executor binding reject known forbidden capabilities; the production static scan checks dangerous API usage (`tests/architecture/static-scan.test.ts`). These checks are not a semantic proof of arbitrary trusted executor bodies: later capability authors must still review their authority and effects.

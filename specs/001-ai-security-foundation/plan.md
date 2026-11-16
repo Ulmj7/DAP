@@ -25,7 +25,7 @@ Technical approach (details in [research.md](./research.md)):
   database clock, so controls hold across restarts and replicas.
 - Authentication and authorization are **host-implemented ports**. This feature builds neither.
 - A scripted hostile planner and a focused set of representative security scenarios prove each
-  control with no LLM (Milestone M1, **complete on `dev`**; evidence in [docs/validation-report.md](../../docs/validation-report.md)). The 102-scenario catalogue, the 36-case dependency-failure
+  control with no LLM (Milestone M1, **acceptance criteria evidenced; maintainer sign-off pending**; evidence in [docs/validation-report.md](../../docs/validation-report.md)). The 102-scenario catalogue, the 36-case dependency-failure
   matrix, and mutation testing are Future Work; code already built for them is retained.
 
 The requested pipeline is preserved: *AI Planner, Action Proposal, Schema Validation, Policy
