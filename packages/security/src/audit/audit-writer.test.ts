@@ -2,7 +2,7 @@
  * T088. Each record kind has its own failure semantics; every append is guarded; retries reuse the event so an idempotent sink
  * never holds two rows; and nothing here ever throws or lets a sink fault change a decision.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AuditEvent, AuditSink } from "@dap/contracts";
 import type { HookTimer } from "../gateway/hook-wrapper.js";
 import type { GatewayTelemetry } from "../gateway/telemetry.js";
@@ -276,6 +276,28 @@ describe("the abandonment signal: an append the writer gave up on is told so, an
     expect(await createAuditWriter({ sink }).recordAllowedDurably(allowed())).toEqual({ ok: false, reason: "audit_unavailable" });
     expect(calls[0]!.options!.signal!.aborted).toBe(true);
   });
+  it("aborts a created attempt even when hook setup throws through the outer catch", async () => {
+    const Native = AbortController;
+    const controllers: AbortController[] = [];
+    const append = vi.fn(async () => undefined);
+    const writer = createAuditWriter({ sink: { append } });
+    vi.spyOn(globalThis, "AbortController").mockImplementation(function () { const controller = new Native(); controllers.push(controller); return controller; });
+    vi.spyOn(Math, "min").mockImplementationOnce(() => { throw new Error("setup failed"); });
+    try {
+      expect(await writer.recordAllowedDurably(allowed())).toEqual({ ok: false, reason: "audit_unavailable" });
+      expect(append).not.toHaveBeenCalled();
+      expect(controllers).toHaveLength(1);
+      expect(controllers[0]!.signal.aborted).toBe(true);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it("a spent budget creates no controller or options and never calls the sink", async () => {
+    const controller = vi.spyOn(globalThis, "AbortController");
+    const append = vi.fn(async () => undefined);
+    try {
+      expect(await createAuditWriter({ sink: { append } }).recordAllowedDurably(allowed(), { remainingMs: () => 0 })).toEqual({ ok: false, reason: "audit_unavailable" });
+      expect(controller).not.toHaveBeenCalled(); expect(append).not.toHaveBeenCalled();
+    } finally { vi.restoreAllMocks(); }
+  });
   it("a sink that ignores the second argument works exactly as before", async () => {
     const store = new InMemoryAuditStore();
     const ignoring: AuditSink = { append: async (event) => { await store.append(event); } };
@@ -291,6 +313,7 @@ describe("the abandonment signal: an append the writer gave up on is told so, an
     expect(await pending).toEqual({ ok: true });
     expect(calls).toHaveLength(2);
     expect(calls[0]!.event).toBe(calls[1]!.event);
+    expect(calls[0]!.options).not.toBe(calls[1]!.options);
     expect(calls[0]!.options!.signal).not.toBe(calls[1]!.options!.signal);
     expect([calls[0]!.options!.signal!.aborted, calls[1]!.options!.signal!.aborted]).toEqual([true, false]);
     expect(store.size).toBe(1);

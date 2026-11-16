@@ -72,9 +72,14 @@ export function createAuditWriter(
         if (!(left >= 1)) return false;
         // One signal per attempt: a sink that is still working when the writer gives up is told so, and must then not commit.
         const controller = new AbortController();
-        const committed = await wrapHook((candidate: AuditEvent) => Reflect.apply(append, sink, [candidate, { signal: controller.signal }]), "void", { hookTimeoutMs: Math.min(hookTimeoutMs, left), ...(timer === undefined ? {} : { timer }) })(event);
-        if (committed.ok) return true;
-        controller.abort();
+        let confirmed = false;
+        try {
+          const committed = await wrapHook((candidate: AuditEvent) => Reflect.apply(append, sink, [candidate, { signal: controller.signal }]), "void", { hookTimeoutMs: Math.min(hookTimeoutMs, left), ...(timer === undefined ? {} : { timer }) })(event);
+          confirmed = committed.ok;
+          if (confirmed) return true;
+        } finally {
+          if (!confirmed) controller.abort();
+        }
       }
       return false;
     } catch { return false; }
