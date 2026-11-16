@@ -1,85 +1,38 @@
-/**
- * The overlay: a highlight ring over a target plus a tooltip card. Every piece of text is set with `textContent` (never as markup).
- * `hide()` removes every node and listener it created. The controls only call back; there is no engine yet.
- */
+/** Presentation only. The legacy text form remains available; content form is a non-modal region. */
 import { ATTR_IGNORE } from "../privacy/privacy.js";
 import type { TargetHandle } from "./targets.js";
-
-export interface OverlayCallbacks {
-  /** "Got it" was pressed (the overlay has already hidden itself). */
-  readonly onAck?: () => void;
-  /** "Cancel" was pressed (the overlay has already hidden itself). */
-  readonly onCancel?: () => void;
-}
-export interface Overlay {
-  show(target: TargetHandle, text: string, callbacks?: OverlayCallbacks): void;
-  hide(): void;
-  isShowing(): boolean;
-}
-
-const Z = "2147483000";
-
-export function createOverlay(doc: Document): Overlay {
-  let nodes: { readonly ring: HTMLElement; readonly card: HTMLElement } | null = null;
-  let cleanup: (() => void) | null = null;
-
-  const hide = (): void => {
-    cleanup?.();
-    cleanup = null;
-    nodes?.ring.remove();
-    nodes?.card.remove();
-    nodes = null;
-  };
-
-  const show = (target: TargetHandle, text: string, callbacks: OverlayCallbacks = {}): void => {
-    hide();
-    const view = doc.defaultView;
-    if (view === null || doc.body === null) return;
-    target.reveal();
-
-    const ring = doc.createElement("div");
-    ring.setAttribute("data-ai-overlay", "ring");
-    ring.setAttribute(ATTR_IGNORE, "");
-    ring.setAttribute("aria-hidden", "true");
-    Object.assign(ring.style, { position: "fixed", boxSizing: "border-box", border: "3px solid #f59e0b", borderRadius: "6px", boxShadow: "0 0 0 4px rgba(245,158,11,0.35)", pointerEvents: "none", zIndex: Z });
-
-    const card = doc.createElement("div");
-    card.setAttribute("data-ai-overlay", "tooltip");
-    card.setAttribute(ATTR_IGNORE, "");
-    card.setAttribute("role", "dialog");
-    card.setAttribute("aria-live", "polite");
-    card.setAttribute("aria-label", "Guidance");
-    Object.assign(card.style, { position: "fixed", maxWidth: "280px", padding: "12px", background: "#1f2937", color: "#fff", borderRadius: "8px", font: "14px/1.4 system-ui, sans-serif", boxShadow: "0 6px 20px rgba(0,0,0,0.3)", zIndex: Z });
-
-    const message = doc.createElement("p");
-    message.style.margin = "0 0 8px";
-    message.textContent = text;
-    const controls = doc.createElement("div");
-    const makeButton = (label: string, kind: string, done: (() => void) | undefined): HTMLButtonElement => {
-      const button = doc.createElement("button");
-      button.type = "button";
-      button.setAttribute("data-ai-overlay", kind);
-      button.textContent = label;
-      button.style.marginRight = "8px";
-      button.addEventListener("click", () => { hide(); done?.(); });
-      return button;
-    };
-    controls.append(makeButton("Got it", "ack", callbacks.onAck), makeButton("Cancel", "cancel", callbacks.onCancel));
-    card.append(message, controls);
-    doc.body.append(ring, card);
-    nodes = { ring, card };
-
-    const place = (): void => {
-      const rect = target.rect();
-      Object.assign(ring.style, { left: `${rect.left - 4}px`, top: `${rect.top - 4}px`, width: `${rect.width + 8}px`, height: `${rect.height + 8}px` });
-      const left = Math.max(8, Math.min(rect.left, view.innerWidth - 296));
-      Object.assign(card.style, { left: `${left}px`, top: `${rect.bottom + 12}px` });
-    };
-    place();
-    view.addEventListener("scroll", place, true);
-    view.addEventListener("resize", place);
-    cleanup = () => { view.removeEventListener("scroll", place, true); view.removeEventListener("resize", place); };
-  };
-
-  return Object.freeze({ show, hide, isShowing: () => nodes !== null });
+import { placeCard } from "./placement.js";
+export interface OverlayCallbacks {readonly onAck?:()=>void;readonly onCancel?:()=>void}
+export interface OverlayContent {readonly title:string;readonly text:string;readonly progress?:string;readonly hint?:string;readonly status?:string;readonly ack?:boolean;readonly ackDisabled?:boolean;readonly ackLabel?:string;readonly cancelLabel?:string;readonly escapeHint?:string}
+export interface Overlay {show(target:TargetHandle|null,content:string|OverlayContent,callbacks?:OverlayCallbacks):void;hide():void;isShowing():boolean;update(content:Partial<OverlayContent>):void;reposition():void}
+let serial=0;
+export function createOverlay(doc:Document):Overlay {
+ let cleanup:(()=>void)|null=null;let card:HTMLElement|null=null;let ring:HTMLElement|null=null;let scrim:HTMLElement|null=null;let content:OverlayContent|null=null;let update:()=>void=()=>{};let place:()=>void=()=>{};
+ const hide=()=>{cleanup?.();cleanup=null;card?.remove();ring?.remove();scrim?.remove();card=null;ring=null;scrim=null;content=null;place=()=>{};update=()=>{};};
+ const node=(tag:string,kind:string)=>{const el=doc.createElement(tag);el.setAttribute("data-ai-overlay",kind);el.setAttribute(ATTR_IGNORE,"");return el;};
+ return Object.freeze({hide,isShowing:()=>card!==null,update(patch:Partial<OverlayContent>){if(content){content={...content,...patch};update();place();}},reposition:()=>place(),
+ show(target:TargetHandle|null,value:string|OverlayContent,callbacks:OverlayCallbacks={}) {
+  hide();const view=doc.defaultView;if(!view||!doc.body)return;const legacy=typeof value==="string";
+  content=legacy?{title:"Guidance",text:value,ack:true}:value;
+  if(target)target.reveal();
+  if(target){ring=node("div","ring");ring.className="dap-guide-ring";ring.setAttribute("aria-hidden","true");Object.assign(ring.style,{position:"fixed",boxSizing:"border-box",pointerEvents:"none",zIndex:"2147483000",border:"var(--guide-outline)",borderRadius:"var(--radius-control)",boxShadow:"0 0 0 100vmax var(--dap-scrim)"});doc.body.append(ring);}
+  else{scrim=node("div","scrim");scrim.className="dap-guide-scrim";scrim.setAttribute("aria-hidden","true");doc.body.append(scrim);}
+  card=node("section","tooltip");card.className="dap-guide-card";card.setAttribute("role",legacy?"dialog":"region");card.setAttribute("aria-live","polite");card.style.position="fixed";card.style.zIndex="2147483001";
+  const title=node("h2","title");title.id=`dap-guide-${++serial}`;card.setAttribute("aria-labelledby",title.id);
+  const progress=node("p","progress"),message=node("p","message"),hint=node("p","hint"),status=node("p","status"),escape=node("p","escape"),controls=node("div","controls");
+  status.setAttribute("role","status");const ack=node("button","ack") as HTMLButtonElement;const cancel=node("button","cancel") as HTMLButtonElement;ack.type="button";cancel.type="button";ack.className="button primary";cancel.className="button";
+  ack.addEventListener("click",()=>{if(legacy)hide();callbacks.onAck?.();});cancel.addEventListener("click",()=>{if(legacy)hide();callbacks.onCancel?.();});
+  controls.append(ack,cancel);if(legacy)card.append(title,message,progress,hint,status,escape,controls);else card.append(title,progress,message,hint,status,escape,controls);doc.body.append(card);
+  update=()=>{if(!content)return;title.textContent=content.title;message.textContent=content.text;progress.textContent=content.progress??"";hint.textContent=content.hint??"";status.textContent=content.status??"";escape.textContent=content.escapeHint??"";ack.textContent=content.ackLabel??"Got it";cancel.textContent=content.cancelLabel??"Cancel";ack.hidden=content.ack!==true;ack.disabled=content.ackDisabled===true;};update();
+  place=()=>{
+   if(!card)return;
+   if(target){const el=target.element;let visible=el.isConnected;for(let n:Element|null=el;n;n=n.parentElement){if(n.hasAttribute("hidden")||n.hasAttribute("inert")||n.getAttribute("aria-hidden")==="true"||view.getComputedStyle(n).display==="none")visible=false;}if(view.getComputedStyle(el).visibility==="hidden")visible=false;if(!visible){hide();return;}}
+   const rect=target?.rect()??{left:view.innerWidth/2,top:0,width:0,height:0};
+   if(ring)Object.assign(ring.style,{left:`${rect.left-4}px`,top:`${rect.top-4}px`,width:`${rect.width+8}px`,height:`${rect.height+8}px`});
+   const measured=card.getBoundingClientRect();const position=placeCard({target:rect,card:{width:measured.width||320,height:measured.height||240},viewport:{width:view.innerWidth,height:view.innerHeight}});
+   Object.assign(card.style,{left:`${position.left}px`,top:`${position.top}px`});card.setAttribute("data-placement",position.placement);
+  };place();view.addEventListener("scroll",place,true);view.addEventListener("resize",place);
+  const reposition=place;cleanup=()=>{view.removeEventListener("scroll",reposition,true);view.removeEventListener("resize",reposition);};
+ }
+ });
 }
