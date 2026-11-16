@@ -157,12 +157,23 @@ describe("Scenario C: ambiguity gives clarify, never a start", () => {
   });
 });
 
+describe("selection: ids with - and _ follow Feature 002's grammar", () => {
+  it("a catalog id such as find-security or find_two_factor is accepted and can be proposed and started", async () => {
+    const catalog: SafeWalkthroughSummary[] = [
+      { id: "find-security", title: "Find the security panel", description: "Open the settings page and locate the security panel." },
+      { id: "find_two_factor", title: "Find the two-factor option", description: "Open the settings page and locate the two-factor option." },
+    ];
+    expect(await ask(model(() => ({ kind: "start_walkthrough", walkthroughId: "find-security" })).model, "Where is the security panel?", { catalog: { list: () => catalog } })).toEqual({ kind: "walkthrough", walkthroughId: "find-security" });
+    expect(await ask(model(() => ({ kind: "start_walkthrough", walkthroughId: "find_two_factor" })).model, "Where is the two-factor option?", { catalog: { list: () => catalog } })).toEqual({ kind: "walkthrough", walkthroughId: "find_two_factor" });
+  });
+});
+
 describe("selection: unknown, plausible and hostile ids", () => {
   it.each(["adminTakeover", "invoiceexport", "findPrivacySetting", "adminWalkthrough"])("the unknown id %s -> unsupported(unknown_walkthrough)", async (id) => {
     expect(await ask(model(() => ({ kind: "start_walkthrough", walkthroughId: id })).model, "Start the admin walkthrough.")).toMatchObject({ kind: "unsupported", reason: "unknown_walkthrough" });
   });
   it("ids the decision schema refuses (whitespace, __proto__, constructor) never reach selection: invalid_model_output", async () => {
-    for (const id of [" invoiceExport", "invoiceExport ", "__proto__", "constructor", "invoice-export", "", "invoiceExport\n"]) {
+    for (const id of [" invoiceExport", "invoiceExport ", "__proto__", "constructor", "invoice.export", "1invoice", "-invoice", "_invoice", "", "invoiceExport\n"]) {
       expect(await ask(model(() => ({ kind: "start_walkthrough", walkthroughId: id })).model, "How do I export my invoices?")).toMatchObject({ kind: "unsupported", reason: "invalid_model_output" });
     }
   });
@@ -289,7 +300,7 @@ describe("exactly one model call per request, and none for an invalid request", 
 describe("the catalog is a host port: it is validated", () => {
   const cases: readonly [string, () => unknown][] = [
     ["a throw", () => { throw new Error(SECRET); }], ["null", () => null], ["a string", () => "x"], ["an object", () => ({ length: 0 })],
-    ["a summary with an extra key", () => [{ ...EXPORT, steps: [] }]], ["a summary with markup", () => [{ ...EXPORT, title: "<b>x</b>" }]], ["a bad id", () => [{ ...EXPORT, id: "invoice-export" }]],
+    ["a summary with an extra key", () => [{ ...EXPORT, steps: [] }]], ["a summary with markup", () => [{ ...EXPORT, title: "<b>x</b>" }]], ["a bad id", () => [{ ...EXPORT, id: "invoice export" }]], ["a leading digit id", () => [{ ...EXPORT, id: "1invoice" }]],
     ["a reserved id", () => [{ ...EXPORT, id: "constructor" }]], ["duplicate ids", () => [EXPORT, { ...EXPORT, title: "Other" }]], ["101 summaries", () => Array.from({ length: 101 }, (_v, i) => ({ id: `t${i}`, title: "T", description: "D" }))],
     ["a getter", () => [{ id: "invoiceExport", title: "T", get description() { return "D"; } }]],
   ];

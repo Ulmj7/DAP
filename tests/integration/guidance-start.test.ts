@@ -77,9 +77,9 @@ function fakeModel(behaviour: (request: GuidanceModelRequest) => unknown) {
 }
 const propose = (walkthroughId: unknown) => () => ({ kind: "start_walkthrough", walkthroughId });
 /** The Slice 4 composition in miniature: ask the service; only an accepted proposal goes to the bridge. */
-async function ask(session: AiSession, query: string, behaviour: (request: GuidanceModelRequest) => unknown, over: { retriever?: typeof retriever } = {}) {
+async function ask(session: AiSession, query: string, behaviour: (request: GuidanceModelRequest) => unknown, over: { retriever?: typeof retriever; catalog?: WalkthroughCatalogView } = {}) {
   const m = fakeModel(behaviour);
-  const service = createGuidanceService({ model: m.model, catalog: demoCatalogView, retriever: over.retriever ?? retriever, timers: { set: () => () => undefined }, sanitizeQuery: (raw) => (typeof raw === "string" ? scrubText(raw) : null) });
+  const service = createGuidanceService({ model: m.model, catalog: over.catalog ?? demoCatalogView, retriever: over.retriever ?? retriever, timers: { set: () => () => undefined }, sanitizeQuery: (raw) => (typeof raw === "string" ? scrubText(raw) : null) });
   const result: GuidanceResult = await service.askGuidance({ query, semanticContext: context });
   const wrapped = counting(session);
   const final = result.kind === "walkthrough" ? await submitWalkthroughStart(wrapped.session, result.walkthroughId) : result;
@@ -115,6 +115,18 @@ describe("Scenario A: 'How do I change my profile name?' through the real Gatewa
     await ask(session, "How do I find two-factor authentication settings?", propose("findTwoFactorSettings"));
     await ask(session, "Where is the security panel?", propose("findSecuritySettings"));
     expect(run.startCalls).toEqual(["findTwoFactorSettings", "findSecuritySettings"]);
+  });
+});
+
+describe("a host catalog id with a hyphen (Feature 002's grammar) goes end to end", () => {
+  it("find-security: service accepts -> bridge -> ALLOWED -> the executor re-validates against the same host catalog -> the starter is called once", async () => {
+    const catalog = createCatalogView([{ id: "find-security", title: "Find the security panel", description: "Open the settings page and locate the security panel." }]);
+    const run = await start({ executorCatalog: catalog });
+    const out = await ask(await run.open("alice"), "Where is the security panel?", propose("find-security"), { catalog });
+    expect(out.result).toEqual({ kind: "walkthrough", walkthroughId: "find-security" });
+    expect(out.final).toEqual({ kind: "walkthrough", walkthroughId: "find-security" });
+    expect(run.startCalls).toEqual(["find-security"]);
+    expect(run.guidance.trusted.receivedParams()).toEqual([{ walkthroughId: "find-security" }]);
   });
 });
 

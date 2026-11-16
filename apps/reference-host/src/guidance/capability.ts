@@ -16,7 +16,7 @@
 import { z } from "zod";
 import { defineAction, defineExecutor } from "@dap/contracts";
 import type { ActionDefinition, ActionExecutor, ActionId, ExecutorId, PermissionId } from "@dap/contracts";
-import { parseCatalogSummaries, validateProposedWalkthrough } from "@dap/ai";
+import { WALKTHROUGH_ID, parseCatalogSummaries, validateProposedWalkthrough } from "@dap/ai";
 import type { WalkthroughCatalogView } from "@dap/ai";
 import type { HostExtension } from "../compose.js";
 
@@ -29,8 +29,7 @@ export const START_WALKTHROUGH_ACTION_ID = "startWalkthrough";
 export const START_WALKTHROUGH_PERMISSION = "perm.guidance.start";
 export const START_WALKTHROUGH_EXECUTOR_ID = "ex.guidance-start-walkthrough";
 
-/** Feature 002's id grammar, minus the names that are never ids. */
-export const WALKTHROUGH_ID = /^[a-zA-Z][A-Za-z0-9_-]{0,63}$/;
+/** The id grammar is the AI package's `WALKTHROUGH_ID` (= Feature 002's); the names that are never ids are refused on top. */
 const RESERVED = new Set(["__proto__", "constructor", "prototype", "toString", "hasOwnProperty", "valueOf"]);
 
 export const startWalkthrough: ActionDefinition<{ readonly walkthroughId: string }> = defineAction({

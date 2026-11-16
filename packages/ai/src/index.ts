@@ -17,6 +17,7 @@ export { toProposalCall } from "./tool-call.js";
 // Feature 003 guidance contract (Slice 1): a structured request to the GuidanceModel port, untrusted output, strict validation, closed results.
 // Nothing here can carry authority: no context, token, executor, Gateway internals or walkthrough definition.
 export * from "./guidance/limits.js";
+export { WALKTHROUGH_ID } from "./guidance/text.js";
 export { GUIDANCE_REASONS } from "./guidance/types.js";
 export type {
   Cancel, GuidanceDecision, GuidanceInput, GuidanceModel, GuidanceModelRequest, GuidanceReason, GuidanceResult, GuidanceSource, GuidanceTimers,

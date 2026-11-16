@@ -111,7 +111,7 @@ describe("Scenario: 'Start the admin walkthrough.'", () => {
 describe("negative and security cases over the real host list", () => {
   it.each([
     ["adminTakeover", "unknown_walkthrough"], ["profileupdate", "unknown_walkthrough"], ["PROFILEUPDATE", "unknown_walkthrough"], ["profileUpdate2", "unknown_walkthrough"],
-    [" profileUpdate", "invalid_model_output"], ["profileUpdate ", "invalid_model_output"], ["__proto__", "invalid_model_output"], ["constructor", "invalid_model_output"], ["profile-update", "invalid_model_output"], ["", "invalid_model_output"],
+    [" profileUpdate", "invalid_model_output"], ["profileUpdate ", "invalid_model_output"], ["__proto__", "invalid_model_output"], ["constructor", "invalid_model_output"], ["profile-update", "unknown_walkthrough"], ["profile.update", "invalid_model_output"], ["1profile", "invalid_model_output"], ["_profile", "invalid_model_output"], ["", "invalid_model_output"],
   ])("a plausible but wrong id %j -> %s, and nothing is submitted", async (id, reason) => {
     const out = await run("How do I change my profile name?", propose(id));
     expect(out.result).toMatchObject({ kind: "unsupported", reason });

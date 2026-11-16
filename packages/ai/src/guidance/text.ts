@@ -5,7 +5,8 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u20
 const MARKUP = /[<>&"'`]/;
 export const RESERVED_NAMES: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype", "toString", "hasOwnProperty", "valueOf"]);
 
-export const WALKTHROUGH_ID = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
+/** EXACTLY Feature 002's `ID_GRAMMAR` (packages/walkthrough/src/walkthrough/catalog.ts). The ONE Feature 003 definition: schemas, catalog parse, host capability and bridge all use it. */
+export const WALKTHROUGH_ID = /^[a-zA-Z][A-Za-z0-9_-]{0,63}$/;
 export const SOURCE_ID = /^[A-Za-z0-9._-]{1,64}$/;
 export const ELEMENT_ID = /^[a-z][A-Za-z0-9]*(\.[A-Za-z0-9]+)+$/;
 export const ROUTE = /^[a-z][A-Za-z0-9-]*$/;

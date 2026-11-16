@@ -7,7 +7,7 @@
  * schema refused the empty route. The AI-side mirror was fixed (Feature 002 is untouched).
  */
 import { describe, expect, it } from "vitest";
-import { parseSemanticContextInput } from "../../packages/ai/src/index.js";
+import { WALKTHROUGH_ID, parseCatalogSummaries, parseSemanticContextInput } from "../../packages/ai/src/index.js";
 import { createSemanticRegistry, createWalkthroughCatalog, createWalkthroughRuntime, defineWalkthrough } from "../../packages/walkthrough/src/index.js";
 import type { SemanticElementDef, TargetAvailability } from "../../packages/walkthrough/src/index.js";
 import type { WalkthroughStarter } from "../../apps/reference-host/src/guidance/capability.js";
@@ -94,5 +94,31 @@ describe("the host's structural WalkthroughStarter adapts Feature 002's runtime 
     expect(starter.start("adminTakeover")).toEqual({ ok: false, reason: "unknown_walkthrough" });
     expect(starter.start("__proto__")).toMatchObject({ ok: false });
     runtime.cancel();
+  });
+});
+
+describe("the AI walkthrough id grammar agrees with the REAL catalog (Feature 002's ID_GRAMMAR)", () => {
+  const registry = createSemanticRegistry({ routes: ROUTES, elements: ELEMENTS });
+  const defOf = (id: string) => defineWalkthrough({
+    id, title: `Title of ${id.slice(0, 20)}`, description: "A walkthrough used to probe the id grammar", start: "a1",
+    steps: [{ id: "a1", kind: "navigate", route: "profile", next: "adone" }, { id: "adone", kind: "complete", text: "Done." }],
+  });
+  const realAccepts = (id: string): boolean => { try { createWalkthroughCatalog(registry, [], [defOf(id)]); return true; } catch { return false; } };
+  const SAMPLE = [
+    "profileUpdate", "find-security", "find_two_factor", "a", "Z", "a-", "a_", "a1-b_2", "a".repeat(64), "a".repeat(65), "1abc", "_abc", "-abc", " abc", "abc ", "ab c", "abc\n",
+    "a.b", "a/b", "a:b", "caf\u00e9", "\u0430bc", "\uff41bc", "abc\u200b", "a\u2010b", "", "__proto__", "constructor", "prototype", "toString", "hasOwnProperty", "valueOf",
+  ];
+  const RESERVED = new Set(["__proto__", "constructor", "prototype", "toString", "hasOwnProperty", "valueOf"]);
+  it.each(SAMPLE)("the AI grammar and the real catalog agree on %j", (id) => {
+    expect(WALKTHROUGH_ID.test(id) && !RESERVED.has(id)).toBe(realAccepts(id));
+  });
+  it("the real catalog accepts find-security, find_two_factor and a 64-character id, and the AI catalog parse accepts its list()", () => {
+    const ids = ["find-security", "find_two_factor", "a".repeat(64)];
+    const catalog = createWalkthroughCatalog(registry, [], ids.map(defOf));
+    const parsed = parseCatalogSummaries(catalog.list());
+    expect(parsed?.map((s) => s.id)).toEqual(ids);
+  });
+  it("an id the real catalog refuses (65 characters, a leading digit) is refused by the AI grammar too", () => {
+    for (const id of ["a".repeat(65), "1profile"]) { expect(realAccepts(id)).toBe(false); expect(WALKTHROUGH_ID.test(id)).toBe(false); }
   });
 });

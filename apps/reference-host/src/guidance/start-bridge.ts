@@ -12,10 +12,10 @@
  *   anything else (including ALLOWED with `try_later`, which means the executor failed and NOTHING started) -> `unsupported(unavailable)`
  */
 import { randomUUID } from "node:crypto";
-import { unsupportedResult } from "@dap/ai";
+import { WALKTHROUGH_ID, unsupportedResult } from "@dap/ai";
 import type { GuidanceResult } from "@dap/ai";
 import type { AiSession } from "../compose.js";
-import { START_WALKTHROUGH_ACTION_ID, WALKTHROUGH_ID } from "./capability.js";
+import { START_WALKTHROUGH_ACTION_ID } from "./capability.js";
 
 export async function submitWalkthroughStart(session: AiSession, walkthroughId: string): Promise<GuidanceResult> {
   if (typeof walkthroughId !== "string" || !WALKTHROUGH_ID.test(walkthroughId)) return unsupportedResult("unknown_walkthrough");
