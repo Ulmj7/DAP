@@ -3,7 +3,7 @@
  * mint and deep-import edges in every import form) and module-loaders.test.ts / static-scan.test.ts (eval, Function, module loaders).
  *
  * 1. The real repository's graph has no violation, and the rule set has not lost a rule.
- * 2. Every workspace manifest declares exactly the @dap edges plan.md allows.
+ * 2. Every workspace manifest declares exactly the @dap edges plan.md allows (the reference host, a production composition root, does not declare the testkit).
  * 3. In a disposable workspace, each forbidden edge is a violation of the rule that names it, each allowed edge is none, and a cycle is one.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const cruiseBin = path.join(ROOT, "node_modules/dependency-cruiser/bin/dependency-cruiser.mjs");
 
-interface Graph { modules: { source: string; dependencies: { couldNotResolve: boolean; resolved: string }[] }[]; summary: { violations: { from: string; to: string; rule: { name: string } }[] } }
+interface Graph { modules: { source: string; dependencies: { couldNotResolve: boolean; resolved: string; module?: string }[] }[]; summary: { violations: { from: string; to: string; rule: { name: string } }[] } }
 function cruise(cwd: string): Graph {
   const result = spawnSync(process.execPath, [cruiseBin, "--config", "dependency-cruiser.config.cjs", "--output-type", "json", "packages", "apps"], { cwd, encoding: "utf8", timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
   expect(result.error).toBeUndefined();
@@ -63,7 +63,7 @@ const ALLOWED_MANIFEST_EDGES: Readonly<Record<string, readonly string[]>> = {
   "packages/actions": ["@dap/contracts"],
   "packages/security": ["@dap/contracts"],
   "packages/testkit": ["@dap/contracts", "@dap/security", "@dap/ai"],
-  "apps/reference-host": ["@dap/contracts", "@dap/ai", "@dap/actions", "@dap/security", "@dap/testkit"],
+  "apps/reference-host": ["@dap/contracts", "@dap/ai", "@dap/actions", "@dap/security"],
 };
 const RULES = ["ai-not-to-security-or-actions", "actions-not-to-ai-or-security", "security-not-to-ai-or-actions", "contracts-leaf", "testkit-allowed-edges", "production-not-to-testkit", "nothing-imports-apps", "no-deep-imports-into-contracts", "mint-entry-restricted", "no-runtime-module-loaders", "no-circular"];
 
@@ -120,6 +120,68 @@ describe("the AI layer has no path to executors, the mint entry or the Gateway's
     planted.modules[1]!.dependencies.push({ couldNotResolve: false, resolved: "packages/security/src/gateway/create-gateway.ts" });
     planted.modules.push({ source: "packages/security/src/gateway/create-gateway.ts", dependencies: [] });
     expect(outsideAiBoundary(reachableFrom(planted, "packages/ai/"))).toEqual([MINT_ENTRY, "packages/security/src/gateway/create-gateway.ts"]);
+  });
+});
+
+/** The reference host (T131, T136): a production composition root. */
+const APP = "apps/reference-host/";
+/** Edges the host must never have: test infrastructure, the mint entry, and the database driver (pools come from @dap/security). */
+function forbiddenAppEdges(graph: Graph): string[] {
+  return graph.modules.filter((module) => module.source.startsWith(APP)).flatMap((module) => module.dependencies
+    .filter((dependency) => dependency.resolved.startsWith("packages/testkit/") || dependency.module === "@dap/testkit" || dependency.resolved === MINT_ENTRY || dependency.module === "pg" || dependency.module?.startsWith("pg/") === true || dependency.resolved.startsWith("node_modules/pg/"))
+    .map((dependency) => `${module.source} -> ${dependency.module ?? dependency.resolved}`));
+}
+/** The app modules that import a package, by their resolved edge into it. */
+const appImportersOf = (graph: Graph, prefix: string): string[] => graph.modules.filter((module) => module.source.startsWith(APP) && module.dependencies.some((dependency) => dependency.resolved.startsWith(prefix))).map((module) => module.source).sort();
+
+/** The exported names of a module, and the property names of an exported type, as the TypeScript checker sees them. */
+function surface(file: string): { exports: string[]; members: (name: string) => string[] } {
+  const program = ts.createProgram([file], { module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, target: ts.ScriptTarget.ES2022, skipLibCheck: true, types: [], customConditions: ["@dap/source"] });
+  const checker = program.getTypeChecker();
+  const source = program.getSourceFile(file);
+  const module = source && checker.getSymbolAtLocation(source);
+  if (!module) throw new Error("The surface of the reference host was not resolved");
+  const exported = checker.getExportsOfModule(module);
+  return {
+    exports: exported.map((symbol) => symbol.name).sort(),
+    members: (name) => {
+      const symbol = exported.find((candidate) => candidate.name === name);
+      if (!symbol) throw new Error(`${name} is not exported`);
+      const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+      return checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(target)).map((property) => property.name).sort();
+    },
+  };
+}
+
+describe("the reference host (T131, T136): its AI-facing handle is a submit function and nothing else", () => {
+  const graph = cruise(ROOT);
+  it("has modules in the graph, and no edge into the testkit, the mint entry or the database driver", () => {
+    expect(graph.modules.filter((module) => module.source.startsWith(APP)).length, "the check is not vacuous").toBeGreaterThan(5);
+    expect(forbiddenAppEdges(graph)).toEqual([]);
+  });
+  it("is proven able to fail: a planted host -> testkit, host -> mint and host -> pg edge are each reported", () => {
+    const planted: Graph = { summary: { violations: [] }, modules: [{ source: `${APP}src/a.ts`, dependencies: [
+      { couldNotResolve: false, resolved: "packages/testkit/src/world.ts", module: "@dap/testkit" }, { couldNotResolve: false, resolved: MINT_ENTRY, module: "@dap/contracts/mint" }, { couldNotResolve: false, resolved: "node_modules/pg/lib/index.js", module: "pg" },
+      { couldNotResolve: false, resolved: "packages/security/src/index.ts", module: "@dap/security" } ] }] };
+    expect(forbiddenAppEdges(planted)).toHaveLength(3);
+  });
+  it("wires the trusted pieces in the composition root alone: only compose.ts (and config.ts, for the default limits) import the security package, only compose.ts imports the AI package, nothing imports the actions package", () => {
+    expect(appImportersOf(graph, "packages/security/")).toEqual([`${APP}src/compose.ts`, `${APP}src/config.ts`]);
+    expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`]);
+    expect(appImportersOf(graph, "packages/actions/")).toEqual([]);
+  });
+  it("nothing reaches the host from the AI layer (the transitive walk above already excludes apps/): the AI layer is handed the submit function and cannot name the host", () => {
+    expect([...reachableFrom(graph, "packages/ai/")].filter((source) => source.startsWith("apps/"))).toEqual([]);
+  });
+  const host = surface(path.join(ROOT, "apps/reference-host/src/index.ts"));
+  it("the host's public exports are exactly the composition function, the configuration and dev-auth entry points and the demo's trusted-view types: no registry, executor table, store, pool, audit reader, mint API or confirmation service", () => {
+    expect(host.exports).toEqual(["AiSession", "ComposedHost", "ConfigError", "DEMO_ACTION_IDS", "DevAuthError", "DevSession", "Effect", "Environment", "HostConfig", "ReceivedCall", "ReferenceHost", "TrustedHandle", "composeReferenceHost", "loadConfig"]);
+  });
+  it("the type the AI layer receives has exactly one member, `submit`; the host side has exactly openSession and close; the trusted view and the composition result are separate objects", () => {
+    expect(host.members("AiSession")).toEqual(["submit"]);
+    expect(host.members("ReferenceHost")).toEqual(["close", "openSession"]);
+    expect(host.members("TrustedHandle")).toEqual(["effects", "executorCalls", "receivedCalls"]);
+    expect(host.members("ComposedHost")).toEqual(["host", "trusted"]);
   });
 });
 
