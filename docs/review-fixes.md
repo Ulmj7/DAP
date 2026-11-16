@@ -26,7 +26,11 @@ Event-builder properties permit NULL for empty attempted names, matching the dat
 ALLOWED is a policy decision, not proof that a side effect happened. An authorized attempt
 that cannot start or whose result is unknown reports execution failure/try_later. Known success
 keeps success/ok even if result recording fails. Result recording remains best effort and bounded;
-a missing EXECUTED row can still require operator investigation. These repairs do not provide
+a missing EXECUTED row can still require operator investigation. Proposal and non-ALLOW
+decision writes also retain their existing best-effort semantics: a selectively failing sink
+can leave an ALLOWED record without its PROPOSED record. Complete trails are asserted with
+healthy storage; this repair does not guarantee persistence of every event during outages.
+These repairs do not provide
 exactly-once side effects or cancellation of a running trusted executor after timeout.
 
 The PostgreSQL abort signal, rollback checks and database timeouts from 82ac929 are unchanged.
