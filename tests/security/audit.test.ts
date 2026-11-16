@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { buildAuditEvent } from "../../packages/security/src/audit/event-builder.js";
 import type { AuditEvent, AuditEventType } from "@dap/contracts";
+import { createPolicyGateway } from "@dap/security";
 import { ALICE, WIDE_GATEWAY_CONFIG, auditScenarios, verifyProjection, withGateway } from "@dap/testkit";
 import type { AuditObservation, WorldUser } from "@dap/testkit";
 
@@ -137,7 +138,7 @@ describe("ATK-AUDIT-01..05 against the REAL gateway, through withGateway() (T071
     const observation = await scenario(id).run(target);
     expect(scenario(id).verify(observation)).toEqual([]);
     expect(observation.feedback.length).toBeGreaterThan(0);
-    if (id === "ATK-AUDIT-01") expect(world.executorCalls()).toBe(0); // the zero is the oracle's, not a world that denies everything: AUDIT-03 and 04 execute on the same world
+    if (id === "ATK-AUDIT-01") expect(world.executorCalls()).toBe(0); // the same fixture configuration executes with a healthy sink in AUDIT-03 and 04
     if (id === "ATK-AUDIT-03" || id === "ATK-AUDIT-04") expect(world.executorCalls()).toBeGreaterThan(0);
   });
   it("the oracles are not vacuous here: a healthy sink makes ATK-AUDIT-01's expectation false, because the action then runs", async () => {
@@ -154,4 +155,16 @@ it("the audit builder independently normalizes an empty attempted action to null
   const { context, run } = await world.submitterFor(A_ALICE);
   const record = buildAuditEvent({ type: "AI_ACTION_DENIED", id: randomUUID(), occurredAt: world.deps.clock.now(), requestId: randomUUID(), decisionId: randomUUID(), context, run, action: { kind: "attempted", name: "" }, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
   expect(record.actionId).toBeNull();
+});
+
+
+it.each([['ATK-AUDIT-02', 'decision'], ['ATK-AUDIT-03', 'executed']] as const)("%s reports failed writes through Gateway telemetry, independently of sink refusal counts", async (id, kind) => {
+  const { world, target } = auditTarget();
+  const failures: string[] = [];
+  const { context, run } = await world.submitterFor(A_ALICE);
+  const gateway = createPolicyGateway(world.deps, { telemetry: { auditWriteFailed: value => { failures.push(value); } } });
+  const submitter = gateway.proposals.forSession(context, run);
+  const observation = await scenario(id).run({ ...target, submit: call => submitter.submit(call), auditWriteFailures: () => failures.length });
+  expect(scenario(id).verify(observation)).toEqual([]);
+  expect(failures).toContain(kind);
 });
