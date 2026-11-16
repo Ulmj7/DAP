@@ -41,7 +41,12 @@ export function parseCatalogSummaries(raw: unknown): readonly SafeWalkthroughSum
   } catch { return null; }
 }
 
-/** The least BM25 score a proposed summary needs for the question. Tuned on the three demo summaries (see selection.test.ts and plan.md "Slice 3 decisions"). */
+/**
+ * The least BM25 score a proposed summary needs for the question. Tuned on the three demo summaries (pinned in apps/reference-host/src/guidance/walkthrough-summaries.test.ts
+ * and plan.md "Slice 3 decisions"): no overlap scores exactly 0, the weakest real overlap (a topic word two guides share) 0.69. The score is absolute and BM25's IDF depends
+ * on the number of summaries, so re-tune it if the catalog changes size a lot; with a catalog of ONE summary a single matching term scores about 0.45 and is not enough
+ * (the result is a `clarify`, never a start).
+ */
 export const MIN_SELECTION_SCORE = 0.5;
 /** How many summaries count as "near the top". */
 export const SELECTION_TOP_N = 3;

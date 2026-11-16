@@ -12,7 +12,7 @@
  * Grounding and selection run against what was ACTUALLY SUPPLIED to the model: the sources and summaries of the fitted request, not the larger sets that
  * were retrieved or listed before the budget routine dropped some.
  */
-import { MAX_ANSWER_CHARS, MAX_MESSAGE_CHARS, MAX_QUERY_CHARS } from "./limits.js";
+import { MAX_ANSWER_CHARS, MAX_MESSAGE_CHARS, MAX_QUERY_CHARS, MAX_SOURCES } from "./limits.js";
 import { groundDecision } from "./answer.js";
 import { callGuidanceModel, createModelCallGuard } from "./call-model.js";
 import { parseSemanticContextInput } from "./context-input.js";
@@ -64,7 +64,7 @@ function retrieve(retriever: Retriever, query: string): AnswerChunk[] {
   try {
     const found: unknown = retriever.search(query);
     if (!Array.isArray(found)) return [];
-    return found.map((chunk: AnswerChunk) => ({ id: chunk.id, docId: chunk.docId, title: chunk.title, text: chunk.text }));
+    return found.slice(0, MAX_SOURCES).map((chunk: AnswerChunk) => ({ id: chunk.id, docId: chunk.docId, title: chunk.title, text: chunk.text }));
   } catch { return []; }
 }
 

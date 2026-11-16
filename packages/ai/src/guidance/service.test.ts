@@ -119,6 +119,13 @@ describe("Scenario B: a grounded answer from the chunks actually supplied", () =
     for (const broken of [throwing, odd]) expect(await ask(m.model, DEFAULT_QUERY, { retriever: broken })).toMatchObject({ reason: "ungrounded" });
     expect(m.requests.every((r) => r.input.sources.length === 0)).toBe(true);
   });
+  it("a retriever that returns MORE than 4 chunks is truncated to the first 4: the evidence is not thrown away", async () => {
+    const many = Array.from({ length: 6 }, (_v, i) => ({ id: `d${i}.1`, docId: `d${i}`, title: `Doc ${i}`, text: `Text ${i}`, score: 9 - i }));
+    const m = model((r) => ({ kind: "answer", answer: "Cited the first.", sources: [r.input.sources[0]!.id] }));
+    const result = await ask(m.model, DEFAULT_QUERY, { retriever: { search: () => many } });
+    expect(m.requests[0]!.input.sources.map((s) => s.id)).toEqual(["d0.1", "d1.1", "d2.1", "d3.1"]);
+    expect(result).toEqual({ kind: "answer", answer: "Cited the first.", sources: [{ id: "d0", title: "Doc 0" }] });
+  });
   it("a retriever that returns a malformed chunk does not stop routing: the chunk is dropped, the question still reaches the model", async () => {
     const bad = { search: () => [{ id: "x.1", docId: "x", title: "T", text: "t".repeat(5000) }] } as unknown as Retriever;
     const m = model(() => ({ kind: "start_walkthrough", walkthroughId: "invoiceExport" }));

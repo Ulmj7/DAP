@@ -237,7 +237,8 @@ describe("the executor re-validates against the HOST catalog and fails closed", 
     expect(run.startCalls).toHaveLength(0);
   });
   it("a catalog that throws or is malformed -> failure; the starter is NEVER called", async () => {
-    for (const list of [() => { throw new Error(SECRET); }, () => "profileUpdate", () => null, () => [{ id: "profileUpdate" }, { id: "profileUpdate" }]]) {
+    const entry = { id: "profileUpdate", title: "Update your profile name", description: "Change the display name on your profile and save it." };
+    for (const list of [() => { throw new Error(SECRET); }, () => "profileUpdate", () => null, () => [{ id: "profileUpdate" }, { id: "profileUpdate" }], () => [{ ...entry, steps: [] }], () => [{ ...entry, title: "<b>x</b>" }], () => [entry, entry]]) {
       const run = await start({ executorCatalog: { list } as never });
       const feedback = await (await run.open("alice")).submit(proposal({ walkthroughId: "profileUpdate" }));
       expect(feedback).toEqual({ outcome: "ALLOWED", category: "try_later" });

@@ -16,7 +16,7 @@
 import { z } from "zod";
 import { defineAction, defineExecutor } from "@dap/contracts";
 import type { ActionDefinition, ActionExecutor, ActionId, ExecutorId, PermissionId } from "@dap/contracts";
-import { validateProposedWalkthrough } from "@dap/ai";
+import { parseCatalogSummaries, validateProposedWalkthrough } from "@dap/ai";
 import type { WalkthroughCatalogView } from "@dap/ai";
 import type { HostExtension } from "../compose.js";
 
@@ -59,16 +59,19 @@ export interface GuidanceTrustedHandle {
 export function createStartWalkthroughExecutor(deps: { readonly catalog: WalkthroughCatalogView; readonly starter: WalkthroughStarter }): { readonly executor: ActionExecutor; readonly trusted: GuidanceTrustedHandle } {
   const { catalog, starter } = deps;
   const received: unknown[] = [];
+  const MAX_RECORDED = 100; // a host-side test record, bounded: the newest calls are kept
   const executor = defineExecutor<{ readonly walkthroughId: string }>({
     id: START_WALKTHROUGH_EXECUTOR_ID,
     run: async (call) => {
       const id = call.params.walkthroughId;
       received.push(structuredClone(call.params));
+      if (received.length > MAX_RECORDED) received.shift();
       // Re-validate against the host's own catalog: the Gateway's schema only proves the id is well formed, not that a walkthrough of that id exists.
       let known: boolean;
       try {
-        const list: unknown = catalog.list();
-        if (!Array.isArray(list)) return { status: "failure", code: "catalog_unavailable" satisfies StartFailureCode };
+        // The SAME strict check of the catalog port as the guidance service applies (plain array, strict summaries, unique ids): a malformed catalog proves nothing.
+        const list = parseCatalogSummaries(catalog.list());
+        if (list === null) return { status: "failure", code: "catalog_unavailable" satisfies StartFailureCode };
         known = validateProposedWalkthrough(list, id) !== null;
       } catch { return { status: "failure", code: "catalog_unavailable" satisfies StartFailureCode }; }
       if (!known) return { status: "failure", code: "unknown_walkthrough" satisfies StartFailureCode };

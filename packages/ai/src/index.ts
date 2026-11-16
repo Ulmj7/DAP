@@ -42,7 +42,7 @@ export type { AnswerChunk } from "./guidance/answer.js";
 
 // Feature 003 Slice 3: the public parser for the semantic context that arrives from the browser (strict mirror of Feature 002's context() shape).
 export { parseSemanticContextInput } from "./guidance/context-input.js";
-export { MIN_SELECTION_SCORE, SELECTION_MARGIN, SELECTION_TOP_N, judgeProposal, rankSummaries, validateProposedWalkthrough } from "./guidance/selection.js";
+export { MIN_SELECTION_SCORE, SELECTION_MARGIN, SELECTION_TOP_N, judgeProposal, parseCatalogSummaries, rankSummaries, validateProposedWalkthrough } from "./guidance/selection.js";
 export type { RankedSummary, SelectionVerdict } from "./guidance/selection.js";
 export { createGuidanceService } from "./guidance/service.js";
 export type { GuidanceService, GuidanceServiceDeps } from "./guidance/service.js";

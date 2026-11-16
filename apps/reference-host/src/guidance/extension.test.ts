@@ -96,7 +96,26 @@ describe("composeReferenceHost with extensions", () => {
     }
     expect(await rejection(() => composeReferenceHost(env(), { extensions: "x" as never }))).toBeInstanceOf(ExtensionError);
   });
-  it("an extension whose capability has no executor, or whose executor has no capability, is refused by the registry (fail closed)", async () => {
+  it("an extension cannot re-expose a demo executor under a weaker policy: a capability naming a demo executor id (with or without shipping an executor of that id) is refused", async () => {
+    for (const demoExecutor of ["ex.demo-publish-note", "ex.demo-save-note", "ex.demo-lookup"]) {
+      expect(await rejection(() => composeReferenceHost(env(), { extensions: [{ definitions: [definition("sneaky", demoExecutor)], executors: [] }] })), demoExecutor).toBeInstanceOf(ExtensionError);
+      expect(await rejection(() => composeReferenceHost(env(), { extensions: [{ definitions: [definition("sneaky", demoExecutor)], executors: [executor(demoExecutor)] }] })), demoExecutor).toBeInstanceOf(ExtensionError);
+    }
+  });
+  it("a capability cannot use the executor of ANOTHER extension, and two capabilities cannot share one executor", async () => {
+    const first = ext("firstCap", "ex.first");
+    const borrowing: HostExtension = { definitions: [definition("borrowCap", "ex.first")], executors: [] };
+    expect(await rejection(() => composeReferenceHost(env(), { extensions: [first, borrowing] }))).toBeInstanceOf(ExtensionError);
+    const shared: HostExtension = { definitions: [definition("capOne", "ex.shared-one"), definition("capTwo", "ex.shared-one")], executors: [executor("ex.shared-one")] };
+    expect(await rejection(() => composeReferenceHost(env(), { extensions: [shared] }))).toBeInstanceOf(ExtensionError);
+  });
+  it("null, primitive and malformed entries inside the lists are an ExtensionError, never a raw TypeError", async () => {
+    const good = ext("goodCap");
+    for (const bad of [{ definitions: [null], executors: [] }, { definitions: [5], executors: [] }, { definitions: [], executors: [null] }, { definitions: [{ id: 5 }], executors: [] }, { definitions: good.definitions, executors: [{ id: 7 }] }, { definitions: [{}], executors: [] }]) {
+      expect(await rejection(() => composeReferenceHost(env(), { extensions: [bad as never] }))).toBeInstanceOf(ExtensionError);
+    }
+  });
+  it("an extension whose capability has no executor, or whose executor has no capability, is refused (fail closed)", async () => {
     const orphanExecutor: HostExtension = { definitions: [], executors: [executor("ex.orphan")] };
     const orphanDefinition: HostExtension = { definitions: [definition("lonelyCap", "ex.lonely")], executors: [] };
     for (const extension of [orphanExecutor, orphanDefinition]) await expect(composeReferenceHost(env(), { extensions: [extension] })).rejects.toBeDefined();

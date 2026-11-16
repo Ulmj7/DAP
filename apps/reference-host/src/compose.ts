@@ -49,8 +49,8 @@ export class ExtensionError extends Error {
 
 /**
  * Validates the extensions (fail closed, before anything is created) and returns the extra definitions and executors in order. Refused: an extension that
- * is not exactly `{ definitions, executors }`, malformed lists, a capability id that collides with a demo capability or with another extension, and an
- * executor id used twice.
+ * is not exactly `{ definitions, executors }`, malformed lists or entries, a capability id that collides with a demo capability or with another extension, an
+ * executor id that collides with a demo executor or another extension's, and a capability whose executor is not its own extension's (or is shared by two capabilities).
  */
 function collectExtensions(extensions: readonly HostExtension[] | undefined): { readonly definitions: readonly AnyActionDefinition[]; readonly executors: readonly ActionExecutor[] } {
   if (extensions === undefined) return { definitions: [], executors: [] };
@@ -58,23 +58,32 @@ function collectExtensions(extensions: readonly HostExtension[] | undefined): { 
   const definitions: AnyActionDefinition[] = [];
   const executors: ActionExecutor[] = [];
   const actionIds = new Set<string>(DEMO_ACTION_IDS);
-  const executorIds = new Set<string>();
+  const executorIds = new Set<string>(DEMO_DEFINITIONS.map((definition) => definition.executorId as string)); // an extension executor may not shadow a demo executor
+  const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object";
   for (const extension of extensions as readonly unknown[]) {
     const bag = extension as Partial<HostExtension> | null;
     if (bag === null || typeof bag !== "object" || Object.keys(bag).some((key) => key !== "definitions" && key !== "executors") || !Array.isArray(bag.definitions) || !Array.isArray(bag.executors)) {
       throw new ExtensionError("an extension must be exactly { definitions, executors }");
     }
+    if ([...bag.definitions, ...bag.executors].some((entry: unknown) => !isObject(entry))) throw new ExtensionError("an extension holds only capability definitions and executors");
+    const own = new Set<string>(); // the executors THIS extension brings
+    for (const executor of bag.executors) {
+      const id = executor.id as string;
+      if (typeof id !== "string" || executorIds.has(id)) throw new ExtensionError("an extension executor id is missing or collides with another executor");
+      executorIds.add(id);
+      own.add(id);
+      executors.push(executor);
+    }
+    const bound = new Set<string>();
     for (const definition of bag.definitions) {
       const id = definition.id as string;
       if (typeof id !== "string" || actionIds.has(id)) throw new ExtensionError("an extension capability id is missing or collides with another capability");
+      // A capability may use only an executor of its own extension, and only one capability per executor: it cannot re-expose a demo (or another extension's) executor under a weaker policy.
+      const executorId = definition.executorId as string;
+      if (typeof executorId !== "string" || !own.has(executorId) || bound.has(executorId)) throw new ExtensionError("an extension capability must use its own executor, one capability per executor");
+      bound.add(executorId);
       actionIds.add(id);
       definitions.push(definition);
-    }
-    for (const executor of bag.executors) {
-      const id = executor.id as string;
-      if (typeof id !== "string" || executorIds.has(id)) throw new ExtensionError("an extension executor id is missing or repeated");
-      executorIds.add(id);
-      executors.push(executor);
     }
   }
   return { definitions, executors };
