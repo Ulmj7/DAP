@@ -183,7 +183,8 @@ describe("the reference host (T131, T136): its AI-facing handle is a submit func
   });
   it("wires the trusted pieces in the composition root alone: only compose.ts (and config.ts, for the default limits) import the security package, only compose.ts imports the AI package, nothing imports the actions package", () => {
     expect(appImportersOf(graph, "packages/security/")).toEqual([`${APP}src/compose.ts`, `${APP}src/config.ts`]);
-    expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`]);
+    // Feature 003: the trusted knowledge loader (src/guidance/) takes pure parsing and chunking from the AI package; it imports no other trusted package (scrub is injected).
+    expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`, `${APP}src/guidance/knowledge-loader.ts`]);
     expect(appImportersOf(graph, "packages/actions/")).toEqual([]);
   });
   it("nothing reaches the host from the AI layer (the transitive walk above already excludes apps/): the AI layer is handed the submit function and cannot name the host", () => {

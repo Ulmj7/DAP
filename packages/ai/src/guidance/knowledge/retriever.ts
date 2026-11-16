@@ -13,7 +13,7 @@ import type { KnowledgeChunk } from "./document.js";
 export const BM25_K1 = 1.2;
 export const BM25_B = 0.75;
 /**
- * The least score a chunk needs to be returned. Tuned on the shipped help articles (apps/reference-host/src/guidance/knowledge.test.ts pins the margins):
+ * The least score a chunk needs to be returned. Tuned on the shipped help articles (apps/reference-host/src/guidance/knowledge.test.ts pins which questions pass and which do not):
  * questions the articles really answer scored 2.6 to 5.1 at the top; the highest score of any question they do not answer ("delete my account", which
  * shares only the word "account") was 1.74, and a lone common word ("settings") 0.8. The score depends on the number of chunks, so re-check the
  * constant if the knowledge base grows far beyond a few dozen chunks. A very small base (a handful of chunks) scores lower and may need two matching terms.

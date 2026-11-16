@@ -28,3 +28,10 @@ export { parseGuidanceDecision } from "./guidance/decision.js";
 export { callGuidanceModel, createModelCallGuard } from "./guidance/call-model.js";
 export type { ModelCallFailure, ModelCallGuard, ModelCallOutcome } from "./guidance/call-model.js";
 export { unsupportedResult } from "./guidance/result.js";
+
+// Feature 003 Slice 2: approved product knowledge (pure; files are read by the trusted host loader) and its deterministic retriever.
+export { MAX_KNOWLEDGE_DOCS, MAX_DOC_CHARS, MAX_DOC_TAGS, MAX_TOPIC_CHARS, MAX_PROMPT_CHARS } from "./guidance/limits.js";
+export { chunkDocument, chunkKnowledge, parseKnowledgeDoc, parseKnowledgeSet } from "./guidance/knowledge/document.js";
+export type { DocParse, KnowledgeChunk, KnowledgeDoc, SetParse } from "./guidance/knowledge/document.js";
+export { MIN_RELEVANCE, createRetriever } from "./guidance/knowledge/retriever.js";
+export type { RetrievedChunk, Retriever } from "./guidance/knowledge/retriever.js";
