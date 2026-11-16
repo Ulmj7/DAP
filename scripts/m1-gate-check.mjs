@@ -3,6 +3,7 @@
 
 /** Suites that must exist, be non-empty, pass and have no skipped test. One or more per T071 category (see m1-gate.mjs). */
 export const REQUIRED_SUITES = Object.freeze([
+  "apps/reference-host/src/startup.test.ts", "packages/security/src/state/postgres/pool.test.ts",
   "tests/architecture/graph.test.ts", "tests/architecture/contracts-boundary.test.ts", "tests/architecture/module-loaders.test.ts", "tests/architecture/static-scan.test.ts", "tests/architecture/m1-gate.test.ts",
   "tests/security/test-world.gateway.test.ts", "tests/security/positive.test.ts", "tests/security/unknown-action.test.ts", "tests/security/malformed-parameters.test.ts",
   "tests/security/prompt-injection.test.ts", "tests/security/privilege-escalation.test.ts", "tests/security/cross-tenant.test.ts", "tests/security/execution-cap.test.ts",

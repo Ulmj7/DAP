@@ -66,3 +66,9 @@ describe("the M1 gate's checks", () => {
     expect(checkReport({})).toEqual(["the vitest report is missing or malformed"]);
   });
 });
+
+
+it("the gate requires the existing dev-auth startup and PostgreSQL pool guards, not only integration files", () => {
+  expect(REQUIRED_SUITES).toContain("apps/reference-host/src/startup.test.ts");
+  expect(REQUIRED_SUITES).toContain("packages/security/src/state/postgres/pool.test.ts");
+});

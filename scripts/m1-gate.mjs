@@ -1,5 +1,5 @@
 // Feature 001 M1 gate (T071): `npm run test:m1-gate`. The authoritative REQUIRED check; it adds no tests of its own, it runs the existing vitest projects
-// arch + security + conformance + integration (not `unit`) against the PostgreSQL in DAP_DATABASE_URL, migrating it first with DAP_MIGRATE_DATABASE_URL,
+// arch + security + conformance + integration plus the focused dev-auth startup and PostgreSQL pool unit guards against the PostgreSQL in DAP_DATABASE_URL, migrating it first with DAP_MIGRATE_DATABASE_URL,
 // and FAILS if a selected suite is missing, empty, skipped or failing, if a reference-host group did not run, or if a left-over todo is not tagged OPTIONAL/FUTURE.
 // Representative coverage only; nothing here claims exhaustive security coverage. Category -> where it is proven (see m1-gate-check.mjs for the exact files):
 //   positive path, executor once, trusted context, frozen params : security/test-world.gateway, positive, integration/reference-host
@@ -30,8 +30,9 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const dir = mkdtempSync(join(tmpdir(), "m1-gate-"));
   const out = join(dir, "report.json");
   try {
-    const projects = ["arch", "security", "conformance", "integration"].flatMap((name) => ["--project", name]);
-    const vitest = run(["node_modules/vitest/vitest.mjs", "run", ...projects, "--reporter=default", "--reporter=json", `--outputFile.json=${out}`]);
+    const projects = ["unit", "arch", "security", "conformance", "integration"].flatMap((name) => ["--project", name]);
+    const selected = ["tests/architecture/", "tests/security/", "/state/conformance/", "tests/integration/", "apps/reference-host/src/startup.test.ts", "packages/security/src/state/postgres/pool.test.ts"];
+    const vitest = run(["node_modules/vitest/vitest.mjs", "run", ...projects, ...selected, "--reporter=default", "--reporter=json", `--outputFile.json=${out}`]);
     let report;
     try { report = JSON.parse(readFileSync(out, "utf8")); } catch { fail("vitest produced no report"); }
     const problems = checkReport(report);

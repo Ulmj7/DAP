@@ -2,7 +2,9 @@
  * T081, ATK-AUDIT-01..05 and 07. Each oracle is proven able to FAIL: a good observation passes, and each violation is reported.
  * Representative real-chain proof lives in review-fixes.test.ts and integration/audit-postgres.test.ts; the scenarios run against the real Gateway at the bottom (T071).
  */
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { buildAuditEvent } from "../../packages/security/src/audit/event-builder.js";
 import type { AuditEvent, AuditEventType } from "@dap/contracts";
 import { ALICE, WIDE_GATEWAY_CONFIG, auditScenarios, verifyProjection, withGateway } from "@dap/testkit";
 import type { AuditObservation, WorldUser } from "@dap/testkit";
@@ -144,4 +146,12 @@ describe("ATK-AUDIT-01..05 against the REAL gateway, through withGateway() (T071
     const observation = await scenario("ATK-AUDIT-01").run(healthy);
     expect(scenario("ATK-AUDIT-01").verify(observation)).not.toEqual([]);
   });
+});
+
+
+it("the audit builder independently normalizes an empty attempted action to null", async () => {
+  const world = withGateway();
+  const { context, run } = await world.submitterFor(A_ALICE);
+  const record = buildAuditEvent({ type: "AI_ACTION_DENIED", id: randomUUID(), occurredAt: world.deps.clock.now(), requestId: randomUUID(), decisionId: randomUUID(), context, run, action: { kind: "attempted", name: "" }, outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+  expect(record.actionId).toBeNull();
 });
