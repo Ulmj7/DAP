@@ -3,7 +3,7 @@
 **Feature**: `001-ai-security-foundation` | **Spec**: [../spec.md](../spec.md) | **Plan**: [../plan.md](../plan.md)
 
 These are the interfaces later AI features build against (spec FR-053). The TypeScript files are
-type-only declarations. **Since T143 (2026-11-16) their type declarations mirror `packages/contracts/src/*.ts`** (imports omit `.js`; comments below correct inherited runtime-description errors), so they describe what is actually exported. They were compile-checked again with
+specification mirrors of types and closed-vocabulary constants, not shipped modules. **Since T143 (2026-11-16) their type declarations mirror `packages/contracts/src/*.ts`** (imports omit `.js`; comments below correct inherited runtime-description errors), so they describe what is actually exported. They were compile-checked again with
 `tsc --ignoreConfig --noEmit --strict --exactOptionalPropertyTypes --noUncheckedIndexedAccess --moduleResolution Bundler` (exit 0, log in
 [validation-report.md](../../../docs/validation-report.md)). They contain no behavior; behavior lives in the packages named below. The list of
 mismatches found and how each was resolved is in [reconciliation.md](./reconciliation.md).

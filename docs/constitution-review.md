@@ -36,7 +36,7 @@ Principles XVIII and XIX are in section 4.
 | XI Tenant isolation | A feature stores or retrieves tenant-owned data | **Yes**: audit, replay, rate and tenant-policy rows are tenant-owned | satisfied: tenant from the trusted context only; forced RLS on every `sec_*` table keyed on `app.tenant_id` (`db/migrations/`); `cross-tenant.test.ts`, `cross-tenant-store.test.ts`, `audit-postgres.test.ts` P3, conformance isolation suites. The demo may run one active tenant; the architecture is tenant-ready |
 | XIII Confirmation | A HIGH or CRITICAL capability, or a confirmation-required MEDIUM, is delivered | **Only in the fallback form.** The host registers a HIGH demo capability (`demoPublishNote`) and a MEDIUM one with a recorded opt-out; neither can be *executed* needing confirmation | The fallback clause of XIII holds: the Gateway returns `REQUIRES_CONFIRMATION`, never `ALLOWED`, and the executor stays at zero (`reference-host.test.ts` group 5, `execution-cap.test.ts`, `risk-gate.gateway.test.ts`). The confirmation **service, store, persistence and endpoints are not built**; the Gateway's `confirmations` is a fail-closed stub and the host's store and channel placeholders reject every call. No capability that needs confirmation can execute |
 | Replay protection | Retry-sensitive or state-changing actions | **Yes**: `demoSaveNote` changes state | satisfied for duplicate delivery inside one turn (`rate-replay.gateway.test.ts`, `reference-host.test.ts` "same proposal replayed"). Not an authentication of senders; a host-side new session can re-run a provider call id (limitation 7) |
-| Shared state across copies | More than one copy runs | **No**: single process | not a prerequisite. PostgreSQL adapters exist and are used by the reference host, but there is **no multi-replica test**, so no multi-replica guarantee is claimed |
+| Shared state across copies | More than one copy runs | **No**: single process | not a prerequisite. PostgreSQL adapters exist and are used by the reference host, but there is **no deployed multi-replica test**, so no multi-replica guarantee is claimed |
 
 ## 3. Tier C: deferred (never blocked this feature)
 
@@ -117,8 +117,7 @@ Each item below was checked against code, tests or documents; the pointer shows 
 9. **The confirmation service, its persistence and its endpoints are not built.** `createPolicyGateway(...).confirmations` is a fail-closed stub;
    the host's confirmation store and channel reject every call; there is no `sec_confirmations` table. HIGH, CRITICAL and confirmation-required
    MEDIUM proposals end at `REQUIRES_CONFIRMATION` and their executors never run. (`create-gateway.ts`; `reference-host.test.ts` group 5.)
-10. **The M1 gate is representative, not exhaustive.** The exhaustive catalogue, mutation testing, determinism infrastructure, flood and
-    multi-replica tests and the 36-case dependency matrix are parked (section 3). A green gate means the representative suites passed and the
+10. **The M1 gate is representative, not exhaustive.** Exhaustive catalogue runs, automated mutation/determinism infrastructure, deployed flood/multi-replica stress and the 36-case dependency matrix are parked; existing direct-adapter flood and in-process shared-store concurrency tests do run (section 3). A green gate means the representative suites passed and the
     remaining `todo` tests are tagged; it does not mean every attack in the catalogue was run. (`scripts/m1-gate.mjs` header.)
 11. **CI was validated by local replay and actionlint only; it has not had a first GitHub Actions run.** Hosted-runner specifics (for example the
     presence of `psql` on `ubuntu-24.04`) are unverified. (`validation-report.md`.)

@@ -111,7 +111,7 @@ setting `app.tenant_id` (set per transaction by `withTenant`, `packages/security
 | `decision_id` | text (1 to 256) | Not a UUID column: the Gateway's own id string |
 | `user_id` | text | From trusted context |
 | `ai_session_id`, `turn_id`, `model` | text | From the trusted runner |
-| `action_id` | text, nullable | The registered id; for an unresolved proposal the **attempted name**, escaped to printable ASCII, scrubbed, at most 64 characters; NULL when the name is empty |
+| `action_id` | text, nullable; SQL CHECK 1..256 | The registered id; for an unresolved proposal the **attempted name**, escaped to printable ASCII, scrubbed, at most 64 characters; NULL when the name is empty |
 | `definition_version` | bigint, nullable | |
 | `params_view` | jsonb | Allowlisted, masked projection only; a JSON object of at most 64 KiB |
 | `risk` | text, nullable | |
