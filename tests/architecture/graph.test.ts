@@ -68,7 +68,7 @@ const ALLOWED_MANIFEST_EDGES: Readonly<Record<string, readonly string[]>> = {
   "packages/walkthrough": [],
   "apps/reference-web": ["@dap/walkthrough"],
 };
-const RULES = ["ai-not-to-security-or-actions", "actions-not-to-ai-or-security", "security-not-to-ai-or-actions", "contracts-leaf", "testkit-allowed-edges", "production-not-to-testkit", "nothing-imports-apps", "no-deep-imports-into-contracts", "mint-entry-restricted", "no-runtime-module-loaders", "no-circular"];
+const RULES = ["ai-not-to-security-or-actions", "actions-not-to-ai-or-security", "security-not-to-ai-or-actions", "contracts-leaf", "testkit-allowed-edges", "production-not-to-testkit", "nothing-imports-apps", "no-deep-imports-into-contracts", "mint-entry-restricted", "no-runtime-module-loaders", "no-circular", "walkthrough-leaf", "walkthrough-not-imported-by-trusted-packages", "reference-web-only-walkthrough"];
 
 describe("the real repository", () => {
   const graph = cruise(ROOT);
