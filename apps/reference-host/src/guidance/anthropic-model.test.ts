@@ -41,6 +41,21 @@ describe("Anthropic offline adapter", () => {
       await vi.advanceTimersByTimeAsync(7000); await rejected; expect(signal?.aborted).toBe(true);
     } finally { vi.useRealTimers(); }
   });
+  it.each(["synchronous", "missing-handle", "throwing"])("a %s deadline port starts no HTTP request", async mode => {
+    let released = 0;
+    const fetcher = vi.fn<typeof fetch>(async () => response('{"kind":"clarify","message":"Which?"}'));
+    const model = createAnthropicGuidanceModel({ apiKey: key, fetchImpl: fetcher, timers: {
+      set: cb => {
+        if (mode === "throwing") throw new Error(key);
+        if (mode === "missing-handle") return undefined as never;
+        cb();
+        return () => { released++; };
+      },
+    } });
+    await expect(model.generate(request)).rejects.toMatchObject({ code: mode === "synchronous" ? "timeout" : "network" });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(released).toBe(mode === "synchronous" ? 1 : 0);
+  });
   it("invalid decision text stays unknown for core validation", async () => expect(await make(async () => response("not a decision")).generate(request)).toBe("not a decision"));
   it("rejects fit mismatch before HTTP", async () => {
     const fetcher = vi.fn<typeof fetch>();

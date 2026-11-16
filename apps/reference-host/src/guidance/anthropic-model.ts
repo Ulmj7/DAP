@@ -50,8 +50,17 @@ export function createAnthropicGuidanceModel({ apiKey, modelId = "claude-haiku-5
       return decoded;
     };
     try {
-      return await Promise.race([operation(), new Promise<never>((_, reject) => { cancel = timers.set(() => { expired = true; controller.abort(); reject(new GuidanceProviderError("timeout")); }, 7000); })]);
+      let armed = false;
+      const deadline = new Promise<never>((_, reject) => {
+        const handle: unknown = timers.set(() => { expired = true; controller.abort(); reject(new GuidanceProviderError("timeout")); }, 7000);
+        if (typeof handle !== "function") { reject(new GuidanceProviderError("network")); return; }
+        cancel = handle as () => void;
+        armed = true;
+      });
+      // Establish a usable deadline before spending a provider call, including synchronous timer ports.
+      if (!armed || expired) return await deadline;
+      return await Promise.race([deadline, operation()]);
     } catch (error) { if (error instanceof GuidanceProviderError) throw error; throw new GuidanceProviderError(expired ? "timeout" : "network"); }
-    finally { try { cancel(); } catch { /* Timer cleanup never exposes a dependency error. */ } }
+    finally { controller.abort(); try { cancel(); } catch { /* Timer cleanup never exposes a dependency error. */ } }
   } };
 }
