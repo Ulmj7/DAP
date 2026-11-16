@@ -89,7 +89,7 @@ Everything the brief lists as not MVP, plus: C01 and its transport, admin and an
 ## U2 decisions
 
 - Trusted availability changes come from targets.observe plus route-render refresh, without changing the engine or bridge timing.
-- Tooltip title is the registry label; primary-path guide steps alone count toward progress, recover-only steps say Retry.
+- Tooltip title is the registry label; primary-path guide steps alone count toward progress, recover-only steps say Extra step (a prerequisite is not necessarily a retry).
 - A non-blocking scrim is the target ring's spread shadow; targetless route cards have a pointer-transparent dim layer.
 - Guides are a Dashboard catalog card and a header link, not a popover; no generic Next exists.
 - Profile allows three failed Save attempts by bounding fixName to two recovery entries; only the engine declares completion/failure.

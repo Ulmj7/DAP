@@ -9,7 +9,7 @@ export function createPresenter({overlay,targets,registry,catalog,state,cancel,a
   const def=snapshot.walkthroughId===null?undefined:catalog.get(snapshot.walkthroughId);if(!def)throw new Error("Missing walkthrough");
   const handle=effect.target===undefined?null:targets.find(effect.target);if(effect.target!==undefined&&!handle)throw new Error("Unavailable target");
   const progress=stepProgress(def,effect.stepId);const c=copy.guide;
-  overlay.show(handle,{title:effect.target===undefined?def.title:registry.get(effect.target)!.label,text:effect.text,...(progress.retry?{progress:c.retry}:progress.index>0?{progress:`${c.step} ${progress.index} ${c.of} ${progress.total}`}:{ }),hint:effect.expects==="ack"?"":c[effect.expects],ack:effect.expects==="ack",ackLabel:c.ack,cancelLabel:c.cancel,escapeHint:c.escape},{onCancel:cancel,onAck:ack});
+  overlay.show(handle,{title:effect.target===undefined?def.title:registry.get(effect.target)!.label,text:effect.text,...(progress.extra?{progress:c.extra}:progress.index>0?{progress:`${c.step} ${progress.index} ${c.of} ${progress.total}`}:{ }),hint:effect.expects==="ack"?"":c[effect.expects],ack:effect.expects==="ack",ackLabel:c.ack,cancelLabel:c.cancel,escapeHint:c.escape},{onCancel:cancel,onAck:ack});
  };
- return {apply,update(snapshot:EngineSnapshot){if(snapshot.status==="VERIFYING")overlay.update({status:snapshot.walkthroughId==="profileUpdate"?copy.guide.saving:copy.guide.checking,ackDisabled:true});else if(snapshot.status==="WAITING")overlay.update({status:"",ackDisabled:false});}};
+ return {apply,update(snapshot:EngineSnapshot){if(snapshot.status==="VERIFYING")overlay.update({status:copy.guide.checking,ackDisabled:true});else if(snapshot.status==="WAITING")overlay.update({status:"",ackDisabled:false});}};
 }
