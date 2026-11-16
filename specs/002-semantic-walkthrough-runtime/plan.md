@@ -84,21 +84,21 @@ type Step =
   | { id; kind: "complete"; text };
 type WalkthroughDef = { id; title; description; start: StepId; steps: readonly Step[] };
 ```
-`createWalkthroughCatalog(registry, postconditionNames, defs)` fails startup on: duplicate walkthrough or step IDs, missing start/next/recover step, unknown target (or an `operations` mismatch: `click` wait needs `click`, `input` needs `input`, every guide needs `highlight`), unknown route, unknown postcondition name, no path from `start` to a `complete` step, steps unreachable from `start`. That is the whole "language".
+`createWalkthroughCatalog(registry, postconditionNames, defs)` fails startup on: duplicate walkthrough or step IDs, missing start/next/recover step, unknown target (or an `operations` mismatch: `click` wait needs `click`, `input` needs `input`, every guide needs `highlight`), unknown route, unknown postcondition name, no path from `start` to a `complete` step, steps unreachable from `start`. That is the whole "language". Catalogs are capped at 100 walkthroughs and 100 steps each. Every step's success-only `next` chain must reach `complete`; only `recover` edges may form retry loops.
 
 ### 4.4 State machine
 
 Pure `transition(state, input) -> { state, effects }`; the runtime runs effects (resolve target, show/hide overlay, navigate, evaluate postcondition, schedule timeout) through injected ports and feeds results back as inputs. All timers are injected, so tests need no real time.
 
 States: `IDLE, RESOLVING, PRESENTING, WAITING, VERIFYING, COMPLETED, FAILED(reason), CANCELLED`.
-Inputs: `start`, `targetFound`, `targetWaitExpired`, `presented`, `presentFailed`, `event`, `navigated`, `navigationRefused`, `verified(bool)`, `verifyFailed`, `cancel`.
+Inputs: `start`, `targetFound`, `targetWaitExpired`, `presented`, `presentFailed`, `event`, `navigated`, `navigationRefused`, `verified(bool)`, `verifyFailed`, `internalError`, `cancel`. Semantic events include payload-free `ack`, which satisfies only an `ack` wait.
 
 | From | Input | To |
 |---|---|---|
 | IDLE / terminal | `start(valid id)` | RESOLVING(start step) (unknown id: refused, state unchanged) |
-| RESOLVING (guide) | `targetFound` | PRESENTING |
+| RESOLVING (guide) | `targetFound` or matching `targetAvailable` | PRESENTING |
 | RESOLVING (guide) | `targetWaitExpired` | `recover` ? RESOLVING(recover) : FAILED `target_unavailable` |
-| RESOLVING (navigate) | `navigated` | VERIFYING (implicit route check) |
+| RESOLVING (navigate, no text) | `navigated` | VERIFYING (implicit route check) |
 | RESOLVING (navigate) | `navigationRefused` | FAILED `navigation_refused` |
 | PRESENTING | `presented` / `presentFailed` | WAITING / FAILED `present_failed` |
 | WAITING | `event` that exactly matches the step | `verify` ? VERIFYING : advance(`next`) |
@@ -106,10 +106,13 @@ Inputs: `start`, `targetFound`, `targetWaitExpired`, `presented`, `presentFailed
 | WAITING | `targetGone` for the current target | RESOLVING(same step) |
 | VERIFYING | `verified(true)` | advance(`next`) |
 | VERIFYING | `verified(false)` / `verifyFailed` | `recover` ? RESOLVING(recover) : FAILED `verification_failed` |
+| live state | `internalError` | FAILED `internal_error` (cancel timers and clear) |
 | any non-terminal | `cancel` | CANCELLED |
 | any non-terminal | `start` | refused (`busy`) |
 
-`advance(next)` = COMPLETED if `next` is a `complete` step, else RESOLVING(next). Every entry into a step through `recover`/re-resolve increments its attempt count; beyond `maxAttempts` (default 3) the run ends FAILED `max_attempts`. Events while VERIFYING are ignored. An event is consumed by exactly one step.
+`advance(next)` = COMPLETED if `next` is a `complete` step, else RESOLVING(next). Every entry into a step through `recover`/re-resolve increments its attempt count; beyond `maxAttempts` (default 3) the run ends FAILED `max_attempts`. Events while VERIFYING are ignored. An event is consumed by exactly one step per dispatch. A navigate step with `text` presents an instruction and waits for the matching `routeChanged`; one without text uses the synchronous router port. Both then emit `verifyRoute` and read the actual router state before advancing. Neither a route event nor an `ack` substitutes for a postcondition. `targetAvailable` is meaningful only in RESOLVING; ordinary events in PRESENTING/VERIFYING are ignored.
+
+Re-entrant callbacks are queued. Cancellation suppresses pending presentation; timers are single-use and generation-checked again when their queued result is processed. A start requested from a live callback returns `busy`; callers may start again after the terminal snapshot is delivered. Effects and snapshots are frozen. The per-run bound counts state-changing transitions, not unbounded no-op inputs or repeated host-started runs. Human WAITING states intentionally have no overall deadline.
 
 ### 4.5 Event flow
 
@@ -126,6 +129,8 @@ router (hashchange)  -> routeChanged(route)             MutationObserver -> targ
 ### 4.6 Ports (all injected; the engine imports no DOM)
 
 `targets: { find(id): TargetHandle | null; observe(cb): Unsubscribe }` · `presenter: { show(handle, text, { wait }): void; hide(): void; onAck(cb) }` · `router: { current(): RouteId; navigate(route): void; subscribe(cb) }` · `timers: { set(fn, ms): Cancel }` · `postconditions: Record<name, () => boolean | Promise<boolean>>`. The DOM adapter implements the first two; the app implements `router` and `postconditions`.
+
+The synchronous ports are trusted host adapters, not sandboxed code. The timer port must return a cancellation function and eventually invoke active callbacks; a never-firing timer cannot establish elapsed time. The core cannot preempt a synchronously blocking callback or guarantee physical timer cleanup when the host never supplies a valid handle. Verification timeouts bound asynchronous checks only while the timer port works. The pure `transition` helper is public for diagnostics/testing but holds no runtime state; `test-support` is not a public entry. Feature 003 still receives a narrower trusted facade, not this full host API.
 
 ## 5. Feature 001 integration (what is reused, what is respected)
 

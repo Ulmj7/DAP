@@ -62,3 +62,20 @@ describe("everything else is null, and nothing throws", () => {
     expect(parse(Object.assign(Object.create(null), { type: "ack" }))).toEqual({ type: "ack" });
   });
 });
+
+it("captures data descriptors once without invoking changing get traps", () => {
+  let reads = 0;
+  const raw = new Proxy({ type: "click", id: "profile.saveButton" }, {
+    get() { throw new Error("ordinary reads are forbidden"); },
+    getOwnPropertyDescriptor(target, key) {
+      const descriptor = Object.getOwnPropertyDescriptor(target, key)!;
+      if (key === "id") return { ...descriptor, value: ++reads === 1 ? "profile.saveButton" : "profile.ghost" };
+      return descriptor;
+    },
+  });
+  expect(parse(raw)).toEqual({ type: "click", id: "profile.saveButton" });
+  expect(reads).toBe(1);
+  expect(parse(Object.freeze({ type: "ack" }))).toEqual({ type: "ack" });
+  expect(parse({ type: "click", id: "x".repeat(100_000) })).toBeNull();
+  expect(parse({ type: "ack", prototype: "SECRET" })).toBeNull();
+});

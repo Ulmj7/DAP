@@ -1,6 +1,7 @@
 /**
  * The runtime's ports. All of them are supplied by the host (the later UI adapter and the app); the core imports no DOM and holds no element.
- * A port that throws, returns something unexpected, or never answers makes the run fail closed; it never crashes the host.
+ * Throws and invalid availability/route/check results fail closed. Void ports are synchronous trusted adapters;
+ * asynchronous checks are bounded only when the injected timer works. No same-process callback can be forcibly preempted.
  */
 import type { PresentationEffect } from "./machine.js";
 
