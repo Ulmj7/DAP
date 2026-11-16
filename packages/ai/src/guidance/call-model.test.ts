@@ -164,8 +164,12 @@ describe("a failing timer port fails closed and leaves nothing pending", () => {
     expect(JSON.stringify(outcome)).not.toContain("SECRET");
   });
   it("a timer port that fires immediately (synchronously) wins before the model can answer", async () => {
-    const timers: GuidanceTimers = { set: (callback) => { callback(); return () => undefined; } };
-    expect(await run(() => Promise.resolve(validDecision), { timers }).promise).toEqual({ ok: false, reason: "model_unavailable" });
+    let released = 0;
+    const timers: GuidanceTimers = { set: (callback) => { callback(); callback(); return () => { released++; }; } };
+    const r = run(() => Promise.resolve(validDecision), { timers });
+    expect(await r.promise).toEqual({ ok: false, reason: "model_unavailable" });
+    expect(r.seen).toHaveLength(0);
+    expect(released).toBe(1);
   });
 });
 

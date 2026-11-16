@@ -63,6 +63,9 @@ export function callGuidanceModel(args: { readonly model: GuidanceModel; readonl
       // The deadline is armed BEFORE the call: a timer port that fails means no call is made at all.
       const handle: unknown = args.timers.set(() => finish(failed("model_unavailable")), MODEL_DEADLINE_MS);
       if (typeof handle !== "function") { settled = true; return resolve(failed("model_unavailable")); }
+      // A port may fire synchronously, before it hands back the cancel handle.
+      // Honour that deadline without starting a model call, and release the handle once.
+      if (settled) { try { handle(); } catch { /* releasing is best effort */ } return; }
       cancel = handle as () => void;
       let answer: unknown;
       try { answer = args.model.generate(request.request); } catch { return finish(failed("model_unavailable")); }
