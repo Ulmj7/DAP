@@ -168,3 +168,9 @@ describe("overlay", () => {
     expect(document.querySelector('[data-ai-overlay="tooltip"]')?.hasAttribute("data-ai-ignore")).toBe(true);
   });
 });
+
+
+it.each(['<div inert><input data-ai-id="profile.nameInput"></div>', '<details><summary>Collapsed</summary><input data-ai-id="profile.nameInput"></details>'])("refuses unavailable ancestor fixtures: %s", markup => {
+  html(markup);
+  expect(createTargets(root, registry).find("profile.nameInput")).toBeNull();
+});

@@ -27,7 +27,11 @@ function isVisible(element: HTMLElement): boolean {
   const view = element.ownerDocument.defaultView;
   if (view === null) return false;
   for (let node: Element | null = element; node !== null; node = node.parentElement) {
-    if (node.hasAttribute("hidden") || node.getAttribute("aria-hidden") === "true") return false;
+    if (node.hasAttribute("inert") || node.hasAttribute("hidden") || node.getAttribute("aria-hidden") === "true") return false;
+    if (node.tagName === "DETAILS" && !node.hasAttribute("open")) {
+      const summary = Array.from(node.children).find(child => child.tagName === "SUMMARY");
+      if (summary === undefined || !summary.contains(element)) return false;
+    }
     if (view.getComputedStyle(node).display === "none") return false;
   }
   return view.getComputedStyle(element).visibility !== "hidden" && view.getComputedStyle(element).visibility !== "collapse";
@@ -75,7 +79,7 @@ export function createTargets(root: HTMLElement, registry: SemanticRegistry): Ta
     const observer = new view.MutationObserver(() => { try { callback(); } catch { /* a subscriber's failure is its own */ } });
     observer.observe(root, {
       childList: true, subtree: true, attributes: true,
-      attributeFilter: [ATTR_ID, ATTR_IGNORE, ATTR_PRIVATE, ATTR_REDACT, "hidden", "aria-hidden", "style", "class", "type"],
+      attributeFilter: [ATTR_ID, ATTR_IGNORE, ATTR_PRIVATE, ATTR_REDACT, "hidden", "aria-hidden", "style", "class", "type", "open", "inert"],
     });
     return () => observer.disconnect();
   };
