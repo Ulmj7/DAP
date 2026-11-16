@@ -83,5 +83,7 @@ jobs:
         run: npx vitest run --project integration tests/integration/reference-host.test.ts
       - name: Full test suite
         run: npm test
+      - name: Guidance (offline provider, PostgreSQL)
+        run: npm run test:guidance
       - name: M1 gate (authoritative)
         run: npm run test:m1-gate

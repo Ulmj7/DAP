@@ -25,7 +25,9 @@
     "build:web": "vite build apps/reference-web",
     "test:m1-gate": "node scripts/m1-gate.mjs",
     "coverage:security": "node packages/testkit/dist/cli/coverage.js",
-    "db:migrate": "node db/migrate.mjs"
+    "db:migrate": "node db/migrate.mjs",
+    "guidance:demo": "tsc -b && node apps/reference-host/dist/guidance/demo.js",
+    "test:guidance": "vitest run packages/ai/src/guidance packages/testkit/src/guidance packages/testkit/src/fake-guidance-model.test.ts apps/reference-host/src/guidance tests/architecture/ai-guidance-boundary.test.ts tests/architecture/guidance-host-boundary.test.ts tests/integration/guidance"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
