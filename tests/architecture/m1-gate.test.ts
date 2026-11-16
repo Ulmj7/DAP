@@ -51,7 +51,7 @@ describe("the M1 gate's checks", () => {
   it.each(REFERENCE_HOST_GROUPS)("a reference-host group that did not pass is a failure: %s", (group) => {
     const tests = hostTests.filter(entry => entry.ancestorTitles[0] !== group);
     expect(checkReport(replace(healthy(), HOST, tests))).toContain(`reference host group did not pass: ${group}`);
-    const skipped = hostTests.map(entry => ({ ...entry, status: entry.ancestorTitles[0] === group ? "skipped" : "passed" }));
+    const skipped = hostTests.map(entry => test(entry.ancestorTitles[0] === group ? "skipped" : "passed", entry.title, entry.ancestorTitles[0]));
     expect(checkReport(replace(healthy(), HOST, skipped))).toContain(`reference host group did not pass: ${group}`);
   });
   it("a project in which no test ran is a failure", () => {

@@ -2,6 +2,7 @@
  * T081, ATK-AUDIT-01..05 and 07. Each oracle is proven able to FAIL: a good observation passes, and each violation is reported.
  * Representative real-chain proof lives in review-fixes.test.ts and integration/audit-postgres.test.ts; the scenarios run against the real Gateway at the bottom (T071).
  */
+import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { assemble } from "../../packages/security/src/gateway/create-gateway.js";
@@ -118,6 +119,7 @@ function auditTarget() {
   const world = withGateway({
     config: WIDE_GATEWAY_CONFIG,
     mediumConfirmationJustification: DRAFT_JUSTIFICATION,
+    inputSchemas: { testMediumDraft: z.strictObject({ documentId: z.string().min(1).max(64), draft: z.string().min(1).max(4000), unlisted: z.string().max(64).optional() }) },
     auditSink: { append: async (record) => { if (failing === "all" || failing.has(record.type)) { refusals++; throw new Error("audit store unavailable"); } } },
   });
   const target = {
@@ -125,7 +127,7 @@ function auditTarget() {
     failAudit: (which: "all" | readonly AuditEventType[]) => { failing = which === "all" ? "all" : new Set(which); },
     auditWriteFailures: () => refusals,
     projectionProposal: () => ({
-      raw: { action: "testMediumDraft", params: { documentId: "doc-1", draft: `notes ${DRAFT_VALUE}` } },
+      raw: { action: "testMediumDraft", params: { documentId: "doc-1", draft: `notes ${DRAFT_VALUE}`, unlisted: UNLISTED_CANARY } },
       plain: { "/documentId": "doc-1" }, masked: ["/draft"], canaries: [DRAFT_VALUE, UNLISTED_CANARY],
     }),
   };
@@ -140,6 +142,7 @@ describe("ATK-AUDIT-01..05 against the REAL gateway, through withGateway() (T071
     const observation = await scenario(id).run(target);
     expect(scenario(id).verify(observation)).toEqual([]);
     expect(observation.feedback.length).toBeGreaterThan(0);
+    if (id === "ATK-AUDIT-05") expect(world.executor("testMediumDraft").receivedParams).toContainEqual(expect.objectContaining({ unlisted: UNLISTED_CANARY }));
     if (id === "ATK-AUDIT-01") expect(world.executorCalls()).toBe(0); // the same fixture configuration executes with a healthy sink in AUDIT-03 and 04
     if (id === "ATK-AUDIT-03" || id === "ATK-AUDIT-04") expect(world.executorCalls()).toBeGreaterThan(0);
   });
