@@ -85,3 +85,12 @@ Everything the brief lists as not MVP, plus: C01 and its transport, admin and an
 
 - U1 correction: capture-phase bridge checks stay synchronous, but typed event delivery uses a cancellable FIFO macrotask after application handlers/default actions, because the runtime verifies postconditions synchronously.
 - Profile verification no longer uses a microtask barrier; it waits only for an actual in-flight save. Test-only injected definitions prove toggle, route and save ordering through the real runtime; no definitions ship.
+
+## U2 decisions
+
+- Trusted availability changes come from targets.observe plus route-render refresh, without changing the engine or bridge timing.
+- Tooltip title is the registry label; primary-path guide steps alone count toward progress, recover-only steps say Retry.
+- A non-blocking scrim is the target ring's spread shadow; targetless route cards have a pointer-transparent dim layer.
+- Guides are a Dashboard catalog card and a header link, not a popover; no generic Next exists.
+- Profile allows three failed Save attempts by bounding fixName to two recovery entries; only the engine declares completion/failure.
+- Result dialogs use native dialog when available, a semantic fallback in jsdom, and expose no request-denied state.
