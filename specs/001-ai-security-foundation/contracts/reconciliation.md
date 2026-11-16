@@ -11,7 +11,7 @@ packages' sources; the table names were read against `db/migrations/`.
 
 The **types** already matched (the nine contract files differed from `packages/contracts/src` only in `.js` import suffixes, in ten
 phantom runtime `declare` declarations, in one missing option type and in comments). The mismatches were therefore about **where things live**, about
-**what is built**, and about the **database shapes**. After this change `contracts/*.ts` is a copy of the code's contract types, and the strict
+**what is built**, and about the **database shapes**. After this change `contracts/*.ts` mirrors the code's contract type declarations (comments correct inherited runtime-description errors), and the strict
 compile check passes (see [validation-report.md](../../../docs/validation-report.md)).
 
 ## A. TypeScript contracts (`contracts/*.ts`)
@@ -24,7 +24,7 @@ compile check passes (see [validation-report.md](../../../docs/validation-report
 | A4 | `gateway.ts` declared `toPlannerFeedback` and `createPolicyGateway` and imported `ConfirmationService` | Both functions are `@dap/security` exports (`gateway/feedback.ts`, `gateway/create-gateway.ts`). `createPolicyGateway(deps, extras?)` returns `{ proposals, confirmations }`; **`confirmations` is a frozen fail-closed stub** (`decide` answers `not_valid / not_found`, `listPending` is empty). It also accepts optional `extras.telemetry` | Phantom declarations removed; README and `docs/architecture.md` say the service is a stub |
 | A5 | `execution.ts` declared `defineExecutor` and `bindExecutors` in the contract file | `defineExecutor` (with `ExecutionGuardError`, `ExecutorSpec`) is exported by `@dap/contracts` via `execution-runtime.ts`; `bindExecutors` is exported by `@dap/security` | Removed; README corrected. `ExecutionGuardError` and `ExecutorSpec` were **absent from the spec** and are now named |
 | A6 | `audit.ts`: `AuditSink.append(event)` | `append(event, options?: AuditAppendOptions)`; `AuditAppendOptions` (a structural abort signal) was **absent from the spec**; the durability wording was weaker than the code's (commit-acknowledgement window) | Mirrored from code, including the cancellation contract |
-| A7 | `audit.ts`: `AuditReader` implemented in `@dap/security` | `createAuditReader` (`audit/audit-reader.ts`) over `PostgresAuditStore.query` / `InMemoryAuditStore` | Row unchanged, README names the factories |
+| A7 | `audit.ts`: `AuditReader` implemented in `@dap/security` | `createAuditReader` (`audit/audit-reader.ts`) over `PostgresAuditStore.queryForTenant` / `InMemoryAuditStore` | Row unchanged, README names the factories |
 | A8 | `testkit.ts` declared `buildCoverageReport` | Not built anywhere (`coverage` is FUTURE; `packages/testkit/src/cli/` does not exist). The types `Waiver`, `CoverageCell`, `CoverageReport` do exist in contracts | Phantom function removed; README marks it "not built (FUTURE)" |
 | A9 | `testkit.ts`: field order in `AttackObservation` | `auditEvents` is declared before `leakFindings` in code | Mirrored (cosmetic) |
 | A10 | `core.ts`, `security-context.ts`, `state-ports.ts`, `confirmation.ts` | Identical to code apart from `.js` suffixes | No change besides the mirror |
@@ -64,7 +64,7 @@ compile check passes (see [validation-report.md](../../../docs/validation-report
 | D4 | `plan.md` Source Code tree | listed `confirmation/`, `coverage`, `http/`, `metrics.ts`, `deploy/{docker,k8s,...}`, HTTP-level integration tests | Marked not built; real file names added |
 | D5 | `plan.md` "Reference host" description (Fastify service) | Not built; the host is in-process | Fixed in the tree and in the Summary |
 | D6 | `quickstart.md` | Described a Docker/HTTP/Prometheus flow that does not exist ("Nothing here runs yet") | Rewritten as the M1 quickstart and run (T144) |
-| D7 | `spec.md` header status | "Implementation in progress" | "Feature 001 M1 complete" with scope note |
+| D7 | `spec.md` header status | "Implementation in progress" | "M1 acceptance criteria evidenced; maintainer sign-off pending" with scope note |
 | D8 | `apps/reference-host/package.json` lists `fastify`, `pino`, `prom-client` | No source imports them | **Not changed** (manifests are outside this task); recorded in the validation report and constitution review |
 
 ## Not reconciled (and why)
@@ -72,3 +72,8 @@ compile check passes (see [validation-report.md](../../../docs/validation-report
 - `research.md` (decisions D1 to D19) is design rationale, not a status document. Where it describes confirmation, HTTP or metrics it is describing
   OPTIONAL or FUTURE work. It was read for contradictions and none was found that affects M1; it was not edited.
 - Functional requirements in `spec.md` that belong to OPTIONAL or FUTURE work keep their wording; their tier labels are already in the spec.
+
+
+## QA clarification of inherited comments
+
+The declarations match, but the original source comments are not an API guarantee: `AuditEvent.occurredAt` is Gateway-supplied, projected parameters/attempted names can be model-authored, `ExecutionResult.code` is not written into the audit by the Gateway, and the M1 confirmation handle is not delivered. The spec mirror comments state these limits explicitly. `queryForTenant` is the bounded PostgreSQL source method; `AuditReader.query` is the public reviewer method.

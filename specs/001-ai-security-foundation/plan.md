@@ -366,7 +366,7 @@ What remains:
 
 1. **In-process supply-chain compromise** can reach the restricted mint functions. Mitigation is
    dependency scanning and review, not this design.
-2. **Post-execution audit failure**: the action has already happened. It raises a metric and alert;
+2. **Post-execution audit failure**: the action has already happened. The writer calls optional audit-failure telemetry; the reference host installs no metrics/alerting backend;
    reconciliation is out of scope.
 3. **Fixed-window rate limits** allow up to twice the limit across a window boundary.
 4. **Outcome type reveals one bit**: "unknown action" versus "not allowed for you". Low impact;
@@ -375,7 +375,7 @@ What remains:
    does not authenticate senders.
 6. **Confirmation UI** must render outside any DOM the AI can drive. This feature cannot enforce
    that; it is a hard requirement on the future UI feature.
-7. **Single PostgreSQL** is a dependency: when it is down everything is denied (by design).
+7. **Single PostgreSQL** is a dependency: new proposals fail closed when their required state/audit operations fail; already-confirmed ALLOWED outcomes and already-running executors are not retroactively denied.
 8. **Executor authority** (attention item 4) depends on executor implementations and review.
 9. **Reference host** includes a development-only authentication stub; mitigated by explicit
    opt-in and a production refusal, but it is attack surface in any shared environment.
@@ -397,8 +397,7 @@ What remains:
     itself bounds a blocked or slow statement (`lock_timeout`, `statement_timeout`,
     `writeTimeoutMs`, default 1500 ms). The unavoidable window is a COMMIT already in flight when
     the writer gives up: its outcome is uncertain, so an ALLOWED row may exist for a request that
-    was denied and never executed. The trail then truthfully shows ALLOWED without EXECUTED; it
-    never shows an execution that did not happen. The best-effort DENIED record may also exist;
+    was denied and never executed. The trail then truthfully shows ALLOWED without EXECUTED; an EXECUTED failure does not prove the body started. The best-effort DENIED record may also exist;
     consumers must not infer execution from ALLOWED alone. Legacy sinks that ignore the signal
     retain their broader old uncertainty, including writes abandoned before COMMIT.
 14. **Audit time and sequence precision**: the current Gateway clock supplies millisecond instants;

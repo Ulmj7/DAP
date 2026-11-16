@@ -4,7 +4,7 @@
 
 A run-and-verify guide for **Milestone M1** (the eleven criteria in the spec's Scope Declaration), rewritten on 2026-11-16 (T144) to describe only
 what exists on `dev`. The previous version described an HTTP host, Prometheus, a confirmation flow and a coverage gate. **None of those are built**;
-they are OPTIONAL or FUTURE and are not part of this guide. There is no LLM and no network access in any step.
+they are OPTIONAL or FUTURE and are not part of this guide. No live LLM is used. Docker image pulls and npm installation may access the network; tests use local PostgreSQL.
 
 ## Prerequisites
 
@@ -97,8 +97,8 @@ docker compose -f deploy/compose.yaml exec -T -e PGPASSWORD=dap_app_local_only p
 ```
 
 **Expected**: the first query returns `0` although the tests wrote rows (forced row-level security: no tenant is set, so no row is visible); the
-`update` fails with `permission denied for table sec_audit_events` (the application role has `SELECT` and `INSERT` only; a trigger also refuses
-`UPDATE`, `DELETE` and `TRUNCATE` for any role); a random tenant sees `0` rows.
+`update` fails with `permission denied for table sec_audit_events` (the application role has `SELECT` and `INSERT` only; installed triggers also refuse ordinary
+`UPDATE`, `DELETE` and `TRUNCATE`, including owner DML; administrators can alter/disable these controls); a random tenant sees `0` rows.
 
 ## 7. CI
 

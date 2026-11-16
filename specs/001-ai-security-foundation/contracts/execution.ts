@@ -66,7 +66,7 @@ export type ExecutionResult<TValue = unknown> =
     }
   | {
       readonly status: "failure";
-      /** Short code for audit. Never raw error text, never shown to the model. */
+      /** Trusted executor failure code; the current Gateway records only success/failure, not this code. */
       readonly code: string;
     };
 

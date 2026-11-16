@@ -90,7 +90,7 @@ export type PolicyDecision =
       readonly outcome: "REQUIRES_CONFIRMATION";
       readonly actionId: ActionId;
       readonly risk: RiskLevel;
-      /** Delivered to the user's session via ConfirmationChannel; never placed in PlannerFeedback. */
+      /** Reserved server handle, never placed in PlannerFeedback. M1 does not persist or deliver it; the confirmation service is not built. */
       readonly confirmationId: ConfirmationId;
     })
   | (DecisionBase & {

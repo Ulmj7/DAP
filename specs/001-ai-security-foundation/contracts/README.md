@@ -3,8 +3,7 @@
 **Feature**: `001-ai-security-foundation` | **Spec**: [../spec.md](../spec.md) | **Plan**: [../plan.md](../plan.md)
 
 These are the interfaces later AI features build against (spec FR-053). The TypeScript files are
-type-only declarations. **Since T143 (2026-11-16) they mirror `packages/contracts/src/*.ts`** (the only difference is that imports omit the `.js`
-suffix), so they describe what is actually exported. They were compile-checked again with
+type-only declarations. **Since T143 (2026-11-16) their type declarations mirror `packages/contracts/src/*.ts`** (imports omit `.js`; comments below correct inherited runtime-description errors), so they describe what is actually exported. They were compile-checked again with
 `tsc --ignoreConfig --noEmit --strict --exactOptionalPropertyTypes --noUncheckedIndexedAccess --moduleResolution Bundler` (exit 0, log in
 [validation-report.md](../../../docs/validation-report.md)). They contain no behavior; behavior lives in the packages named below. The list of
 mismatches found and how each was resolved is in [reconciliation.md](./reconciliation.md).
@@ -42,7 +41,7 @@ mismatches found and how each was resolved is in [reconciliation.md](./reconcili
 ```
 
 **Allowed edges only**: every package to `contracts`; `testkit` to `security` and `ai`;
-`apps/reference-host` to all. **Forbidden**: `ai` to `security` or `actions`; `actions` to `ai` or
+`apps/reference-host` to contracts, security, ai and actions (never testkit). **Forbidden**: `ai` to `security` or `actions`; `actions` to `ai` or
 `security`; `security` to `ai` or `actions`; any production package to `testkit`.
 The restricted subpath `@dap/contracts/mint` may be imported only by `security` and `testkit`.
 
@@ -54,14 +53,13 @@ The restricted subpath `@dap/contracts/mint` may be imported only by `security` 
 | Security module | context factory, Gateway internals, state store, audit sink | executor implementations (injected opaque, via `ExecutorTable`) |
 | Executors | a grant-checked `execute` | a way to mint grants or contexts |
 | Trusted HTTP layer | `ConfirmationService`, context factory | the planner's submitter internals |
-| Host application | the ports it implements (auth, permissions, resources, pages, confirmation channel) | any ability to bypass the Gateway |
+| Trusted host application | composition root, ports, registry, executor bindings and context factory | must not expose these trusted APIs as model tools; not isolated from same-process malicious host code |
 
 ## Pipeline
 
 See research D6 for the ordered stage table and the spec FR mapping. In short: trusted context,
 intake, global limits, replay claim, resolve and enable, strict validation, authorization, risk
-and confirmation, durable audit, grant-checked execution. Any failure, throw, or timeout ends the
-pipeline with a denial.
+and confirmation, durable audit, grant-checked execution. Before a confirmed ALLOWED receipt, policy faults stop execution with a denial. After that receipt, execution faults preserve ALLOWED and report failure/try_later; optional metadata and telemetry faults do not revoke known success.
 
 ## Adding a capability (the contract for later features)
 

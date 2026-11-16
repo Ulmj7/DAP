@@ -34,11 +34,11 @@ export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
 
 /**
  * Every field's provenance: trusted context, trusted runner, validated parameters, or system.
- * Nothing here is copied from free-form model output.
+ * Only validated, explicitly projected parameter values and the escaped/scrubbed attempted action name may carry model-authored text.
  */
 export interface AuditEvent {
   readonly id: string;
-  readonly occurredAt: IsoInstant; // database clock when persisted
+  readonly occurredAt: IsoInstant; // Gateway-supplied instant, preserved by the sink
   readonly type: AuditEventType;
   readonly requestId: RequestId;
   readonly decisionId: string;

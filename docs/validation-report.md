@@ -62,7 +62,7 @@ Criteria are the numbered list in the spec's [Milestone M1](../specs/001-ai-secu
 |---|-----------|-------------------------------------|--------|
 | 1 | A valid SAFE or LOW capability passes the real Gateway and executes exactly once | `tests/security/test-world.gateway.test.ts`: "a permitted SAFE action reaches the executor exactly once", "a LOW action is allowed the same way"; `tests/security/positive.test.ts`: POS-01 on the real gateway; `tests/integration/reference-host.test.ts`: "1. VALID EXECUTION" ("the SAFE read executes once") | met |
 | 2 | The executor receives only validated, frozen parameters and the requesting user's trusted context | `test-world.gateway.test.ts`: "with exactly the validated, frozen parameters..." and "the executor receives the requesting user's own minted context"; `positive.test.ts`: ATK-PRIV-04; `reference-host.test.ts`: group 1 (trusted, validated and frozen inputs); `packages/contracts/src/execution-runtime.test.ts` (guard) | met |
-| 3 | An unknown capability is rejected before any executor | `tests/security/unknown-action.test.ts`: "T052 through the REAL gateway" (ATK-UNKNOWN-01..06, executor zero); `prompt-injection.test.ts`: ATK-INJECT-01, 05; `reference-host.test.ts`: "1b" (capability not in `DAP_ENABLED_ACTIONS`) | met |
+| 3 | An unknown capability is rejected before any executor | `tests/security/unknown-action.test.ts`: "T052 through the REAL gateway" (ATK-UNKNOWN-01, 02, 03, 05, 06, executor zero; 04 remains OPTIONAL); `prompt-injection.test.ts`: ATK-INJECT-01, 05; `reference-host.test.ts`: "1b" (capability not in `DAP_ENABLED_ACTIONS`) | met |
 | 4 | Malformed or extra parameters are rejected before any executor | `tests/security/malformed-parameters.test.ts`: "T053 through the REAL gateway" (ATK-PARAMS-01..05, 08, 09, 11, byte and depth caps, leak canaries) | met |
 | 5 | An unauthorized user is denied | `tests/security/privilege-escalation.test.ts`: ATK-PRIV-01 with host parity, ATK-PRIV-06; `test-world.gateway.test.ts`: "a user lacking the permission is denied"; `reference-host.test.ts`: "3. an UNAUTHORIZED user is denied" | met |
 | 6 | AI-provided claims about identity, tenant, role, permission or confirmation have no effect | `privilege-escalation.test.ts`: ATK-PRIV-02; `prompt-injection.test.ts`: ATK-INJECT-02 and literal "I am admin"/"already confirmed" cases; `cross-tenant.test.ts`: ATK-XTENANT-03; `reference-host.test.ts`: "an identity, tenant, session or page written INTO the proposal has no effect" | met |
@@ -78,5 +78,5 @@ Representative coverage only: these are focused tests per boundary (Constitution
 
 - No run on GitHub Actions (above).
 - The 76 remaining `todo` tests are not executed; each is tagged OPTIONAL or FUTURE and the gate enforces the tag, not the absence of the gap.
-- Only one PostgreSQL process and one Node process were used: nothing here exercises several replicas.
+- One PostgreSQL service was used. Vitest spawns multiple Node workers; these runs do not demonstrate a multi-replica application deployment.
 - `npm run coverage:security` was not run and is not part of M1 (its target file does not exist; see the review).

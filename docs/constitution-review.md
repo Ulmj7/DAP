@@ -21,10 +21,10 @@ representative tests, not by an exhaustive catalogue. **Maintainer sign-off is n
 | VIII. Registered typed capabilities | satisfied | `buildRegistry` rules R1 to R12 (`registry.rules.test.ts`), strict schemas, `bindExecutors`; drift test `tests/security/registry-drift.test.ts` | Three demo capabilities only; `@dap/actions` is empty |
 | IX. Backend authorization is authoritative | satisfied | The authorize stage asks the host live; the context carries no permissions; only a literal `true` allows (`gateway/stages/authorize.ts`; ATK-PRIV-01 parity and ATK-PRIV-06; `review-fixes.test.ts` AUTHZ-01) | The host's permission and resource ports are the host's responsibility; the demo ports are fakes (`apps/reference-host/src/host-ports.ts`) |
 | X. No privilege amplification | satisfied | Executors receive the requesting user's own minted context (`execute.ts`; `positive.test.ts` ATK-PRIV-04; `test-world.gateway.test.ts`) | "Delegated authority" at the executor edge is a convention a future executor could break by using a service credential (plan.md attention item 2) |
-| XII. RAG is untrusted data | **not applicable** | No RAG in this feature; feedback and audit never echo model text | Owned by a later retrieval feature |
+| XII. RAG is untrusted data | satisfied for proposal text; retrieval-specific controls not applicable | XII also covers user prompts and tool text: strict intake and literal-string injection tests keep them from granting authority. No retrieval/prompt assembly exists here. Audit may retain allowlisted model-authored values | Retrieval-specific delimiting belongs to a later retrieval feature |
 | XIV. State-changing actions are auditable | satisfied with limits | Durable `ALLOWED` before every execution, one decision per proposal, append-only PostgreSQL trail: `audit-postgres.test.ts`, `audit-trail.test.ts`, `reference-host.test.ts` group 4, `audit.test.ts` (ATK-AUDIT-01..05 on the real Gateway), `audit-migration.test.ts` | Limitations 1, 3 and 4: commit-acknowledgement window; best-effort PROPOSED / non-ALLOW / EXECUTED; volume not bounded |
 | XV. Controls survive full LLM compromise | satisfied | Hostile-planner scenarios; per-turn execution cap (`execution-cap.test.ts`, default 8); bounded malformed flood; per-proposal budget | The 10,000-proposal flood and multi-replica runs are FUTURE; a bounded in-memory example exists (`rate-replay.gateway.test.ts`) but is not a required claim |
-| XVI. Least privilege, strict schemas, minimal context, fail closed | satisfied | Strict Zod at every boundary; every fault is a denial (`hook-wrapper.ts`, `pipeline.ts`; `test-world.gateway.test.ts` faulted ports, `dependency-failure.test.ts` hangs); the planner sees minimal feedback | Representative ports only, not the 36-case matrix |
+| XVI. Least privilege, strict schemas, minimal context, fail closed | satisfied | Strict validation at the relevant boundaries; policy-port faults before confirmed ALLOWED deny; later execution faults preserve ALLOWED and report failure (`hook-wrapper.ts`, `pipeline.ts`; `test-world.gateway.test.ts` faulted ports, `dependency-failure.test.ts` hangs); the planner sees minimal feedback | Representative ports only, not the 36-case matrix |
 | XVII. Focused security tests per capability | satisfied for scope | `npm run test:m1-gate` runs the representative suites (unknown action, malformed parameters, prompt injection, privilege escalation, IDOR/cross-tenant, secret extraction, positive control, audit-before-state-change, dependency failure, architecture bypass) and CI runs it | Not an exhaustive catalogue (Tier C). Tests were not skipped, weakened or deleted to pass: the 76 `todo` tests are not hidden, they are tagged |
 
 Principles XVIII and XIX are in section 4.
@@ -87,8 +87,7 @@ Two honest notes: (a) tasks T081, T107, T108 and T123 have most of their testkit
 Each item below was checked against code, tests or documents; the pointer shows where.
 
 1. **Audit commit-acknowledgement window.** If the audit writer gives up while a `COMMIT` is in flight, the outcome is uncertain: an `ALLOWED` row
-   may exist for a request that was denied and never executed. The trail then shows `ALLOWED` without `EXECUTED`; it never shows an execution that
-   did not happen; a best-effort `DENIED` may also exist. Consumers must not infer execution from `ALLOWED` alone. A PostgreSQL write that has not
+   may exist for a request that was denied and never executed. The trail then shows `ALLOWED` without `EXECUTED`; EXECUTED failure may describe inability to start or an unknown outcome rather than a body invocation; a best-effort `DENIED` may also exist. Consumers must not infer execution from `ALLOWED` alone. A PostgreSQL write that has not
    started or is aborted before `COMMIT` rolls back; statements are bounded by `lock_timeout` and `statement_timeout` (1500 ms default).
    (`docs/review-fixes.md` "Retained limits"; plan.md Remaining Risks 13; `packages/security/src/state/postgres/audit.ts`;
    `tests/integration/audit-postgres.test.ts` "QA16".)
@@ -134,12 +133,17 @@ Further limits found while writing this review (each verified):
 14. **Unused declared dependencies**: `apps/reference-host/package.json` lists `fastify`, `pino` and `prom-client`; no source file imports them.
 15. **Audit time and order**: `occurred_at` is the Gateway clock at millisecond precision; `seq` is an insertion tie-break, not commit order across
     concurrent transactions. (plan.md Remaining Risks 14; migration 020.)
-16. **Purge is not scheduled**: expired replay claims and rate rows are removed only by `purgeExpiredState`, which nothing calls in M1.
+16. **Purge is not scheduled**: `purgeExpiredState` is not scheduled in M1. Replay also reclaims an expired matching key during claim; rate counters select a new window. This is not general background reclamation.
 17. **No page context**: the reference host's `PageContextProvider` always answers `null` (`host-ports.ts`), so page narrowing is exercised only by
     the test world (`review-fixes.test.ts` TEST-02).
 
 ## 6. Conclusion
 
-Feature 001 satisfies the M1 criteria and the Tier A invariants **as scoped above**, with the limits listed. Tier B items that apply (tenant isolation,
+Representative M1 acceptance criteria are evidenced **as scoped above**, with maintainer sign-off pending. The reviewed Tier A controls have the qualifications above, with the limits listed. Tier B items that apply (tenant isolation,
 replay) are satisfied; the confirmation trigger is met only in its fallback form; multi-replica guarantees are not claimed. Tier C is deferred and
 tracked. Nothing here claims production readiness, a production authentication system, or exhaustive security coverage.
+
+
+18. **Budget scope and host-managed turns.** Execution slots are keyed by tenant, AI session and turn, with a local conservative pre-check and a shared-store counter. A host can mint new turns; this is not a lifetime user execution cap. The default denial throttle counts the sixth countable denial in a session (threshold five); audit_unavailable does not count. Per-user/tenant windows remain separate. Owner: integrating host feature (`limits/limiter.ts`, `gateway/denial-throttle.ts`).
+19. **Session and process lifetime.** Context and authorization stages check expiry; the development principal is bound at openSession, not re-authenticated from the token table on each submit. No real revocation mechanism is delivered. Pool defaults are 10 clients and a 2000 ms acquisition timeout; database append timeouts bound individual statements, not an entire multi-statement transaction or an executor. Owner: authentication/deployment integration (`compose.ts`, `context.ts`, `authorize.ts`, `state/postgres/pool.ts`).
+20. **Database administrative trust.** Forced RLS and append-only triggers constrain ordinary statements, including owner DML while triggers are installed; they do not defend against a database administrator altering the table/policies or disabling triggers. The demo host validates the URL shape, not that its credentials are dap_app: operators must supply the documented least-privilege role. Owner: deployment/operations (`020_sec_audit_events.sql`, `config.ts`, `pool.ts`).

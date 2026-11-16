@@ -4,8 +4,8 @@
 
 **Created**: 2026-11-13
 
-**Status**: **Milestone M1 complete on `dev` (2026-11-16)**: the eleven M1 criteria below are each mapped to evidence in
-[docs/validation-report.md](../../docs/validation-report.md). OPTIONAL and FUTURE work is not built and does not block completion. Reconciled with
+**Status**: **Milestone M1 acceptance criteria evidenced (2026-11-16); maintainer sign-off pending**: the eleven M1 criteria below are each mapped to evidence in
+[docs/validation-report.md](../../docs/validation-report.md). OPTIONAL and FUTURE work is deferred (some types, adapters and test scaffolding already exist) and does not block M1 acceptance. Reconciled with
 Constitution 2.0.0 on 2026-11-16 (see the Scope Declaration); contracts and data model reconciled with the code the same day
 ([contracts/reconciliation.md](./contracts/reconciliation.md)). The system is not claimed to be "secure"; known limits are in
 [docs/constitution-review.md](../../docs/constitution-review.md).
