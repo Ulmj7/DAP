@@ -75,3 +75,10 @@ Everything the brief lists as not MVP, plus: C01 and its transport, admin and an
 1. **Locale for the diploma demo** (default: English with the dictionary seam; Mongolian is OPTIONAL T242).
 2. **Visual checkpoint** (default: you run `npm run dev:web` after U2; say so if you want agent-captured screenshots, T243, instead).
 3. **C01 AI widget** (default: its own later slice with a host endpoint, not part of P0).
+
+## U1 decisions
+
+- Profile saving is genuinely asynchronous through an injected service (default 250 ms), with saving/failure states and a bounded async postcondition; this supersedes D7's synchronous-save assumption.
+- The developer demo controls remain, clearly labelled for removal in U2; the existing overlay is untouched (D8 removal deferred).
+- Dashboard has Profile/Settings navigation and an informational guides note, with no fake Guides action until U2.
+- Security stays visible; Advanced reveals only the inert two-factor control, following the current registry and articles.
