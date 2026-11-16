@@ -5,7 +5,7 @@ import type { SemanticRegistry } from "../semantic/types.js";
 import type { Targets } from "./targets.js";
 export function createSemanticBridge({ root, registry, targets, dispatch, trustedEventsOnly = true }: {
  root: HTMLElement; registry: SemanticRegistry; targets: Targets; dispatch: (event: SemanticEvent) => void; trustedEventsOnly?: boolean;
-}): { destroy(): void } {
+}): { clearPending(): void; destroy(): void } {
  let destroyed = false;
  const pending = new Set<() => void>();
  const enqueue = (parsed: SemanticEvent, view: Window) => {
@@ -41,5 +41,7 @@ export function createSemanticBridge({ root, registry, targets, dispatch, truste
  };
  const types = ["click", "input", "change"] as const;
  for (const type of types) root.addEventListener(type, listener, true);
- return { destroy() { if (destroyed) return; destroyed = true; for (const cancel of [...pending]) cancel(); for (const type of types) root.removeEventListener(type, listener, true); } };
+ // An accepted event describes the run that was active when the user acted: the host drops it when that run ends or another begins.
+ const clearPending = () => { for (const cancel of [...pending]) cancel(); };
+ return { clearPending, destroy() { if (destroyed) return; destroyed = true; clearPending(); for (const type of types) root.removeEventListener(type, listener, true); } };
 }

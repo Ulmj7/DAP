@@ -57,9 +57,13 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   const runtime = createWalkthroughRuntime({ registry, catalog, router: createRouterPort(router, registry), targets: createTargetPort(targets), postconditions: postconditions.checks,
     presenter, timers: { set: (callback, ms) => { const handle = win.setTimeout(callback, ms); return () => win.clearTimeout(handle); } },
   });
-  const guides = guideApi(runtime);
+  // The bridge listens on the page; its queue is cleared at every run boundary (see begin and the runtime subscription below).
+  const bridge = createSemanticBridge({ root, registry, targets, dispatch: event => runtime.dispatch(event), trustedEventsOnly: options.trustedEventsOnly ?? true });
+  // Events accepted before a run began (or after it ended) are not evidence about the next run: drop them as a run begins.
+  const begin = (id: string) => { bridge.clearPending(); return runtime.startWalkthrough(id); };
+  const guides = guideApi({ ...runtime, startWalkthrough: begin });
   let launcher: ReturnType<typeof createLauncher> | undefined;
-  const start = (id:string, source:HTMLElement) => {returnTo=source;dialog.close(false);const result=runtime.startWalkthrough(id);if(!result.ok)launcher?.refused();};
+  const start = (id:string, source:HTMLElement) => {returnTo=source;dialog.close(false);const result=begin(id);if(!result.ok)launcher?.refused();};
   const nav = h("nav", { class: "nav-group", "aria-label": copy.navigation });
   for (const route of ["dashboard", "profile", "settings"] as const) nav.append(h("a", { href: `#/${route}`, class: "nav-chip", ...(route === "dashboard" ? {} : { "data-ai-id": `nav.${route}` }) }, copy.nav[route]));
   const guidesLink = h("a", {href:"#/dashboard",class:"button"},copy.guide.link);
@@ -93,15 +97,14 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!dialog.isOpen()){event.preventDefault();runtime.cancel();}};
   const unsubscribeRuntime=runtime.subscribe(snapshot=>{
     presenter.update(snapshot);launcher?.update();
-    const active=["RESOLVING","PRESENTING","WAITING","VERIFYING"].includes(snapshot.status);
+    const active=["RESOLVING","PRESENTING","WAITING","VERIFYING"].includes(snapshot.status);if(!active)bridge.clearPending();
     if(active&&!escBound){doc.addEventListener("keydown",escape);escBound=true;}else if(!active&&escBound){doc.removeEventListener("keydown",escape);escBound=false;}
     const kind=resultKind(snapshot);const key=kind===null?"":`${snapshot.walkthroughId}|${snapshot.status}|${snapshot.failure}`;
     if(kind&&key!==terminal){const def=snapshot.walkthroughId===null?undefined:catalog.get(snapshot.walkthroughId);const step=def?.steps.find(s=>s.id===snapshot.stepId);const id=snapshot.walkthroughId;
-      dialog.show(kind,step?.kind==="complete"?step.text:"",{returnTo,retry:()=>{if(id!==null)runtime.startWalkthrough(id);}});
+      dialog.show(kind,step?.kind==="complete"?step.text:"",{returnTo,retry:()=>{if(id!==null)begin(id);}});
     }
     terminal=key;
   });
-  const bridge = createSemanticBridge({ root, registry, targets, dispatch: event => runtime.dispatch(event), trustedEventsOnly: options.trustedEventsOnly ?? true });
   let destroyed = false;
   return Object.freeze({
     registry, targets, overlay, router, store, runtime, profile, guides,
