@@ -19,6 +19,7 @@
     "test:security": "vitest run --project security",
     "test:conformance": "vitest run --project conformance",
     "test:integration": "vitest run --project integration",
+    "test:m1-gate": "node scripts/m1-gate.mjs",
     "coverage:security": "node packages/testkit/dist/cli/coverage.js",
     "db:migrate": "node db/migrate.mjs"
   },
