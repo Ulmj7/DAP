@@ -14,6 +14,7 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc -b",
+    "check:deps": "depcruise --config dependency-cruiser.config.cjs packages apps",
     "test": "vitest run",
     "test:arch": "vitest run --project arch",
     "test:security": "vitest run --project security",
