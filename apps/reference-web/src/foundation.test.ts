@@ -47,7 +47,7 @@ it("UI labels, saving/validation status and privacy match the store without remo
  let finish!: (v:{ok:boolean})=>void; const {a,root} = app("profile", {profileService:{ save:()=>new Promise(resolve=>{finish=resolve;}) }});
  const name = root.querySelector<HTMLInputElement>("#name")!; const save = root.querySelector<HTMLButtonElement>('[data-ai-id="profile.saveButton"]')!;
  name.value="a"; name.dispatchEvent(new Event("input",{bubbles:true})); save.click(); expect(name.getAttribute("aria-invalid")).toBe("true"); expect(name.getAttribute("aria-describedby")).toContain("name-error"); expect(root.querySelector("#name-error")?.textContent).toBe(copy.profile.too_short);
- name.value="Ada"; name.dispatchEvent(new Event("input",{bubbles:true})); save.click(); expect(save.disabled).toBe(true); expect(save.getAttribute("aria-busy")).toBe("true"); expect(root.querySelector('[role="status"]')?.textContent).toBe(copy.profile.saving);
+ name.value="Ada"; name.dispatchEvent(new Event("input",{bubbles:true})); save.click(); expect(save.getAttribute("aria-disabled")).toBe("true"); expect(name.readOnly).toBe(true); expect(save.getAttribute("aria-busy")).toBe("true"); expect(root.querySelector('[role="status"]')?.textContent).toBe(copy.profile.saving);
  finish({ok:true}); await Promise.resolve(); await Promise.resolve(); expect(root.querySelector("#name")).toBe(name); expect(root.querySelector('[role="status"]')?.textContent).toBe(copy.profile.saved);
  expect(a.store.get().profile.savedName).toBe("Ada");
 });

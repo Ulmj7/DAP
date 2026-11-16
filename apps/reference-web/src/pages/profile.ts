@@ -19,7 +19,8 @@ export function profilePage(actions: ProfileActions) {
  const element = h("section", {}, heading(c.title, c.intro), card(form), h("section", { class: "panel", "data-ai-ignore": true }, h("h2", {}, c.billing), h("p", {}, c.billingText), billing.element));
  return { element, update(state: ProfileState) {
   if (name.input.value !== state.draft) name.input.value = state.draft;
-  save.disabled = state.status === "saving"; name.input.disabled = state.status === "saving";
+  // Busy, never `disabled`: a browser drops focus from a control that is disabled while focused and does not give it back.
+  const busy = state.status === "saving"; save.setAttribute("aria-disabled", String(busy)); name.input.readOnly = busy;
   save.setAttribute("aria-busy", String(state.status === "saving")); save.textContent = state.status === "saving" ? c.savingButton : c.save;
   error.hidden = state.error === null; error.textContent = state.error === null ? "" : c[state.error];
   name.input.setAttribute("aria-invalid", String(state.error !== null)); name.input.setAttribute("aria-describedby", state.error === null ? "name-hint" : "name-hint name-error");

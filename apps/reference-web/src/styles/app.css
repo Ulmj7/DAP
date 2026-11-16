@@ -20,7 +20,7 @@ p { margin: var(--zero) var(--zero) var(--space-4); }
 .info-card { margin-top: var(--space-6); color: var(--dap-text-muted); }
 .button { min-height: var(--touch); padding: var(--space-2) var(--space-6); border: var(--border); border-radius: var(--radius-control); background: var(--dap-surface); color: var(--dap-ink); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; font-weight: var(--weight-medium); }
 .button.primary { background: var(--dap-accent); color: var(--dap-surface); border-color: var(--dap-accent); }
-.button:disabled { cursor: default; opacity: var(--disabled-opacity); }
+.button:disabled, .button[aria-disabled="true"] { cursor: default; opacity: var(--disabled-opacity); }
 .profile-form { max-width: var(--form-width); }
 .field { margin-bottom: var(--space-6); }
 label { display: block; font-weight: var(--weight-medium); margin-bottom: var(--space-2); }
