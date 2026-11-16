@@ -2,7 +2,8 @@
  * T202 (Feature 002): the walkthrough runtime's boundary.
  *
  *  - packages/walkthrough is a leaf (no @dap/* import, no runtime dependency) and only its `src/dom` may touch `document`, `window`,
- *    `HTMLElement` or `MutationObserver` (Constitution VII: the pure core cannot reach the page).
+ *    `HTMLElement`, `MutationObserver`, nodes or browser event objects (Constitution VII: the pure core cannot reach the page).
+ *  - The core (everything in the package outside `src/dom`: semantic, privacy, walkthrough, engine, index) may not import `src/dom`.
  *  - Neither packages/walkthrough nor apps/reference-web may use eval, `new Function`, innerHTML, outerHTML, insertAdjacentHTML or document.write.
  *  - packages/walkthrough may not use fetch, XMLHttpRequest, WebSocket or a dynamic import.
  *  - apps/reference-web may import only @dap/walkthrough (and vite, vitest and its own files).
@@ -21,7 +22,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const CORE = "packages/walkthrough";
 const APP = "apps/reference-web";
 
-const DOM_GLOBALS = new Set(["document", "window", "HTMLElement", "MutationObserver"]);
+const DOM_GLOBALS = new Set([
+  "document", "window", "HTMLElement", "MutationObserver",
+  // browser nodes and event objects: the core only ever sees plain semantic events
+  "Element", "Node", "HTMLInputElement", "Event", "MouseEvent", "KeyboardEvent", "InputEvent", "CustomEvent", "EventTarget", "DOMRect", "getComputedStyle", "localStorage", "sessionStorage", "navigator", "location",
+]);
 const NETWORK = new Set(["fetch", "XMLHttpRequest", "WebSocket"]);
 const HTML_SINKS = new Set(["innerHTML", "outerHTML", "insertAdjacentHTML"]);
 const APP_EXTERNAL = new Set(["vite", "vitest"]);
@@ -73,6 +78,7 @@ export function scan(rel: string, text: string): string[] {
         const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(rel), specifier));
         const home = inCore ? CORE : inApp ? APP : undefined;
         if (home !== undefined && !resolved.startsWith(`${home}/`)) flag("relative-import-leaves-the-tree", node);
+        else if (inCore && !inDom(rel) && inDom(resolved)) flag("core-imports-src/dom", node);
       } else if (inApp && !specifier.startsWith("@dap/") && !specifier.startsWith("node:") && !APP_EXTERNAL.has(specifier)) flag("app-imports-an-unlisted-package", node);
     }
     ts.forEachChild(node, visit);
@@ -142,6 +148,12 @@ describe("planted-failure proofs for the source scan", () => {
     ["XMLHttpRequest", core, "export const a = new XMLHttpRequest();", "network-api"],
     ["WebSocket", domFile, "export const a = new WebSocket('ws://x');", "network-api"],
     ["a dynamic import in the core", core, "export const a = import('./y.js');", "dynamic-import-or-require"],
+    ["a core file importing the DOM adapter", `${CORE}/src/engine/x.ts`, "import { createTargets } from '../dom/targets.js'; export const a = createTargets;", "core-imports-src/dom"],
+    ["the package root importing the DOM adapter", `${CORE}/src/index.ts`, "export { createOverlay } from './dom/overlay.js';", "core-imports-src/dom"],
+    ["a core test file importing the DOM adapter", `${CORE}/src/walkthrough/x.test.ts`, "import { createTargets } from '../dom/index.js'; export const a = createTargets;", "core-imports-src/dom"],
+    ["a browser event object in the engine", `${CORE}/src/engine/x.ts`, "export const a = (e: MouseEvent) => e.target;", "dom-global-outside-src/dom"],
+    ["a node type in the engine", `${CORE}/src/engine/x.ts`, "export const a = (n: Node) => n;", "dom-global-outside-src/dom"],
+    ["getComputedStyle in the walkthrough definitions", `${CORE}/src/walkthrough/x.ts`, "export const a = getComputedStyle;", "dom-global-outside-src/dom"],
     ["a workspace import in the core", core, "import { x } from '@dap/contracts'; export const a = x;", "core-imports-a-workspace-package"],
     ["a relative import that leaves the core", core, "import { x } from '../../../security/src/index.js'; export const a = x;", "relative-import-leaves-the-tree"],
     ["the app importing the security package", app, "import { x } from '@dap/security'; export const a = x;", "app-imports-other-than-walkthrough"],
@@ -158,6 +170,8 @@ describe("planted-failure proofs for the source scan", () => {
     ["hostile text in a string literal and a comment", app, "// innerHTML eval fetch\nexport const a = '<img src=x onerror=alert(1)> innerHTML = document.write';"],
     ["the app importing the walkthrough package and its DOM entry", app, "import { a } from '@dap/walkthrough'; import { b } from '@dap/walkthrough/dom'; import { c } from './y.js'; export const d = [a, b, c];"],
     ["the app's config importing vite", `${APP}/vite.config.ts`, "import { defineConfig } from 'vite'; export default defineConfig({});"],
+    ["the DOM adapter importing the core", `${CORE}/src/dom/x.ts`, "import { createSemanticRegistry } from '../semantic/registry.js'; export const a = createSemanticRegistry;"],
+    ["the engine importing the privacy module", `${CORE}/src/engine/x.ts`, "import { buildSemanticContext } from '../privacy/privacy.js'; export const a = buildSemanticContext;"],
     ["a relative import inside the tree", core, "import { x } from '../privacy/privacy.js'; export const a = x;"],
   ] as const)("%s is allowed", (_name, rel, code) => {
     expect(scan(rel, code)).toEqual([]);
