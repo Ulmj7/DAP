@@ -170,3 +170,12 @@ Reviews: one combined review after Slices 1-2 (contract + RAG), one after Slice 
 ## 16. Why this fits the time budget
 
 21 REQUIRED tasks, most of them small pure-TypeScript units tested with fakes; no database work beyond one integration test that reuses the existing reference-host harness; no new package; new dependencies limited to `zod` in `@dap/ai`. The riskiest piece (the Tier A boundary: schema, catalog validation, guard, Gateway capability) lands in Slice 3 with its own review. A visible CLI demo exists after Slice 4, and the real model is exercised only manually.
+
+## Slice 4 decisions
+
+- One Anthropic Messages fetch adapter, fixed endpoint, 7-second abort and bounded response; model default is an unverified assumption.
+- Existing renderer already exposes system/user parts: prompt.ts unchanged; fit_mismatch rejects rather than changing supplied chunks.
+- Host composition loads the one approved knowledge/catalog list, scrubs queries, defaults to a host-owned offline demo model and uses the existing start bridge.
+- One-shot CLI uses the real PostgreSQL host; readable output only, with an explicitly recording-only starter and no browser.
+- Host AST boundary scanner adds planted proofs; original AI boundary and dependency rules stay unchanged.
+- One offline test:guidance CI step follows Full test suite and precedes the authoritative M1 gate; no gate code changed.
