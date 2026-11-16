@@ -16,7 +16,7 @@ const stubRect = (el: Element, r: { left: number; top: number; width: number; he
 };
 
 beforeEach(() => { root = document.createElement("div"); document.body.append(root); });
-afterEach(() => { app?.destroy(); app = undefined; document.body.innerHTML = ""; window.location.hash = ""; });
+afterEach(() => { app?.destroy(); app = undefined; document.body.replaceChildren(); window.location.hash = ""; });
 
 describe("T206: the shell", () => {
   it("renders the three pages by hash, falling back to the dashboard", () => {

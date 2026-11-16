@@ -5,6 +5,7 @@
  *   ai, actions, security -> contracts
  *   testkit              -> contracts, security, ai
  *   apps/reference-host  -> all packages (composition root)
+ *   packages/walkthrough -> nothing (leaf); apps/reference-web -> packages/walkthrough only (Feature 002)
  *
  * Everything else is forbidden. Workspace packages resolve to their real paths
  * (packages/*) through the "@dap/source" export condition, so the rules are path-based.
@@ -30,8 +31,14 @@ module.exports = {
       "contracts may depend on external libraries only."),
     forbid("testkit-allowed-edges", "^packages/testkit/", "^(packages/actions|apps)/",
       "testkit may depend on contracts, security, and ai only."),
-    forbid("production-not-to-testkit", "^(packages/(contracts|ai|actions|security)|apps)/", "^packages/testkit/",
+    forbid("production-not-to-testkit", "^(packages/(contracts|ai|actions|security|walkthrough)|apps)/", "^packages/testkit/",
       "No production package may import test infrastructure."),
+    forbid("walkthrough-leaf", "^packages/walkthrough/", "^(packages/(contracts|ai|actions|security|testkit)|apps)/",
+      "The walkthrough runtime is a leaf: it imports no other workspace package (Feature 002), so the UI layer can never reach an executor."),
+    forbid("walkthrough-not-imported-by-trusted-packages", "^packages/(contracts|ai|actions|security|testkit)/", "^packages/walkthrough/",
+      "The Feature 001 packages must never depend on the walkthrough runtime."),
+    forbid("reference-web-only-walkthrough", "^apps/reference-web/", "^(packages/(contracts|ai|actions|security|testkit)|apps/reference-host)/",
+      "The reference web app may import only @dap/walkthrough."),
     forbid("nothing-imports-apps", "^packages/", "^apps/",
       "Apps are composition roots; nothing imports them."),
     {

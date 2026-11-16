@@ -16,7 +16,7 @@ const html = (markup: string): void => { root.replaceChildren(document.createRan
 const stub = (el: Element, r: Partial<DOMRect>): void => { (el as HTMLElement).getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}), ...r }) as DOMRect; };
 
 beforeEach(() => { root = document.createElement("div"); document.body.append(root); });
-afterEach(() => { document.body.innerHTML = ""; });
+afterEach(() => { document.body.replaceChildren(); });
 
 describe("targets.find", () => {
   it("finds a registered, visible, unique element by exact attribute value", () => {
