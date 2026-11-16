@@ -390,8 +390,9 @@ What remains:
     `writeTimeoutMs`, default 1500 ms). The unavoidable window is a COMMIT already in flight when
     the writer gives up: its outcome is uncertain, so an ALLOWED row may exist for a request that
     was denied and never executed. The trail then truthfully shows ALLOWED without EXECUTED; it
-    never shows an execution that did not happen. A sink that ignores the signal keeps the old
-    behaviour and the same residual risk.
+    never shows an execution that did not happen. The best-effort DENIED record may also exist;
+    consumers must not infer execution from ALLOWED alone. Legacy sinks that ignore the signal
+    retain their broader old uncertainty, including writes abandoned before COMMIT.
 14. **Audit time and sequence precision**: the current Gateway clock supplies millisecond instants;
     PostgreSQL preserves microseconds. Finer nonzero fractions are rejected rather than silently
     aliased. Sequence allocation is a deterministic insertion tie-break, not evidence of commit

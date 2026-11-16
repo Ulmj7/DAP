@@ -74,16 +74,19 @@ export interface AuditAppendOptions {
 }
 
 /**
- * `append` resolves ONLY after the event is durably committed. A rejected promise means
- * "not recorded". For allowed actions the Gateway then refuses to execute (research D13).
+ * `append` resolves ONLY after the event is durably committed. Rejection means the write was not confirmed;
+ * an already-issued COMMIT may still have succeeded. For allowed actions the Gateway refuses to execute on
+ * an unconfirmed write (research D13).
  * For denials the denial stands regardless. `append` MUST be idempotent on `event.id`: a retry of
  * an event that was in fact committed leaves one row (the same id with different content is an error).
  *
  * Cancellation: the writer aborts `options.signal` when it gives up on an append (timeout, rejection,
- * wrong-shaped or late answer). A sink MUST NOT commit after `signal.aborted`: an aborted append that has not
- * committed must roll back and leave no row. If COMMIT has already been issued the outcome is uncertain
- * (documented residual risk: the trail may then show an ALLOWED event for a request that was denied and never executed).
- * A sink that cannot cancel may ignore the second argument.
+ * wrong-shaped or late answer). Cancellation-aware sinks MUST check the live signal immediately before
+ * issuing COMMIT and roll back if already aborted. No new writes from that attempt may persist; an event
+ * committed by an earlier idempotent attempt remains intact. Once COMMIT has been issued its outcome is
+ * uncertain: ALLOWED may exist for a denied, never-executed request. For compatibility a legacy sink may
+ * ignore the second argument, but then it retains the broader uncertainty of its old behaviour.
+
  */
 export interface AuditSink {
   append(event: AuditEvent, options?: AuditAppendOptions): Promise<void>;
