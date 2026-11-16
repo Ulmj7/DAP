@@ -64,3 +64,8 @@ records; these repairs introduce no ingress load shedding or audit suppression.
 The PostgreSQL regression cases additionally read back missing-binding, spent-budget,
 and hung-executor/result-write outcomes. Confirmed ALLOW remains the sole policy decision;
 failed or canceled result recording never creates a contradictory denial.
+
+Isolated stage tests observe publication before execution and still expect the incomplete
+chain to deny at execute. Runner status and execution-deadline controls use the existing real
+stage chain and its real allow write, rather than stand-ins that return ALLOWED. Post-ALLOW
+fixture failures report ALLOWED with failed execution, while pre-ALLOW failures still deny.

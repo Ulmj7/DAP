@@ -8,7 +8,6 @@ import { paramsDigest } from "../../validation/params.js";
 import { createValidateStage } from "./validate.js";
 import { createPipeline } from "../pipeline.js";
 import type { PipelineRecord, PolicyStage } from "../pipeline.js";
-import { allowedDecision } from "../decision.js";
 import { toPlannerFeedback } from "../feedback.js";
 import { context, input, stageMap } from "../fixtures.test-support.js";
 
@@ -26,7 +25,8 @@ const resolved = { id: "openProject", version: 3, risk: "SAFE", definitionHash: 
 /** The real validate stage inside the real pipeline, fed by stand-ins for intake and resolve. */
 function harness(options: { params?: unknown; intake?: unknown; resolve?: unknown; registry?: ActionRegistry; ctx?: unknown } = {}) {
   const seen: PipelineRecord[] = [];
-  const stages = stageMap((request) => { seen.push(request); return { kind: "stop", decision: allowedDecision({ decisionId: request.decisionId, requestId: request.requestId, actionId: "openProject" as never, risk: "SAFE", paramsDigest: "a".repeat(64) as never }) }; });
+  const stages = stageMap(() => { throw new Error("No execution without a receipt"); });
+  stages.audit = request => { seen.push(request); return { kind: "continue", data: {} }; };
   stages.intake = () => ({ kind: "continue", data: ("intake" in options ? options.intake : { callId: "c", action: "openProject", params: options.params ?? { projectId: "p1" } }) as never });
   stages.resolve = () => ({ kind: "continue", data: ("resolve" in options ? options.resolve : resolved) as never });
   stages.validate = createValidateStage(options.registry ?? registry, CAPS);
@@ -36,7 +36,7 @@ function harness(options: { params?: unknown; intake?: unknown; resolve?: unknow
 describe("validate: the normalized parameters, the resource and the digest", () => {
   it("publishes facts.validate = { params, paramsDigest, resource } from the schema's OUTPUT", async () => {
     const test = harness({ params: { projectId: "  p1  " } });
-    expect((await test.run()).outcome).toBe("ALLOWED");
+    expect((await test.run())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
     const facts = test.seen[0]!.facts.validate as { params: unknown; paramsDigest: string; resource: unknown };
     expect(Object.keys(facts).sort()).toEqual(["paramsDigest", "params", "resource"].sort());
     expect(facts.params).toEqual({ projectId: "p1", limit: 10 });
@@ -129,7 +129,7 @@ describe("validate: only the definition resolve authorized is used", () => {
     const counting = registryReturning(null);
     (counting as { get: unknown }).get = () => { gets++; return { get definition() { reads.definition++; return definition; }, get definitionHash() { reads.definitionHash++; return entry.definitionHash; } }; };
     const test = harness({ registry: counting });
-    expect((await test.run()).outcome).toBe("ALLOWED");
+    expect((await test.run())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
     expect({ gets, ...reads }).toEqual({ gets: 1, definition: 1, definitionHash: 1 });
   });
 
@@ -141,7 +141,7 @@ describe("validate: only the definition resolve authorized is used", () => {
       get version() { return ++versionReads === 1 ? 3 : 99; },
     };
     const test = harness({ registry: registryReturning({ definition: changing, definitionHash: entry.definitionHash }) });
-    expect((await test.run()).outcome).toBe("ALLOWED");
+    expect((await test.run())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
     const facts = test.seen[0]!.facts.validate as { paramsDigest: string };
     const ctx = context();
     expect(facts.paramsDigest).toBe(paramsDigest({ actionId: "openProject", version: 3, params: { projectId: "p1", limit: 10 }, resource: { type: "project", id: "p1" }, tenantId: ctx.tenantId, userId: ctx.userId }));

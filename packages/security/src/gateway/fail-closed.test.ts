@@ -11,7 +11,7 @@ afterEach(() => { vi.useRealTimers(); });
 
 describe("pipeline fail-closed boundary (T058)", () => {
   for (const stage of PIPELINE_STAGES) {
-    it.each(["throw", "reject", "undefined", "wrong shape", "getter", "timeout"])(`${stage}: %s denies before execution`, async (fault) => {
+    it.each(["throw", "reject", "undefined", "wrong shape", "getter", "timeout"])(`${stage}${stage === "execute" ? " (unconfirmed receipt stops before the fixture)" : ""}: %s denies before execution`, async (fault) => {
       vi.useFakeTimers();
       let executions = 0;
       const stages = stageMap(() => { executions++; throw new Error("terminal should not run"); });
@@ -27,7 +27,7 @@ describe("pipeline fail-closed boundary (T058)", () => {
       // Execute gets what is left of the budget PLUS one hook timeout (the executor may use the budget; recording its result has its own time).
       await vi.advanceTimersByTimeAsync(stage === "execute" ? 40 : 20);
       const decision = await pending;
-      expect(decision).toMatchObject({ outcome: "DENIED", reason: ["throw", "reject"].includes(fault) ? "internal_error" : "dependency_failure", stage });
+      expect(decision).toMatchObject({ outcome: "DENIED", reason: stage !== "execute" && ["throw", "reject"].includes(fault) ? "internal_error" : "dependency_failure", stage });
       expect(executions).toBe(0);
       expect(JSON.stringify(decision)).not.toContain("CANARY");
     });

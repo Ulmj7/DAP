@@ -11,7 +11,8 @@ afterEach(() => { vi.useRealTimers(); });
 function harness(overrides: Partial<Pick<GatewayDependencies, "registry" | "globalAllowlist">> = {}, store: TenantActionPolicyStore = { isDisabled: async () => false }) {
   const { deps } = dependencies();
   let executions = 0;
-  const stages = stageMap((request) => { executions++; return { kind: "stop", decision: allowedDecision({ decisionId: request.decisionId, requestId: request.requestId, actionId: "viewProject" as never, risk: "SAFE", paramsDigest: "a".repeat(64) as never }) }; });
+  const stages = stageMap(() => { throw new Error("No execution without a receipt"); });
+  stages.audit = () => { executions++; return { kind: "continue", data: {} }; };
   const resolve = createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, ...overrides, tenantPolicy: store }, { hookTimeoutMs: 20 });
   stages.resolve = resolve;
   return { calls: () => executions, async submit(action: string) {
@@ -44,7 +45,7 @@ describe("exact resolution and live default-deny enablement", () => {
     expect(await test.submit("viewProject")).toMatchObject({ outcome: "DENIED", reason: "tenant_action_disabled" });
     expect(test.calls()).toBe(0);
     disabled = false;
-    expect((await test.submit("viewProject")).outcome).toBe("ALLOWED");
+    expect((await test.submit("viewProject"))).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
     expect(test.calls()).toBe(1);
     expect(seen).toEqual([[{ tenantId: input().context && (input().context as { tenantId: string }).tenantId }, "viewProject"], [{ tenantId: (input().context as { tenantId: string }).tenantId }, "viewProject"]]);
   });

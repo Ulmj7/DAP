@@ -439,7 +439,7 @@ describe("authorize inside the real runner", () => {
   it("lets four sequential host calls take longer in total than hookTimeoutMs, each within it: the stage's deadline is the proposal's, not a single hook's", async () => {
     const timer = new ManualTimer();
     const setup = pipelineWith({ timer, clock: spent(timer, 1500, NOW), has: spent(timer, 1500, true), page: spent(timer, 1500, "page.edit"), resolve: spent(timer, 1500, resolvedFor()) }, { hookTimeoutMs: 2000, proposalBudgetMs: 10_000 });
-    expect((await setup.run()).outcome).toBe("ALLOWED"); // 6000 ms in total, past hookTimeoutMs, inside the budget
+    expect(await setup.run()).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" }); // 6000 ms in total, past hookTimeoutMs, inside the budget
     expect(setup.test.log).toEqual(["clock", "has", "page", "resolve"]);
   });
 
