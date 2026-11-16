@@ -112,6 +112,14 @@ describe("every refusal fails startup naming only the file and a generic code", 
       expect(refusal().code, String(offset)).toBe("secret_pattern");
     }
   });
+  it("does not split a long JWT before secret detection", () => {
+    const token = `eyJhbGciOiJIUzI1NiJ9.${"Z".repeat(1500)}.${"Q".repeat(43)}`;
+    expect(scrubText(token)).toBe("[redacted][truncated]"); // the injected scanner recognises the complete token
+    for (const offset of [0, 990, 1500]) {
+      write("doc.md", front({}, `${"word ".repeat(offset / 5)}${token}`));
+      expect(refusal(), String(offset)).toMatchObject({ file: "doc.md", code: "secret_pattern" });
+    }
+  });
   it("a long document with no secret is accepted (the scrubber's own 1024-character cap is not mistaken for a secret)", () => {
     write("doc.md", front({}, "plain words here ".repeat(400)));
     expect(load().docs).toHaveLength(1);

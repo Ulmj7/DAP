@@ -41,13 +41,18 @@ export interface LoadedKnowledge {
 const REQUIRED = ["id", "title", "tags", "visibility"] as const;
 const OPTIONAL = ["topic"] as const;
 
-/** `scrub` truncates long text, so the file is checked in overlapping windows of at most 1000 characters: a secret cannot hide across a boundary. */
+/**
+ * The injected scrubber preserves the first 1024 clean characters, but detects secrets before truncating.
+ * Scan complete suffixes so a long token is never cut before detection; compare only an uncapped,
+ * overlapping 1000-character prefix. A truncation alone is not evidence of a secret.
+ */
 function changedByScrub(text: string, scrub: (text: string) => string): boolean {
   const WINDOW = 1000;
   const STEP = 500;
   for (let start = 0; start === 0 || start < text.length - STEP; start += STEP) {
-    const part = text.slice(start, start + WINDOW);
-    if (scrub(part) !== part) return true;
+    const part = text.slice(start);
+    const clean = scrub(part);
+    if (part.length <= WINDOW ? clean !== part : !clean.startsWith(part.slice(0, WINDOW))) return true;
   }
   return false;
 }
