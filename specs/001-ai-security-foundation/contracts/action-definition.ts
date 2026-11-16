@@ -4,6 +4,10 @@
  * ActionDefinition, ActionRegistry, RiskLevel usage. Definitions are developer-authored,
  * strictly typed, and immutable at runtime. The model can never add or change one.
  *
+ * Types only. The runtime pieces (buildRegistry, RegistrationError, the reserved name lists,
+ * and the defineAction identity helper) belong to @dap/security (T041-T044) or the
+ * contracts execution runtime, not this module.
+ *
  * Spec: FR-001..FR-010, FR-018, FR-029 | Constitution: IV, VII, VIII, XVI
  */
 import type { ZodType } from "zod";
@@ -113,22 +117,3 @@ export interface RegistrationIssue {
   readonly rule: RegistrationRule;
   readonly detail: string;
 }
-
-/** Thrown by buildRegistry(); startup aborts. Carries ALL issues, not only the first. */
-export declare class RegistrationError extends Error {
-  readonly issues: readonly RegistrationIssue[];
-}
-
-/** Identity helper that preserves the TParams inference for a definition. */
-export declare function defineAction<TParams>(
-  definition: ActionDefinition<TParams>,
-): ActionDefinition<TParams>;
-
-/** Validates registration rules R1..R12 and returns the immutable registry. */
-export declare function buildRegistry(definitions: readonly AnyActionDefinition[]): ActionRegistry;
-
-/** Rejected at any depth in an input schema (data-model.md). Compared case-insensitively, ignoring "_" and "-". */
-export declare const RESERVED_PARAMETER_NAMES: readonly string[];
-
-/** Names of general-purpose powers that must never exist. Used to classify attempts (FR-009). */
-export declare const RESERVED_FORBIDDEN_ACTION_NAMES: readonly string[];

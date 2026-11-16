@@ -4,6 +4,8 @@
  * Security test infrastructure (FR-045..FR-049). Implemented in `@dap/testkit`.
  * The testkit may import `security` and `ai` to test them; production code never imports it.
  *
+ * Types only. The buildCoverageReport runtime belongs to @dap/testkit, not here.
+ *
  * Constitution: XV, XVII
  */
 import type { AuditEvent } from "./audit";
@@ -53,8 +55,8 @@ export interface RecordingExecutor {
 export interface AttackObservation {
   readonly feedback: readonly PlannerFeedback[];
   readonly executorCalls: number;
-  readonly auditEvents: readonly AuditEvent[];
   /** Canary secrets, stack traces, policy names, or confirmation ids found in planner-visible output. */
+  readonly auditEvents: readonly AuditEvent[];
   readonly leakFindings: readonly string[];
 }
 
@@ -95,10 +97,3 @@ export interface CoverageReport {
   /** CI fails when this is non-empty. */
   readonly missing: readonly { readonly actionId: string; readonly scenarioId: string }[];
 }
-
-export declare function buildCoverageReport(args: {
-  readonly capabilities: readonly CapabilityTraits[];
-  readonly scenarios: readonly AttackScenario[];
-  readonly executedScenarioIds: ReadonlyMap<string, ReadonlySet<string>>; // actionId -> ids run
-  readonly waivers: readonly Waiver[];
-}): CoverageReport;

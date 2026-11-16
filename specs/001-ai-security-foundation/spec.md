@@ -4,8 +4,11 @@
 
 **Created**: 2026-11-13
 
-**Status**: Implementation in progress. Reconciled with Constitution 2.0.0 on 2026-11-16 (see the
-Scope Declaration).
+**Status**: **Milestone M1 complete on `dev` (2026-11-16)**: the eleven M1 criteria below are each mapped to evidence in
+[docs/validation-report.md](../../docs/validation-report.md). OPTIONAL and FUTURE work is not built and does not block completion. Reconciled with
+Constitution 2.0.0 on 2026-11-16 (see the Scope Declaration); contracts and data model reconciled with the code the same day
+([contracts/reconciliation.md](./contracts/reconciliation.md)). The system is not claimed to be "secure"; known limits are in
+[docs/constitution-review.md](../../docs/constitution-review.md).
 
 **Input**: User description:
 

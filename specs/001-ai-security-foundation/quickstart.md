@@ -1,159 +1,124 @@
-# Quickstart: Validating the AI Security Foundation
+# Quickstart: Validating the AI Security Foundation (Milestone M1)
 
-**Feature**: `001-ai-security-foundation` | **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md)
+**Feature**: `001-ai-security-foundation` | **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Recorded run**: [docs/validation-report.md](../../docs/validation-report.md)
 
-A run-and-verify guide. It shows how to prove the feature works end to end once implemented. It
-contains no implementation code; contracts are in [`contracts/`](./contracts/) and shapes in
-[`data-model.md`](./data-model.md).
-
-> **Status**: the npm scripts, compose file, and host below are **defined by this plan** and are
-> created during implementation (`/speckit-tasks`, `/speckit-implement`). Nothing here runs yet.
+A run-and-verify guide for **Milestone M1** (the eleven criteria in the spec's Scope Declaration), rewritten on 2026-11-16 (T144) to describe only
+what exists on `dev`. The previous version described an HTTP host, Prometheus, a confirmation flow and a coverage gate. **None of those are built**;
+they are OPTIONAL or FUTURE and are not part of this guide. There is no LLM and no network access in any step.
 
 ## Prerequisites
 
 - Node.js 22 and npm 10
-- Docker (for PostgreSQL and the reference host)
-- Free ports: 3000 (host), 5432 (PostgreSQL), 9090 (Prometheus), 3001 (Grafana)
+- Docker with Compose, for PostgreSQL 16 (`deploy/compose.yaml`, port `54329` on `127.0.0.1`)
+- A **throwaway database** for every run. Never use a shared development database, and never `dap` if anyone else uses it.
 
-## 1. Static gates: architecture and hygiene
+## 0. Start PostgreSQL and create a fresh database
+
+```bash
+docker compose -f deploy/compose.yaml up -d --wait postgres
+
+docker compose -f deploy/compose.yaml exec -T postgres psql -U dap_bootstrap -d postgres -v ON_ERROR_STOP=1 \
+  -c "CREATE DATABASE dap_m1_run OWNER dap_owner;" -c "GRANT CONNECT ON DATABASE dap_m1_run TO dap_app;"
+
+export DAP_DATABASE_URL='postgresql://dap_app:dap_app_local_only@127.0.0.1:54329/dap_m1_run'
+export DAP_MIGRATE_DATABASE_URL='postgresql://dap_owner:dap_owner_local_only@127.0.0.1:54329/dap_m1_run'
+```
+
+These are the local-only development credentials from `deploy/compose.yaml`; they are not secrets and must never be reused anywhere else.
+`dap_owner` owns the schema and applies migrations; `dap_app` is the unprivileged role the host connects as.
+
+## 1. Install and migrate
 
 ```bash
 npm ci
-npm run lint          # includes: no eval/new Function, no restricted mint imports
-npm run typecheck     # strict TypeScript across all packages
-npm run test:arch     # import graph + workspace manifests + registry has no mutators
-```
-
-**Expected**: all pass. Introducing `import ... from "@dap/actions"` anywhere in `packages/ai`
-makes `test:arch` fail naming the edge (**SC-001**, spec FR-011).
-
-## 2. Unit and contract tests
-
-```bash
-npm test
-```
-
-**Expected**: registration rules R1-R12 each have a passing and a failing case; a plain `z.object`
-schema is rejected; the Zod behavior pins (strict vs strip, input-mode `additionalProperties`,
-bound keywords, duplicate-key behavior of `JSON.parse`) pass (**SC-002**, **SC-010**).
-
-## 3. Shared state: both adapters behave identically
-
-```bash
-docker compose up -d postgres
 npm run db:migrate
-npm run test:conformance
 ```
 
-**Expected**: the same conformance suite passes against the in-memory and the PostgreSQL adapters,
-including 100 trials of two concurrent confirmation accepts where exactly one wins (**SC-005**).
+**Expected**: `db:migrate` prints `Applied ...` for `000_roles.sql` through `060_sec_state_purge.sql` (nine files). Running it again applies nothing.
 
-## 4. The security attack suite (the core proof)
+## 2. Static gates: lint, types, boundaries, architecture
 
 ```bash
-npm run test:security
+npm run lint          # no eval/new Function, no restricted mint or deep contracts imports
+npm run typecheck     # strict TypeScript across all packages and apps
+npm run check:deps    # dependency-cruiser over packages and apps (same as: npx depcruise --config dependency-cruiser.config.cjs packages apps)
+npm run test:arch     # import graph, manifests, mint boundary, module loaders, static scans, the gate's own checks
 ```
 
-Runs every scenario in [`contracts/security-test-catalogue.md`](./contracts/security-test-catalogue.md)
-against test capabilities of all six risk classes, with no LLM and no network.
+**Expected**: all four succeed; `check:deps` ends with `no dependency violations found`. Adding `import ... from "@dap/actions"` anywhere in
+`packages/ai` makes `check:deps` and `test:arch` fail naming the edge (M1 criterion 9).
 
-| Expected result | Success criterion |
-|-----------------|-------------------|
-| Every `ATK-*` scenario ends with the recording executor at 0 calls; every `POS-*` control executes exactly once | SC-001, SC-002 |
-| Dependency failure matrix: all ports x all failure modes end in denial | SC-003 |
-| Parity: AI path outcome equals direct-path outcome; cross-tenant feedback byte-identical to nonexistent | SC-004 |
-| Expired, reused, mismatched, and fabricated confirmations rejected | SC-005 |
-| 10,000 proposals in one turn execute at most the per-turn cap | SC-006 |
-| One decision event per proposal; no execution when audit is down | SC-007 |
-| Reviewer can answer the four audit questions from events alone | SC-008 |
-| Leak scan finds no canary, stack trace, internal reason, or confirmation id | SC-009 |
-| Property-based invariants hold over generated proposals | SC-001 |
-| Two consecutive runs give identical results | SC-012 |
-
-## 5. Coverage gate
+## 3. Unit, security, conformance and integration tests
 
 ```bash
-npm run coverage:security
+npm run test:security       # representative hostile-proposal scenarios through the real Gateway (no database needed for most)
+npm run test:conformance    # the in-memory and PostgreSQL adapters pass the same conformance suites, plus migration checks
+npm run test:integration    # PostgreSQL audit sink and the reference host end to end
+npm test                    # everything above plus the package unit tests
 ```
 
-**Expected**: prints the capability-by-scenario matrix and exits 0 when every applicable cell is
-`covered`, `not-applicable`, or `waived`. To see it fail, remove one scenario from a capability's
-run list: the command exits non-zero and names the missing `actionId` and scenario id (**SC-011**).
+**Expected**: every command passes. `npm test` reports the remaining `todo` tests; each is tagged OPTIONAL or FUTURE (see step 5).
 
-## 6. Run the reference host and watch it fail closed
+## 4. The reference-host vertical path
 
 ```bash
-docker compose up -d        # host, postgres, prometheus, grafana
-export DAP_ALLOW_DEV_AUTH=1 DAP_ENABLE_DEV_ROUTES=1     # development only
+npx vitest run --project integration tests/integration/reference-host.test.ts
 ```
 
-The dev stub maps a bearer value to a session (user and tenant) from its configuration. Examples
-below assume two users in one tenant: `alice` and `bob`.
+The test composes the real host (`apps/reference-host`) over your database and drives six groups: a valid execution (dev session, trusted context,
+real Gateway, durable `ALLOWED` row, executor exactly once, `EXECUTED` row); missing, invalid and expired sessions; an unauthorized user; a real
+PostgreSQL failure of the `ALLOWED` write; a HIGH capability that stops at `REQUIRES_CONFIRMATION`; and the AI-facing handle that exposes only
+`submit`. **Expected**: all pass; each denial leaves the executors at zero calls.
+
+There is **no HTTP server** and no `curl` walkthrough: the host is an in-process composition root. To embed it, see `apps/reference-host/README.md`
+(environment variables `DAP_DATABASE_URL`, `DAP_ENABLED_ACTIONS`, `DAP_ALLOW_DEV_AUTH=1`, `DEV_SESSIONS`).
+
+## 5. The M1 gate (the authoritative check)
 
 ```bash
-# Unknown action: INVALID_ACTION, nothing executes
-curl -s -H "Authorization: Bearer alice" -H "Content-Type: application/json" \
-  -d '{"scenario":"ATK-UNKNOWN-01"}' http://localhost:3000/dev/hostile-run
-
-# Reserved dangerous name: FORBIDDEN_POLICY
-curl -s -H "Authorization: Bearer alice" -H "Content-Type: application/json" \
-  -d '{"scenario":"ATK-UNKNOWN-02"}' http://localhost:3000/dev/hostile-run
+npm run test:m1-gate
 ```
 
-**Expected**: `{ "outcome": "INVALID_ACTION", "category": "not_available" }` and
-`{ "outcome": "FORBIDDEN_POLICY", "category": "not_available" }`, with no internal reason and no
-confirmation id anywhere in the body.
+It migrates the database, runs the `arch`, `security`, `conformance` and `integration` test projects, and **fails** if any of 24 named suites is
+missing, empty, skipped or failing, if a reference-host group did not run, or if any remaining `todo` is not tagged OPTIONAL or FUTURE. Run it twice
+on the same database to see that it is repeatable. The gate is representative, not exhaustive.
 
-### Confirmation flow (HIGH risk test capability)
+## 6. Look at the audit trail in the database
 
 ```bash
-curl -s -H "Authorization: Bearer alice" -H "Content-Type: application/json" \
-  -d '{"scenario":"POS-03-propose"}' http://localhost:3000/dev/hostile-run
-# -> REQUIRES_CONFIRMATION, category needs_user_confirmation, no id in the body
-
-curl -s -H "Authorization: Bearer alice" http://localhost:3000/confirmations/pending
-# -> the consequence summary and the id, visible to alice's own session only
-
-curl -s -X POST -H "Authorization: Bearer alice" -H "Origin: http://localhost:3000" \
-  -H "X-DAP-CSRF: 1" -H "Content-Type: application/json" \
-  -d '{"decision":"accept"}' http://localhost:3000/confirmations/<id>/decision
-# -> { "status": "executed" }
+docker compose -f deploy/compose.yaml exec -T -e PGPASSWORD=dap_app_local_only postgres \
+  psql -h 127.0.0.1 -U dap_app -d dap_m1_run -c "select count(*) from sec_audit_events;"
+docker compose -f deploy/compose.yaml exec -T -e PGPASSWORD=dap_app_local_only postgres \
+  psql -h 127.0.0.1 -U dap_app -d dap_m1_run -c "update sec_audit_events set reason = 'x';"
+docker compose -f deploy/compose.yaml exec -T -e PGPASSWORD=dap_app_local_only postgres \
+  psql -h 127.0.0.1 -U dap_app -d dap_m1_run -c "begin; select set_config('app.tenant_id', gen_random_uuid()::text, true); select count(*) from sec_audit_events; commit;"
 ```
 
-**Expected**: repeating the last request returns `409 already_used`. The same request with
-`Bearer bob` returns `409 not_found`. After the TTL, a fresh pending item returns `expired`.
+**Expected**: the first query returns `0` although the tests wrote rows (forced row-level security: no tenant is set, so no row is visible); the
+`update` fails with `permission denied for table sec_audit_events` (the application role has `SELECT` and `INSERT` only; a trigger also refuses
+`UPDATE`, `DELETE` and `TRUNCATE` for any role); a random tenant sees `0` rows.
 
-### Replay and fail-closed readiness
+## 7. CI
 
-- Submit the same `callId` twice through the dev route: the second is `DENIED/not_available`.
-- `docker compose stop postgres`: `GET /readyz` returns `503`, and every proposal returns `DENIED`
-  with category `try_later` (nothing executes).
-- `curl -s localhost:3000/metrics`: shows decision counters by outcome and reason, no tenant or
-  user labels.
+`.github/workflows/ci.yml` runs the steps above in this order on a `postgres:16` service container: install, lint, typecheck, dependency boundaries,
+architecture tests, role bootstrap, migrations, security, conformance, integration, the reference-host test, the full suite, and last
+`npm run test:m1-gate`. It was linted with actionlint and its commands were replayed locally against a fresh `postgres:16` container; **it has not
+yet had a first run on GitHub Actions**. To break it on purpose, remove one authorization check from `packages/security/src/gateway/stages/authorize.ts`
+and run `npm run test:security`: it names the failing scenarios. Restore the file afterwards.
 
-## 7. Audit trail check
+## 8. Clean up
 
 ```bash
-docker compose exec postgres psql -U dap_app -d dap \
-  -c "select event_type, outcome, reason, action_id from sec_audit_events order by occurred_at limit 20;"
-docker compose exec postgres psql -U dap_app -d dap -c "update sec_audit_events set reason='x';"
+docker compose -f deploy/compose.yaml exec -T postgres psql -U dap_bootstrap -d postgres -c "DROP DATABASE dap_m1_run;"
 ```
-
-**Expected**: events appear as `AI_ACTION_PROPOSED` followed by exactly one decision event per
-request. The `update` fails with a permission error (append-only), and a query with no tenant
-setting returns no rows (row-level security).
-
-## 8. CI: break it on purpose
-
-Push a branch that removes one authorization check from the Gateway. **Expected**: the GitHub
-Actions run goes red at `test:security` and names the failing scenarios. Restore it and the run
-turns green. Optionally run `npm run test:mutation` (nightly in CI) to see mutation survivors in
-`packages/security`; any surviving mutant in a check is a missing test.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---------|--------------|
-| `test:security` skips PostgreSQL scenarios | `docker compose up -d postgres` not running or migrations not applied |
-| Host exits immediately at startup | A registration rule failed (the message lists every issue), or `NODE_ENV=production` with dev auth enabled |
-| Every proposal returns `DENIED` | The global allowlist is empty (default deny). List the capability ids to enable them |
+| `db:migrate` says to set `DAP_MIGRATE_DATABASE_URL`, or refuses to run | The variable is unset, or it does not connect as `dap_owner` (migrations refuse any other role) |
+| Integration or conformance tests fail to connect | PostgreSQL is not up (`docker compose ... up -d --wait postgres`), or `DAP_DATABASE_URL` names a database `dap_app` cannot connect to (grant `CONNECT` in step 0) |
+| Host startup throws `ConfigError` | A required variable is missing or malformed (`DAP_DATABASE_URL`, `DAP_ENABLED_ACTIONS` naming an unknown or empty id, `DEV_SESSIONS`) |
+| Host startup throws `DevAuthError` | `DAP_ALLOW_DEV_AUTH` is not exactly `1`, or `NODE_ENV` is production (dev auth is always refused there) |
+| A capability returns `DENIED` although the user holds its permission | It is not listed in `DAP_ENABLED_ACTIONS` (the global allowlist is default deny), or it is disabled for the tenant |
+| `npm run coverage:security` fails with `MODULE_NOT_FOUND` | Known: the script is a leftover from the parked `tooling` branch; its target file does not exist and it is not part of M1 |

@@ -1,4 +1,20 @@
-# Reference Host: HTTP Contract
+# Reference Host: HTTP Contract (**NOT BUILT**; the built host is in-process)
+
+> **Status (reconciled 2026-11-16, T143).** None of the HTTP surface below exists on `dev`: no Fastify server, no `/confirmations/*`, no
+> `/dev/hostile-run`, no `/healthz`, `/readyz` or `/metrics` (HTTP, confirmation and metrics work is OPTIONAL or FUTURE: T133 to T135, T137).
+> `apps/reference-host/package.json` still lists `fastify`, `pino` and `prom-client` as dependencies, but no source file imports them.
+> What **is** built (T131, T132, T136) is an in-process composition root, documented in
+> [`apps/reference-host/README.md`](../../../apps/reference-host/README.md) and [`docs/architecture.md`](../../../docs/architecture.md):
+>
+> | Built | Shape |
+> |-------|-------|
+> | `composeReferenceHost(env)` | `Promise<{ host, trusted }>`; validates the environment first and throws `ConfigError` before connecting |
+> | `host.openSession(evidence)` | `Promise<AiSession \| null>`; `null` for a missing, unknown, malformed or expired dev session |
+> | `AiSession.submit(rawToolCall)` | `Promise<PlannerFeedback>`; the only thing the AI layer holds |
+> | development authentication | `DAP_ALLOW_DEV_AUTH=1` plus `DEV_SESSIONS` (JSON); refused when `NODE_ENV` is production |
+> | confirmation | placeholders that fail closed; a HIGH capability stops at `REQUIRES_CONFIRMATION` |
+>
+> The text below is kept as the **target contract** for the OPTIONAL confirmation and HTTP features. Do not read it as a description of the code.
 
 **Feature**: `001-ai-security-foundation` | **Non-production.** A thin service that exercises the
 boundary over HTTP, gives the container and observability work something to deploy, and proves the
