@@ -429,19 +429,36 @@ describe("T094 PostgreSQL audit store: an abandoned append never commits", () =>
   it("through the writer, retried: attempt 1 is abandoned (and rolls back), attempt 2 uses a new signal and the same event, and exactly one row exists", async () => {
     const t = randomUUID(); const event = auditEvent(t, { type: "AI_ACTION_ALLOWED", outcome: "ALLOWED", reason: "allowed" });
     const hold = await blocker(event);
+    const { pool, statements } = spied(1);
     const seen: { aborted: boolean }[] = [];
-    const store = new PostgresAuditStore(app, { writeTimeoutMs: 10_000 });
-    const sink = { append: (e: typeof event, options?: { signal?: { aborted: boolean } }) => { seen.push(options!.signal!); return store.append(e, options); } };
-    const writer = createAuditWriter({ sink }, { attempts: 2, hookTimeoutMs: 300 });
-    const result = writer.recordAllowedDurably(event);
-    await settle(400); // attempt 1 gave up at 300 ms and attempt 2 is waiting on the same blocker
-    await hold.release("ROLLBACK");
-    expect(await result).toEqual({ ok: true });
-    expect(seen).toHaveLength(2);
-    expect(seen[0]).not.toBe(seen[1]);
-    expect(seen[0]!.aborted).toBe(true);
-    expect(seen[1]!.aborted).toBe(false);
-    expect(await countRows(t, event.id)).toBe(1);
-    expect(await store.listForTenant(t)).toEqual([event]);
+    const operations: Promise<void>[] = [];
+    let secondStarted!: () => void;
+    const second = new Promise<void>((resolve) => { secondStarted = resolve; });
+    const store = new PostgresAuditStore(pool, { writeTimeoutMs: 10_000 });
+    const sink = { append: (e: typeof event, options?: { signal?: { aborted: boolean } }) => {
+      seen.push(options!.signal!);
+      const operation = store.append(e, options); operations.push(operation);
+      if (seen.length === 2) secondStarted();
+      return operation;
+    } };
+    await pool.query("SELECT 1"); // warm the one connection before starting the attempt deadline
+    const result = createAuditWriter({ sink }, { attempts: 2, hookTimeoutMs: 300 }).recordAllowedDurably(event);
+    let released = false; let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([second, new Promise<never>((_, reject) => { watchdog = setTimeout(() => reject(new Error("retry did not start")), 1500); })]);
+      await hold.release("ROLLBACK"); released = true;
+      expect(await result).toEqual({ ok: true });
+      expect((await Promise.allSettled(operations)).map((operation) => operation.status)).toEqual(["rejected", "fulfilled"]);
+      expect(statements.filter((sql) => sql === "ROLLBACK")).toHaveLength(1);
+      expect(statements.filter((sql) => sql === "COMMIT")).toHaveLength(1);
+      expect(seen).toHaveLength(2); expect(seen[0]).not.toBe(seen[1]);
+      expect(seen.map((signal) => signal.aborted)).toEqual([true, false]);
+      expect(await countRows(t, event.id)).toBe(1);
+      expect(await store.listForTenant(t)).toEqual([event]);
+    } finally {
+      clearTimeout(watchdog);
+      if (!released) await hold.release("ROLLBACK");
+      await Promise.allSettled(operations); await result; await pool.end();
+    }
   });
 });
