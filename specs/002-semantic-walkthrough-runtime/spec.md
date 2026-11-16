@@ -10,7 +10,7 @@
 
 The scope test for every item: *is it needed for a person to visibly complete one of the three demo walkthroughs, or to preserve a Tier A invariant?* If not, it is OPTIONAL or FUTURE.
 
-- **REQUIRED**: trusted semantic UI registry; minimal UI privacy model (`data-ai-id/ignore/private/redact`); typed walkthrough definitions validated at startup; an explicit deterministic state machine; highlight + tooltip presentation; waiting for a registered click / committed input / route; wrong and unknown events never advance a step; deterministic postconditions; one bounded recovery pattern; internal allowlisted navigation; a small reference web app with three walkthroughs; a narrow public API for Feature 003; one jsdom integration proof per walkthrough; CI wiring.
+- **REQUIRED**: trusted semantic UI registry; minimal UI privacy model (`data-ai-id/ignore/private/redact`); typed walkthrough definitions validated at startup; an explicit deterministic state machine; highlight + tooltip presentation; waiting for a registered click / committed input / route; wrong and unknown events never advance a step; deterministic postconditions; one bounded recovery pattern; internal allowlisted navigation; a small reference web app with three walkthroughs; a narrow public API for Feature 003; one jsdom integration proof per walkthrough; CI wiring; one manual real-browser smoke check at final closure.
 - **OPTIONAL** (promote only if a demo needs it): real-browser (Playwright) smoke test, progress persistence across refresh, animation and richer overlay positioning, fuller accessibility pass, more than three walkthroughs, richer branch expressions, per-element permission gating, a "what the AI sees" preview panel.
 - **FUTURE**: AI-authored walkthroughs, self-healing selectors, vision-based targeting, browser extension, third-party sites/apps, multi-device sync, generic workflow language, authoring dashboard, analytics, autonomous high-risk operations, the server-to-browser transport that lets Feature 003 start a walkthrough.
 - **Out of scope**: RAG, embeddings, intent selection, any LLM call, new authentication, any change to Feature 001 production code, any backend state change performed by the runtime.
@@ -68,7 +68,7 @@ Application code registers stable semantic IDs (`profile.saveButton`); no model,
 
 A help launcher lists three walkthroughs and starts one by ID; progress and completion are visible. Feature 003 will call the same narrow API.
 
-**Independent test**: start each of A (`profileUpdate`), B (`findSecuritySettings`), C (`enableTwoFactor`) from the launcher and complete it end to end in jsdom against the real app DOM.
+**Independent test**: start each of A (`profileUpdate`), B (`findSecuritySettings`), C (`findTwoFactorSettings`) from the launcher and complete it end to end in jsdom against the real app DOM.
 
 **Acceptance scenarios**:
 1. **Given** the catalog, **When** `startWalkthrough("profileUpdate")` is called, **Then** the run starts; **When** the ID is unknown, **Then** it returns `{ ok: false, reason: "unknown_walkthrough" }` and does nothing else.
@@ -118,7 +118,7 @@ Tier tags follow the Constitution. All FRs are REQUIRED unless tagged.
 | I, II, XV: LLM is untrusted; controls survive its compromise | A | Runtime has no LLM and no model input; walkthroughs are trusted data; Feature 003 may only select an existing ID |
 | VI: DOM data removed client-side | A | Privacy module + DOM guards (FR-003/004); no raw DOM, `innerHTML` or screenshots anywhere |
 | VII: no arbitrary execution / selectors | A | FR-002, FR-006; static scan forbids `eval`, `new Function`, `innerHTML`, `insertAdjacentHTML`, `document.write` in new code |
-| III, VIII, X, XIV: Gateway for AI actions | A | Not exercised: runtime performs no state change (FR-011); integration point defined for Feature 003 |
+| III, VIII, X, XIV: Gateway for AI actions | A | Not exercised: runtime performs no state change (FR-011); integration point defined for Feature 003 (its `startWalkthrough` capability starts at risk LOW; a walkthrough never inherits authority for application mutations) |
 | IX: backend authorization authoritative | A | Runtime grants nothing; a target the app does not render is simply unavailable |
 | XII: RAG untrusted | A | Not applicable (no RAG) |
 | XVI, XVII: least privilege, focused tests | A | Registry bounds, leaf package, focused tests per control |
@@ -143,5 +143,5 @@ Tier tags follow the Constitution. All FRs are REQUIRED unless tagged.
 ## Assumptions
 
 - Feature 003's transport from backend to browser is its own work; Feature 002 exposes only the in-browser API.
-- jsdom provides sufficient fidelity for the integration proof; layout-dependent visuals (ring position) are verified manually and by the OPTIONAL real-browser test.
+- jsdom provides sufficient fidelity for the integration proof; layout-dependent visuals (ring position) are verified by one REQUIRED manual real-browser smoke check at closure; an automated real-browser test (Playwright) is OPTIONAL.
 - The reference app is a demo surface, not a product; no persistence beyond in-memory state.

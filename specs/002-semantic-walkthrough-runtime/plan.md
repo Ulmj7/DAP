@@ -22,7 +22,7 @@ Phase 1 of the Constitution's phased delivery still owes the **UI semantic regis
 | **New package `packages/walkthrough`** (`@dap/walkthrough`) | Establishes a real trust boundary: a leaf package that dependency-cruiser forbids from importing `security`, `ai`, `actions`, `contracts`, `testkit`, so the UI runtime can never reach an executor; also satisfies "privacy layer is its own module with its own unit tests" (Principle VI) | Putting it in `apps/` (not reusable, boundary unenforced); several packages (config cost, no extra boundary) |
 | **One package, two entry points**: `.` (pure core) and `./dom` (browser adapter) | Same pattern as `contracts/mint`; core stays testable in Node; only `src/dom/**` may touch `document`/`window` (arch test) | Separate `walkthrough-dom` package |
 | **Reference app `apps/reference-web`: Vite + vanilla TypeScript, hash router, no framework** | Smallest thing that is a real browser app; zero framework learning/config; semantic IDs are plain `data-ai-id` attributes | React/Vue/Tailwind (time, no demo value) |
-| **jsdom (Vitest `dom` project) for the REQUIRED integration proof**; Playwright is OPTIONAL | Fast, runs in existing CI with no browser download; the engine is deterministic so DOM events are enough to prove the flow. Visual ring placement is checked by hand | Playwright as REQUIRED (CI browser install + flake risk for the first half of the budget) |
+| **jsdom (Vitest `dom` project) for the REQUIRED integration proof**; Playwright is OPTIONAL | Fast, runs in existing CI with no browser download; the engine is deterministic so DOM events are enough to prove the flow. Visual ring placement and interaction feel get one **manual real-browser smoke check at final closure** (REQUIRED once, recorded in the quickstart) | Playwright as REQUIRED (CI browser install + flake risk for the first half of the budget) |
 | **Runtime performs no state change; user performs the app actions** | Keeps Constitution III/VIII out of the critical path; Save is the app's own handler; the runtime only observes and verifies | Routing Save through the Gateway (a server round trip nobody needs for a guidance demo) |
 | **Core has zero runtime dependencies** | Small browser bundle, nothing to audit; hand-written bounded validation | zod in the browser bundle |
 | **Postconditions are named functions supplied by the app** | Definitions stay pure data; checks stay trusted code | Expression language, inline lambdas in data |
@@ -43,7 +43,7 @@ apps/reference-web/                   @dap/reference-web (private; may import on
   index.html vite.config.ts
   src/main.ts router.ts store.ts pages/{dashboard,profile,settings}.ts
   src/semantic-ui.ts postconditions.ts launcher.ts
-  src/walkthroughs/{profileUpdate,findSecuritySettings,enableTwoFactor}.ts
+  src/walkthroughs/{profileUpdate,findSecuritySettings,findTwoFactorSettings}.ts
 ```
 
 Dependency direction: `apps/reference-web -> @dap/walkthrough(/dom)`. Nothing in `packages/*` imports `walkthrough` except the app; `security`, `ai`, `actions`, `contracts` must never import it (new cruiser rules). `reference-host` is untouched.
@@ -136,7 +136,7 @@ interface DapRuntime {
   cancel(): void; getState(): EngineSnapshot; subscribe(fn): Unsubscribe; context(): SemanticContext;
 }
 ```
-Feature 003 registers a Feature 001 capability `startWalkthrough({ walkthroughId: enum(catalog IDs) })` (risk SAFE, no state change); its **trusted host executor** forwards the ID to the browser over a transport that Feature 003 designs. The model only ever selects an existing ID and receives `{ok}` feedback; it never holds `DapRuntime`, a selector, or a definition. `runtime.startWalkthrough` re-validates the ID, so a compromised caller still cannot start anything outside the catalog. `context()` is the only UI data the AI layer may read, and it is already privacy-projected. The runtime knows nothing of prompts, models, embeddings or RAG.
+Feature 003 registers a Feature 001 capability `startWalkthrough({ walkthroughId: enum(catalog IDs) })` (initial risk class **LOW**, no application state change: a walkthrough may navigate internally, and one capability cannot be SAFE for some walkthroughs and LOW for others, so the cleaner rule is LOW now; a separate display-only SAFE capability can be added later if it earns its place). A walkthrough never inherits authority for application mutations: the runtime has no executor, no Gateway access and no path to state-changing code; its **trusted host executor** forwards the ID to the browser over a transport that Feature 003 designs. The model only ever selects an existing ID and receives `{ok}` feedback; it never holds `DapRuntime`, a selector, or a definition. `runtime.startWalkthrough` re-validates the ID, so a compromised caller still cannot start anything outside the catalog. `context()` is the only UI data the AI layer may read, and it is already privacy-projected. The runtime knows nothing of prompts, models, embeddings or RAG.
 
 ## 7. Testing strategy (focused, not Feature 001 scale)
 
@@ -146,7 +146,7 @@ Feature 003 registers a Feature 001 capability `startWalkthrough({ walkthroughId
 | DOM targets, bridge, overlay | Vitest `dom` (jsdom) | exact-attribute lookup (no selector building), ignore/hidden/password, trusted-only events, `change` commit, MutationObserver availability, overlay text via `textContent`, teardown |
 | Architecture | Vitest `arch` + dependency-cruiser | leaf package; allowed edges; no DOM globals in core; no `eval`/`new Function`/`innerHTML`/`insertAdjacentHTML`/`document.write`/`fetch`/`WebSocket` in new sources; production `main.ts` keeps `trustedEventsOnly` default; planted-failure proofs |
 | Integration | Vitest `dom` against the real reference app | A, B, C start -> complete; failed-postcondition recovery (A); missing-target recovery (C); wrong click does not advance; in-app privacy checks; unknown walkthrough refused |
-| Real browser | Playwright | OPTIONAL |
+| Real browser | Playwright (automated) | OPTIONAL; one manual smoke check at closure is REQUIRED |
 
 New scripts: `test:walkthrough` (unit + dom + new arch file), `dev:web`, `build:web`. New dev dependencies: `vite`, `jsdom` only.
 
@@ -159,7 +159,7 @@ New scripts: `test:walkthrough` (unit + dom + new arch file), `dev:web`, `build:
 5. **Reference product integration** (T216-T223): app behaviour, three walkthroughs, launcher, jsdom integration, CI, short quickstart.
 
 Parallelism: T202/T203/T204/T205/T206 are independent after T201; T217-T219 are independent after T216. Two developers can run most of each slice side by side.
-**QA policy (to avoid Feature 001's cost)**: one reviewer pass per **slice**, Tier A focus (privacy VI, no arbitrary selectors VII, leaf boundary) plus the slice acceptance; one repair round; gates = lint, typecheck, dependency-cruiser, `test:walkthrough`, `npm test` once. No mutation campaigns, no 18-mutant sweeps, no double full-suite reruns except at final closure.
+**QA policy (to avoid Feature 001's cost)**: three reviews only: (1) a focused review after Slice 1; (2) one combined review for Slices 2-4; (3) a final review after Slice 5, which includes the manual real-browser smoke check. Reviews focus on Tier A (privacy VI, no arbitrary selectors VII, leaf boundary) plus the slice acceptance, with one repair round each. Normal tests (lint, typecheck, dependency-cruiser, `test:walkthrough`, `npm test`) run continuously and once per review. No mutation campaigns or mutant sweeps; a double full-suite run only at final closure.
 
 ## 9. Scope-creep register
 
