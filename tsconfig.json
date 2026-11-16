@@ -14,6 +14,9 @@
       "path": "packages/security"
     },
     {
+      "path": "packages/walkthrough"
+    },
+    {
       "path": "packages/testkit"
     },
     {

@@ -18,7 +18,7 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["packages/*/src/**/*.test.ts", "apps/*/src/**/*.test.ts"],
-          exclude: ["**/state/conformance/**", "**/node_modules/**", "**/dist/**"],
+          exclude: ["**/state/conformance/**", "packages/walkthrough/src/dom/**", "apps/reference-web/src/**", "**/node_modules/**", "**/dist/**"],
         },
       },
       {
@@ -39,6 +39,11 @@ export default defineConfig({
       {
         ...shared,
         test: { name: "security", include: ["tests/security/**/*.test.ts"] },
+      },
+      {
+        // Feature 002: the browser adapter and the reference web app run under jsdom.
+        ...shared,
+        test: { name: "dom", environment: "jsdom", include: ["packages/walkthrough/src/dom/**/*.test.ts", "apps/reference-web/src/**/*.test.ts"], exclude: ["**/node_modules/**", "**/dist/**"] },
       },
       {
         ...shared,
