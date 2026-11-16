@@ -10,8 +10,6 @@ export function createPostconditions(store: Store<AppState>, router: Router): { 
   "route.profile": () => router.current() === "profile", "route.settings": () => router.current() === "settings",
   "settings.advancedOpen": () => store.get().advancedOpen,
   "profile.saved": async () => {
-   // Capture-phase semantic events precede ordinary form handlers: let the same interaction commit its saving state first.
-   await Promise.resolve();
    if (destroyed) return false;
    if (store.get().profile.status !== "saving") return saved();
    return new Promise<boolean>(resolve => {

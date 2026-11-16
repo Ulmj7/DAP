@@ -7,6 +7,16 @@ export function createSemanticBridge({ root, registry, targets, dispatch, truste
  root: HTMLElement; registry: SemanticRegistry; targets: Targets; dispatch: (event: SemanticEvent) => void; trustedEventsOnly?: boolean;
 }): { destroy(): void } {
  let destroyed = false;
+ const pending = new Set<() => void>();
+ const enqueue = (parsed: SemanticEvent, view: Window) => {
+  // The runtime verifies synchronously, so deliver after the application's handlers and default action finish.
+  const handle = view.setTimeout(() => {
+   pending.delete(cancel);
+   if (!destroyed) { try { dispatch(parsed); } catch { /* A subscriber cannot break the UI. */ } }
+  }, 0);
+  const cancel = () => { view.clearTimeout(handle); pending.delete(cancel); };
+  pending.add(cancel);
+ };
  const listener = (event: Event) => {
   try {
    if (destroyed || (trustedEventsOnly && event.isTrusted !== true)) return;
@@ -24,10 +34,12 @@ export function createSemanticBridge({ root, registry, targets, dispatch, truste
     if (tag !== "TEXTAREA" && tag !== "SELECT" && !(tag === "INPUT" && ["text", "email", "search", "tel", "url"].includes((element as HTMLInputElement).type))) return;
     raw = { type: "input", id: def.id, nonEmpty: (element as HTMLInputElement).value.trim().length > 0 };
    }
-   const parsed = parseSemanticEvent(raw, registry); if (parsed) dispatch(parsed);
+   const parsed = parseSemanticEvent(raw, registry);
+   const view = root.ownerDocument.defaultView;
+   if (parsed && view !== null) enqueue(parsed, view);
   } catch { /* Neither a host subscriber nor hostile DOM may break ordinary UI interaction. */ }
  };
  const types = ["click", "input", "change"] as const;
  for (const type of types) root.addEventListener(type, listener, true);
- return { destroy() { if (destroyed) return; destroyed = true; for (const type of types) root.removeEventListener(type, listener, true); } };
+ return { destroy() { if (destroyed) return; destroyed = true; for (const cancel of [...pending]) cancel(); for (const type of types) root.removeEventListener(type, listener, true); } };
 }

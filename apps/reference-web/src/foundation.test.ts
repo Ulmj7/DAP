@@ -13,6 +13,7 @@ vi.mock("@dap/walkthrough", async original => {
   const runtime = real.createWalkthroughRuntime(options); return { ...runtime, dispatch: vi.fn(runtime.dispatch) };
  } };
 });
+const drainDelivery = () => new Promise<void>(resolve => window.setTimeout(resolve, 0));
 const apps: MountedApp[] = [];
 afterEach(() => { for (const app of apps.splice(0)) app.destroy(); document.body.replaceChildren(); vi.useRealTimers(); });
 const setup = (service = { save: async () => ({ ok: true }) }) => {
@@ -55,18 +56,20 @@ it("router/runtime follow only trusted routes and clean up on destroy", () => {
  for (const route of ["profile","settings","dashboard","<script>x</script>","admin"]) { window.location.hash=`#/${route}`; window.dispatchEvent(new HashChangeEvent("hashchange")); const known=["profile","settings","dashboard"].includes(route)?route:"dashboard"; expect(a.store.get().route).toBe(known); expect(a.runtime.context().route).toBe(known); expect(root.querySelectorAll("h1")).toHaveLength(1); expect(root.querySelector('[aria-current="page"]')?.textContent).toBe(copy.nav[known as keyof typeof copy.nav]); }
  expect(JSON.stringify(a.runtime.context())).not.toContain("<script>"); expect(JSON.stringify(dispatch.mock.calls)).not.toContain("admin"); const state=a.store.get(); a.destroy(); dispatch.mockClear(); window.location.hash="#/profile"; window.dispatchEvent(new HashChangeEvent("hashchange")); expect(a.store.get()).toBe(state); expect(dispatch).not.toHaveBeenCalled();
 });
-it("one app bridge survives page renders, emits no values and excludes all privacy fixtures", () => {
- const {a,root}=app(); const dispatch=vi.spyOn(a.runtime,"dispatch");
- const name=root.querySelector<HTMLInputElement>("#name")!; name.value="PRIVATEVALUE"; name.dispatchEvent(new Event("input",{bubbles:true})); expect(dispatch).toHaveBeenLastCalledWith({type:"input",id:"profile.nameInput",nonEmpty:true});
+it("one app bridge survives page renders, emits no values and excludes all privacy fixtures", async () => {
+ const {a,root}=app(); await drainDelivery(); const dispatch=vi.spyOn(a.runtime,"dispatch");
+ const name=root.querySelector<HTMLInputElement>("#name")!; name.value="PRIVATEVALUE"; name.dispatchEvent(new Event("input",{bubbles:true})); await drainDelivery(); expect(dispatch).toHaveBeenLastCalledWith({type:"input",id:"profile.nameInput",nonEmpty:true});
  for(const id of ["email","phone","password","billing-note"]) { const input=root.querySelector<HTMLInputElement>(`#${id}`)!; input.value="PASSWORDVALUE"; input.dispatchEvent(new Event("input",{bubbles:true})); input.click(); }
- expect(dispatch).toHaveBeenCalledTimes(1); expect(JSON.stringify(dispatch.mock.calls)).not.toContain("PRIVATEVALUE"); expect(JSON.stringify(a.runtime.context())).not.toContain("PASSWORDVALUE"); expect(JSON.stringify(a.runtime.context())).not.toContain("PRIVATEVALUE");
+ await drainDelivery();
+ // Router hashchange notifications are independent of bridge click/input delivery.
+ expect(dispatch.mock.calls.filter(([event]) => (event as {type:string}).type !== "routeChanged")).toHaveLength(1); expect(JSON.stringify(dispatch.mock.calls)).not.toContain("PRIVATEVALUE"); expect(JSON.stringify(a.runtime.context())).not.toContain("PASSWORDVALUE"); expect(JSON.stringify(a.runtime.context())).not.toContain("PRIVATEVALUE");
  for(let i=0;i<3;i++) for(const route of ["dashboard","settings","profile"]) { window.location.hash=`#/${route}`; window.dispatchEvent(new HashChangeEvent("hashchange")); }
- dispatch.mockClear(); root.querySelector<HTMLButtonElement>('[data-ai-id="profile.saveButton"]')!.click(); expect(dispatch.mock.calls.filter(([e])=>(e as {type:string}).type==="click")).toHaveLength(1);
+ await drainDelivery(); dispatch.mockClear(); root.querySelector<HTMLButtonElement>('[data-ai-id="profile.saveButton"]')!.click(); await drainDelivery(); expect(dispatch.mock.calls.filter(([e])=>(e as {type:string}).type==="click")).toHaveLength(1);
 });
 it("Settings security stays visible; Advanced is real, stable state and the control changes no auth state", () => {
  const {a,root}=app("settings"); const toggle=root.querySelector<HTMLButtonElement>('[data-ai-id="settings.advancedToggle"]')!; expect(a.targets.find("settings.securityPanel")).not.toBeNull(); expect(toggle.getAttribute("aria-expanded")).toBe("false"); toggle.click(); expect(toggle.getAttribute("aria-expanded")).toBe("true"); expect(a.store.get().advancedOpen).toBe(true); a.store.set({advancedOpen:true}); expect(root.querySelector("#advanced-settings")?.hasAttribute("hidden")).toBe(false); root.querySelector<HTMLButtonElement>('[data-ai-id="settings.twoFactorSetup"]')!.click(); expect(root.textContent).toContain(copy.settings.demoNote);
 });
-it("default app bridge refuses synthetic actions", () => { const {a,root}=app("profile",{trustedEventsOnly:true}); const spy=vi.spyOn(a.runtime,"dispatch"); root.querySelector<HTMLButtonElement>('[data-ai-id="profile.saveButton"]')!.click(); expect(spy).not.toHaveBeenCalled(); });
+it("default app bridge refuses synthetic actions", async () => { const {a,root}=app("profile",{trustedEventsOnly:true}); await drainDelivery(); const spy=vi.spyOn(a.runtime,"dispatch"); root.querySelector<HTMLButtonElement>('[data-ai-id="profile.saveButton"]')!.click(); await drainDelivery(); expect(spy.mock.calls.filter(([event]) => (event as {type:string}).type !== "routeChanged")).toEqual([]); });
 it("all pages have landmarks and one heading; every Profile field has a label", () => {
  const {root}=app("dashboard"); expect(root.querySelector("header nav")).not.toBeNull(); expect(root.querySelector("main")).not.toBeNull(); expect(root.querySelectorAll("h1")).toHaveLength(1); expect(root.textContent).not.toContain("Create project");
  window.location.hash="#/profile"; window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -85,9 +88,9 @@ it("postcondition subscriptions are removed on settlement and timeout", async()=
 it("router and target ports refuse unknown routes and report actual availability", async()=>{
  const {createRouterPort,createTargetPort}=await import("./ports.js");const {a}=app("dashboard");const navigate=vi.fn();const port=createRouterPort({...a.router,navigate},a.registry);port.navigate("admin");expect(navigate).not.toHaveBeenCalled();port.navigate("profile");expect(navigate).toHaveBeenCalledWith("profile");expect(createTargetPort(a.targets).resolve("unknown.id")).toBe("unavailable");
 });
-it("a capture-phase Save check observes the real submit handler's asynchronous save", async()=>{
+it("a delivery-turn Save check waits for the real asynchronous save", async()=>{
  let finish!:(v:{ok:boolean})=>void;const {a,root}=app("profile",{profileService:{save:()=>new Promise(resolve=>{finish=resolve;})}});const pc=createPostconditions(a.store,a.router);
- const name=root.querySelector<HTMLInputElement>("#name")!;name.value="Ada";name.dispatchEvent(new Event("input",{bubbles:true}));let verified: boolean|Promise<boolean>|undefined;
- root.addEventListener("click",()=>{verified=pc.checks["profile.saved"]!();},{capture:true,once:true});
- root.querySelector<HTMLButtonElement>('[data-ai-id="profile.saveButton"]')!.click();expect(a.store.get().profile.status).toBe("saving");await Promise.resolve();finish({ok:true});expect(await verified).toBe(true);pc.destroy();
+ const name=root.querySelector<HTMLInputElement>("#name")!;name.value="Ada";name.dispatchEvent(new Event("input",{bubbles:true}));await drainDelivery();let verified: boolean|Promise<boolean>|undefined;
+ vi.mocked(a.runtime.dispatch).mockImplementation(event=>{if((event as {type?:string}).type==="click")verified=pc.checks["profile.saved"]!();});
+ root.querySelector<HTMLButtonElement>('[data-ai-id="profile.saveButton"]')!.click();await drainDelivery();expect(a.store.get().profile.status).toBe("saving");finish({ok:true});expect(await verified).toBe(true);pc.destroy();
 });

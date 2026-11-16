@@ -2,7 +2,7 @@
 import { createOverlay, createTargets, createSemanticBridge } from "@dap/walkthrough/dom";
 import type { Overlay, Targets } from "@dap/walkthrough/dom";
 import { createWalkthroughCatalog, createWalkthroughRuntime } from "@dap/walkthrough";
-import type { WalkthroughRuntime, SemanticRegistry } from "@dap/walkthrough";
+import type { WalkthroughDef, WalkthroughRuntime, SemanticRegistry } from "@dap/walkthrough";
 import { copy } from "./copy.js";
 import { createProfileController, createProfileService, initialProfile } from "./profile-state.js";
 import type { ProfileService } from "./profile-state.js";
@@ -35,7 +35,7 @@ export interface MountedApp {
 
 export const DEMO_INSTRUCTION = copy.profile.instruction;
 
-export function mountApp(root: HTMLElement, options: { readonly window?: Window; readonly profileService?: ProfileService; readonly trustedEventsOnly?: boolean } = {}): MountedApp {
+export function mountApp(root: HTMLElement, options: { readonly window?: Window; readonly profileService?: ProfileService; readonly trustedEventsOnly?: boolean; readonly walkthroughs?: readonly WalkthroughDef[] } = {}): MountedApp {
   const doc = root.ownerDocument;
   const win = options.window ?? doc.defaultView;
   if (win === null || win === undefined) throw new Error("mountApp needs a window");
@@ -54,7 +54,7 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
 
   const profile = createProfileController(store, options.profileService ?? createProfileService());
   const postconditions = createPostconditions(store, router);
-  const runtime = createWalkthroughRuntime({ registry, catalog: createWalkthroughCatalog(registry, POSTCONDITION_NAMES, []), router: createRouterPort(router, registry), targets: createTargetPort(targets), postconditions: postconditions.checks,
+  const runtime = createWalkthroughRuntime({ registry, catalog: createWalkthroughCatalog(registry, POSTCONDITION_NAMES, options.walkthroughs ?? []), router: createRouterPort(router, registry), targets: createTargetPort(targets), postconditions: postconditions.checks,
     // U1 scaffold: the real C02 presenter is attached in U2.
     presenter: { apply: () => {} }, timers: { set: (callback, ms) => { const handle = win.setTimeout(callback, ms); return () => win.clearTimeout(handle); } },
   });
