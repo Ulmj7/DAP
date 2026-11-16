@@ -1,0 +1,9 @@
+{
+  "uid": 1000,
+  "hasLocalEnv": false,
+  "hasDockerEnv": false,
+  "hasAws": false,
+  "hasTestkitSource": false,
+  "hasTypeScriptCompiler": false,
+  "hasMigrationRunner": true
+}

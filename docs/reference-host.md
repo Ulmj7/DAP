@@ -4,6 +4,8 @@
 Одоогоор HTTP API ажиллана; browser UI, бодит LLM, RAG, confirmation байхгүй.
 `getGuidance` нь developer-ийн бичсэн хоёр сэдвийн нийтлэг бүтээгдэхүүний зааврыг буцаана.
 
+BE-г контейнерт ажиллуулах бол [Лаборатори 8 / Docker заавар](lab08.md)-ыг ашиглана.
+
 ## 1. Dependency ба PostgreSQL
 
 Repository root дээр Node.js 22+, npm, ажиллаж буй Docker daemon ашиглана:

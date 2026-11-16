@@ -1,0 +1,3 @@
+app-1  | {"level":30,"time":1794826108184,"pid":7,"hostname":"91ca247d6b9e","msg":"Server listening at http://127.0.0.1:3000"}
+app-1  | {"level":30,"time":1794826108185,"pid":7,"hostname":"91ca247d6b9e","msg":"Server listening at http://172.21.0.3:3000"}
+app-1  | {"level":30,"time":1794826113142,"pid":7,"hostname":"91ca247d6b9e","reqId":"req-1","statusCode":200,"requestId":"req-1","msg":"request completed"}

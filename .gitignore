@@ -4,6 +4,7 @@ coverage
 *.tsbuildinfo
 .env*
 !.env.example
+!.env.docker.example
 
 # Not part of the project: course material kept next to it
 *.pdf

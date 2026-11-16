@@ -1,0 +1,230 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.86kB done
+#1 DONE 0.0s
+
+#2 resolve image config for docker-image://docker.io/docker/dockerfile:1
+#2 DONE 4.3s
+
+#3 docker-image://docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+#3 resolve docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e 0.0s done
+#3 sha256:528c92d70d7e39dbb3dd1c6681f6750c565c7e45b70527cda47c1a61495c1b6a 1.41kB / 1.41kB done
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 0B / 14.28MB 0.1s
+#3 sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e 9.08kB / 9.08kB done
+#3 sha256:7b32114e84ca21aeb2d6f871a0b62b3a0762193f75d9afd048ee4cbe889f3148 1.13kB / 1.13kB done
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 1.05MB / 14.28MB 1.2s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 2.10MB / 14.28MB 1.6s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 3.15MB / 14.28MB 2.1s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 4.19MB / 14.28MB 2.9s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 5.24MB / 14.28MB 4.1s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 6.29MB / 14.28MB 4.5s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 7.34MB / 14.28MB 4.9s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 8.39MB / 14.28MB 5.7s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 9.44MB / 14.28MB 6.4s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 10.49MB / 14.28MB 7.1s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 11.53MB / 14.28MB 7.6s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 12.58MB / 14.28MB 8.3s
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 13.63MB / 14.28MB 9.3s
+#3 extracting sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62
+#3 sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 14.28MB / 14.28MB 9.6s done
+#3 extracting sha256:9d2b4f57f9e20f33279375ce25c6ff14f30f64270ed5c7b613b2b30256754f62 0.2s done
+#3 DONE 9.9s
+
+#4 [internal] load metadata for docker.io/library/node:22-bookworm-slim
+#4 DONE 2.5s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 738B done
+#5 DONE 0.0s
+
+#6 [manifests 1/9] FROM docker.io/library/node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
+#6 resolve docker.io/library/node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee 0.0s done
+#6 sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee 5.22kB / 5.22kB done
+#6 sha256:47725aca53d3295ec2d3be8f62726599b3033cc262edc2c7e429909b3ac599fc 1.93kB / 1.93kB done
+#6 sha256:b774d993885c47eca14db241ba8cc7e5789235142f76e4a2a6a65ec350a1bac0 6.77kB / 6.77kB done
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 0B / 28.25MB 0.1s
+#6 sha256:076cba098ace87d6950e8fa4cc530bfe59834eba28f30061e8526d6f00bf52c8 0B / 3.31kB 0.1s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 0B / 49.90MB 0.1s
+#6 ...
+
+#7 [internal] load build context
+#7 transferring context: 543.68kB 0.2s done
+#7 DONE 0.2s
+
+#6 [manifests 1/9] FROM docker.io/library/node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
+#6 sha256:076cba098ace87d6950e8fa4cc530bfe59834eba28f30061e8526d6f00bf52c8 3.31kB / 3.31kB 1.1s done
+#6 sha256:aa4e8910862263c3bad50c754fb555bbbb7661c41e35ba703ae082ec6749c175 0B / 1.71MB 1.2s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 2.10MB / 28.25MB 2.0s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 4.19MB / 28.25MB 3.4s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 6.29MB / 28.25MB 5.0s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 0B / 49.90MB 5.1s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 8.39MB / 28.25MB 6.2s
+#6 sha256:aa4e8910862263c3bad50c754fb555bbbb7661c41e35ba703ae082ec6749c175 0B / 1.71MB 6.3s
+#6 sha256:aa4e8910862263c3bad50c754fb555bbbb7661c41e35ba703ae082ec6749c175 1.05MB / 1.71MB 6.9s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 10.49MB / 28.25MB 8.0s
+#6 sha256:aa4e8910862263c3bad50c754fb555bbbb7661c41e35ba703ae082ec6749c175 1.71MB / 1.71MB 9.2s done
+#6 sha256:cce880541c96dc730321857781d113e3c75c0cb383f9510300922762006d734e 0B / 448B 9.3s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 12.58MB / 28.25MB 9.7s
+#6 sha256:cce880541c96dc730321857781d113e3c75c0cb383f9510300922762006d734e 448B / 448B 10.0s done
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 1.05MB / 49.90MB 10.3s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 14.68MB / 28.25MB 12.8s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 2.10MB / 49.90MB 15.4s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 16.78MB / 28.25MB 15.6s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 18.87MB / 28.25MB 17.9s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 3.15MB / 49.90MB 20.4s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 20.97MB / 28.25MB 20.6s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 23.07MB / 28.25MB 22.2s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 25.17MB / 28.25MB 23.7s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 27.26MB / 28.25MB 25.5s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 5.24MB / 49.90MB 25.5s
+#6 sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 28.25MB / 28.25MB 26.6s done
+#6 extracting sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3
+#6 extracting sha256:dd051e1b8c92ff101fa3071ab97ea4924885942f15644e01c3dc095764e863e3 1.9s done
+#6 extracting sha256:076cba098ace87d6950e8fa4cc530bfe59834eba28f30061e8526d6f00bf52c8
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 8.39MB / 49.90MB 28.9s
+#6 extracting sha256:076cba098ace87d6950e8fa4cc530bfe59834eba28f30061e8526d6f00bf52c8 done
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 11.53MB / 49.90MB 31.1s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 13.63MB / 49.90MB 36.1s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 15.73MB / 49.90MB 41.1s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 16.78MB / 49.90MB 46.2s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 18.87MB / 49.90MB 51.2s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 20.97MB / 49.90MB 56.4s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 24.12MB / 49.90MB 59.1s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 27.26MB / 49.90MB 61.7s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 30.41MB / 49.90MB 64.0s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 31.46MB / 49.90MB 69.0s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 35.65MB / 49.90MB 71.5s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 38.80MB / 49.90MB 73.8s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 42.99MB / 49.90MB 77.6s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 46.14MB / 49.90MB 80.9s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 49.28MB / 49.90MB 83.8s
+#6 sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 49.90MB / 49.90MB 83.8s done
+#6 extracting sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 0.1s
+#6 extracting sha256:0c4023204e5b4bcd551170279c40ff58285cc8ea87ddf9ff25cb3713e6ecda79 1.9s done
+#6 extracting sha256:aa4e8910862263c3bad50c754fb555bbbb7661c41e35ba703ae082ec6749c175 0.1s done
+#6 extracting sha256:cce880541c96dc730321857781d113e3c75c0cb383f9510300922762006d734e done
+#6 DONE 87.3s
+
+#8 [manifests 2/9] WORKDIR /app
+#8 DONE 0.1s
+
+#9 [manifests 3/9] COPY package.json package-lock.json ./
+#9 DONE 0.1s
+
+#10 [manifests 4/9] COPY packages/contracts/package.json ./packages/contracts/
+#10 DONE 0.0s
+
+#11 [manifests 5/9] COPY packages/actions/package.json ./packages/actions/
+#11 DONE 0.0s
+
+#12 [manifests 6/9] COPY packages/ai/package.json ./packages/ai/
+#12 DONE 0.0s
+
+#13 [manifests 7/9] COPY packages/security/package.json ./packages/security/
+#13 DONE 0.0s
+
+#14 [manifests 8/9] COPY packages/testkit/package.json ./packages/testkit/
+#14 DONE 0.0s
+
+#15 [manifests 9/9] COPY apps/reference-host/package.json ./apps/reference-host/
+#15 DONE 0.0s
+
+#16 [production-deps 1/1] RUN npm ci --omit=dev --no-audit --no-fund
+#16 1.895 npm warn deprecated prom-client@15.1.3: prom-client has been replaced by @prometheus-io/client
+#16 ...
+
+#17 [build  1/13] RUN npm ci --no-audit --no-fund
+#17 4.611 npm warn deprecated prom-client@15.1.3: prom-client has been replaced by @prometheus-io/client
+#17 ...
+
+#16 [production-deps 1/1] RUN npm ci --omit=dev --no-audit --no-fund
+#16 16.25 
+#16 16.25 added 78 packages in 16s
+#16 16.26 npm notice
+#16 16.26 npm notice New major version of npm available! 10.9.9 -> 12.2.2
+#16 16.26 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+#16 16.26 npm notice To update run: npm install -g npm@12.2.2
+#16 16.26 npm notice
+#16 DONE 16.4s
+
+#17 [build  1/13] RUN npm ci --no-audit --no-fund
+#17 ...
+
+#18 [runtime 3/9] COPY --from=production-deps /app/ ./
+#18 DONE 0.4s
+
+#17 [build  1/13] RUN npm ci --no-audit --no-fund
+#17 42.24 
+#17 42.24 added 247 packages in 42s
+#17 42.24 npm notice
+#17 42.24 npm notice New major version of npm available! 10.9.9 -> 12.2.2
+#17 42.24 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+#17 42.24 npm notice To update run: npm install -g npm@12.2.2
+#17 42.24 npm notice
+#17 DONE 42.4s
+
+#19 [build  2/13] COPY tsconfig.base.json ./
+#19 DONE 0.0s
+
+#20 [build  3/13] COPY packages/contracts/tsconfig*.json ./packages/contracts/
+#20 DONE 0.0s
+
+#21 [build  4/13] COPY packages/actions/tsconfig*.json ./packages/actions/
+#21 DONE 0.0s
+
+#22 [build  5/13] COPY packages/ai/tsconfig*.json ./packages/ai/
+#22 DONE 0.0s
+
+#23 [build  6/13] COPY packages/security/tsconfig*.json ./packages/security/
+#23 DONE 0.0s
+
+#24 [build  7/13] COPY apps/reference-host/tsconfig*.json ./apps/reference-host/
+#24 DONE 0.0s
+
+#25 [build  8/13] COPY packages/contracts/src ./packages/contracts/src
+#25 DONE 0.0s
+
+#26 [build  9/13] COPY packages/actions/src ./packages/actions/src
+#26 DONE 0.0s
+
+#27 [build 10/13] COPY packages/ai/src ./packages/ai/src
+#27 DONE 0.0s
+
+#28 [build 11/13] COPY packages/security/src ./packages/security/src
+#28 DONE 0.0s
+
+#29 [build 12/13] COPY apps/reference-host/src ./apps/reference-host/src
+#29 DONE 0.0s
+
+#30 [build 13/13] RUN npm run build:host
+#30 0.234 
+#30 0.234 > dap-security-foundation@0.0.0 build:host
+#30 0.234 > tsc -b apps/reference-host/tsconfig.build.json
+#30 0.234 
+#30 DONE 3.6s
+
+#31 [runtime 4/9] COPY --from=build /app/packages/contracts/dist ./packages/contracts/dist
+#31 DONE 0.1s
+
+#32 [runtime 5/9] COPY --from=build /app/packages/actions/dist ./packages/actions/dist
+#32 DONE 0.1s
+
+#33 [runtime 6/9] COPY --from=build /app/packages/ai/dist ./packages/ai/dist
+#33 DONE 0.0s
+
+#34 [runtime 7/9] COPY --from=build /app/packages/security/dist ./packages/security/dist
+#34 DONE 0.1s
+
+#35 [runtime 8/9] COPY --from=build /app/apps/reference-host/dist ./apps/reference-host/dist
+#35 DONE 0.0s
+
+#36 [runtime 9/9] COPY db ./db
+#36 DONE 0.0s
+
+#37 exporting to image
+#37 exporting layers
+#37 exporting layers 0.7s done
+#37 writing image sha256:153e493bbdf0dfde161d574edb94b8bbedc245f52aec6576e9c74134c2ace4f3 done
+#37 naming to docker.io/library/ai-tuslah:lab08 done
+#37 DONE 0.7s

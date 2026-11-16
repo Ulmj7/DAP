@@ -1,0 +1,32 @@
+{
+  "health": {
+    "status": 200,
+    "body": {
+      "status": "ok"
+    }
+  },
+  "readiness": {
+    "status": 200,
+    "body": {
+      "status": "ready"
+    }
+  },
+  "guidance": {
+    "status": 200,
+    "body": {
+      "feedback": {
+        "outcome": "ALLOWED",
+        "category": "ok"
+      },
+      "guide": {
+        "topicId": "getting-started",
+        "title": "Тусламжийн заавар авах",
+        "steps": [
+          "Баталгаажсан session-ээр тусламжийн хүсэлт илгээнэ.",
+          "getting-started эсвэл security-overview сэдвийг сонгоно.",
+          "Систем эрхийг шалгаж, зөвшөөрсөн үед бүртгэлтэй зааврыг буцаана."
+        ]
+      }
+    }
+  }
+}

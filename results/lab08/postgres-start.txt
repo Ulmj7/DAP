@@ -1,0 +1,3 @@
+ Container dap-foundation-postgres-1  Running
+ Container dap-foundation-postgres-1  Waiting
+ Container dap-foundation-postgres-1  Healthy

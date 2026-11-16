@@ -15,7 +15,7 @@ const catalog: ReadonlyMap<string, Guidance> = new Map<string, Guidance>([
   ["getting-started", Object.freeze({
     topicId: "getting-started", title: "Тусламжийн заавар авах",
     steps: Object.freeze([
-      "Баталгаажсан session-ээр тусламжийн хүсэлт илгээнэ.",
+      "POST /guidance руу Authorization: Bearer header болон topicId бүхий JSON хүсэлт илгээнэ.",
       "getting-started эсвэл security-overview сэдвийг сонгоно.",
       "Систем эрхийг шалгаж, зөвшөөрсөн үед бүртгэлтэй зааврыг буцаана.",
     ]),

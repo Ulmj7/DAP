@@ -1,0 +1,4 @@
+NAME                        IMAGE             COMMAND                  SERVICE    CREATED          STATUS                     PORTS
+dap-foundation-app-1        ai-tuslah:lab08   "docker-entrypoint.s…"   app        7 seconds ago    Up 5 seconds (healthy)     127.0.0.1:3000->3000/tcp
+dap-foundation-migrate-1    ai-tuslah:lab08   "docker-entrypoint.s…"   migrate    7 seconds ago    Exited (0) 6 seconds ago   
+dap-foundation-postgres-1   postgres:16       "docker-entrypoint.s…"   postgres   35 minutes ago   Up 34 minutes (healthy)    127.0.0.1:54329->5432/tcp

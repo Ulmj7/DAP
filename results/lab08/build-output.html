@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Lab 08 — captured Docker build output</title><style>body{margin:36px;background:#f6f8fa;color:#18212c;font:16px system-ui}h1{font-size:26px;margin:0 0 10px}p{margin:0 0 20px;color:#445}pre{background:#111827;color:#e5edf8;padding:24px;border-radius:10px;font:17px/1.5 monospace;white-space:pre-wrap;overflow-wrap:anywhere}code{font-family:monospace}</style><h1>Lab 08 — Docker layer caching</h1><p>Unmodified excerpts from <code>build-cached.txt</code> after changing guidance.ts. This page displays captured command output.</p><pre>#10 [build  1/13] RUN npm ci --no-audit --no-fund
+#10 CACHED
+
+#24 [build  9/13] COPY packages/actions/src ./packages/actions/src
+#24 DONE 0.0s
+
+#28 [build 13/13] RUN npm run build:host
+#28 0.287 
+#28 0.287 &gt; dap-security-foundation@0.0.0 build:host
+#28 0.287 &gt; tsc -b apps/reference-host/tsconfig.build.json
+#28 0.287 
+#28 DONE 4.8s
+
+#30 [production-deps 1/1] RUN npm ci --omit=dev --no-audit --no-fund
+#30 CACHED
+
+#37 exporting to image
+#37 exporting layers
+#37 exporting layers 2.2s done
+#37 writing image sha256:2c7e1a481bb60e409a0d490fc191c7245e310daf75066680fccd7f22eeea0a7c 0.0s done
+#37 naming to docker.io/library/ai-tuslah:lab08 0.0s done
+#37 DONE 2.5s
+</pre></html>
