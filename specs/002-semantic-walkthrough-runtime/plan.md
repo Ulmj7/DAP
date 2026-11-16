@@ -107,10 +107,10 @@ Inputs: `start`, `targetFound`, `targetWaitExpired`, `presented`, `presentFailed
 | VERIFYING | `verified(true)` | advance(`next`) |
 | VERIFYING | `verified(false)` / `verifyFailed` | `recover` ? RESOLVING(recover) : FAILED `verification_failed` |
 | live state | `internalError` | FAILED `internal_error` (cancel timers and clear) |
-| any non-terminal | `cancel` | CANCELLED |
+| live state (not IDLE) | `cancel` | CANCELLED |
 | any non-terminal | `start` | refused (`busy`) |
 
-`advance(next)` = COMPLETED if `next` is a `complete` step, else RESOLVING(next). Every entry into a step through `recover`/re-resolve increments its attempt count; beyond `maxAttempts` (default 3) the run ends FAILED `max_attempts`. Events while VERIFYING are ignored. An event is consumed by exactly one step per dispatch. A navigate step with `text` presents an instruction and waits for the matching `routeChanged`; one without text uses the synchronous router port. Both then emit `verifyRoute` and read the actual router state before advancing. Neither a route event nor an `ack` substitutes for a postcondition. `targetAvailable` is meaningful only in RESOLVING; ordinary events in PRESENTING/VERIFYING are ignored.
+`advance(next)` enters the next step: COMPLETED for a complete step, RESOLVING for a guide or automatic navigation, PRESENTING for navigation with instruction text. Cancelling IDLE or a terminal state is a no-op. Every entry into a step through `recover`/re-resolve increments its attempt count; beyond `maxAttempts` (default 3) the run ends FAILED `max_attempts`. Events while VERIFYING are ignored. An event is consumed by exactly one step per dispatch. A navigate step with `text` presents an instruction and waits for the matching `routeChanged`; one without text uses the synchronous router port. Both then emit `verifyRoute` and read the actual router state before advancing. Neither a route event nor an `ack` substitutes for a postcondition. `targetAvailable` is meaningful only in RESOLVING; ordinary events in PRESENTING/VERIFYING are ignored.
 
 Re-entrant callbacks are queued. Cancellation suppresses pending presentation; timers are single-use and generation-checked again when their queued result is processed. A start requested from a live callback returns `busy`; callers may start again after the terminal snapshot is delivered. Effects and snapshots are frozen. The per-run bound counts state-changing transitions, not unbounded no-op inputs or repeated host-started runs. Human WAITING states intentionally have no overall deadline.
 
@@ -128,7 +128,7 @@ router (hashchange)  -> routeChanged(route)             MutationObserver -> targ
 
 ### 4.6 Ports (all injected; the engine imports no DOM)
 
-`targets: { find(id): TargetHandle | null; observe(cb): Unsubscribe }` · `presenter: { show(handle, text, { wait }): void; hide(): void; onAck(cb) }` · `router: { current(): RouteId; navigate(route): void; subscribe(cb) }` · `timers: { set(fn, ms): Cancel }` · `postconditions: Record<name, () => boolean | Promise<boolean>>`. The DOM adapter implements the first two; the app implements `router` and `postconditions`.
+The built core ports are `targets: { resolve(id): "available" | "unavailable" }`, `presenter: { apply(PresentationEffect): void }`, `router: { current(): string; navigate(route): void }`, `timers: { set(callback, ms): Cancel }`, and named `postconditions`. No core port holds a DOM handle. The pending UI adapter will translate Slice 1 target handles/overlay operations into these ports and forward route, acknowledgement and availability events through `dispatch`; subscriptions belong to that adapter, not to the core port interfaces.
 
 The synchronous ports are trusted host adapters, not sandboxed code. The timer port must return a cancellation function and eventually invoke active callbacks; a never-firing timer cannot establish elapsed time. The core cannot preempt a synchronously blocking callback or guarantee physical timer cleanup when the host never supplies a valid handle. Verification timeouts bound asynchronous checks only while the timer port works. The pure `transition` helper is public for diagnostics/testing but holds no runtime state; `test-support` is not a public entry. Feature 003 still receives a narrower trusted facade, not this full host API.
 
