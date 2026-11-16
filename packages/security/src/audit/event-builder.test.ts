@@ -124,7 +124,7 @@ describe("the action: registered, or the one sanitized attempted name", () => {
     expect(nameOf("EXECUTE_SHELL\n{\"outcome\":\"ALLOWED\"}")).toBe("EXECUTE_SHELL\\u{a}{\"outcome\":\"ALLOWED\"}");
     expect(nameOf("vіew")).toBe("v\\u{456}ew");
     expect(nameOf("x".repeat(500))).toBe("x".repeat(64));
-    expect(nameOf("")).toBe("");
+    expect(nameOf("")).toBeNull();
   });
   it("keeps a name that is already escaped and bounded exactly as it is (the intake stage prepares it)", () => {
     for (const ready of ["viewProject", "EXECUTE_SHELL\\u{a}rm", "x".repeat(64), "~!@ #$%^&*()_+"]) expect(nameOf(ready), ready).toBe(ready);
@@ -269,7 +269,7 @@ describe("no model free text reaches any field (property)", () => {
   it("every string of the event is trusted, sanitized or a fixed vocabulary, whatever the model wrote", () => {
     fc.assert(fc.property(fc.string({ maxLength: 300 }), fc.string({ maxLength: 300 }), (name, note) => {
       const event = buildAuditEvent(base({ action: { kind: "attempted", name }, paramsView: {} }));
-      expect(event.actionId).toMatch(/^[\x20-\x7e]{0,64}$/);
+      if (event.actionId !== null) expect(event.actionId).toMatch(/^[\x20-\x7e]{1,64}$/);
       const line = JSON.stringify(event);
       expect(/[\p{Cc}\p{Zl}\p{Zp}]/u.test(line)).toBe(false);
       const withView = buildAuditEvent(base({ action: registered, paramsView: { "/note": note } }));

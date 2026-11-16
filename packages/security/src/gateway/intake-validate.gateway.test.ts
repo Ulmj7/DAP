@@ -112,7 +112,7 @@ describe("the proposal door with intake and validate wired in", () => {
 });
 
 describe("the composed stages", () => {
-  const record = (facts: object): PipelineRecord => ({ decisionId: "d", requestId: "r", run: {}, context: context(), readProposal: () => { throw new Error("withheld"); }, facts }) as unknown as PipelineRecord;
+  const record = (facts: object): PipelineRecord => ({ decisionId: "d", requestId: "r", run, budget: { remainingMs: () => 1000 }, context: context(), readProposal: () => { throw new Error("withheld"); }, facts }) as unknown as PipelineRecord;
 
   it("are exactly the eleven D6 positions: context, intake, rate_limit, replay, resolve, validate, authorize, risk, confirmation, audit and execute", () => {
     expect(Object.keys(composeStages(dependencies().deps)).sort()).toEqual(["audit", "authorize", "confirmation", "context", "execute", "intake", "rate_limit", "replay", "resolve", "risk", "validate"]);

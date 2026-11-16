@@ -56,6 +56,20 @@ describe("P1 chain A: the allow-event is committed in PostgreSQL BEFORE the exec
   });
 });
 
+describe("AUDIT-01 / TEST-03: raw malformed names persist consistently", () => {
+  it("empty action is INVALID_ACTION, with a persisted PROPOSED and one denial carrying NULL action_id", async () => {
+    const { world } = fresh();
+    expect(await world.submit(A_ALICE, { callId: "empty-action", raw: '{"action":"","params":{}}' })).toEqual({ outcome: "INVALID_ACTION", category: "not_available" });
+    expect(world.executorCalls()).toBe(0);
+    const [requestId] = world.requestIds();
+    const rows = await rowsOf(TENANT_A, [requestId!]);
+    expect(rows.map(row => row.event_type)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_DENIED"]);
+    expect(rows.map(row => row.action_id)).toEqual([null, null]);
+    expect(rows[1]).toMatchObject({ outcome: "INVALID_ACTION", reason: "malformed_envelope" });
+    expect(world.events().map(e => e.actionId)).toEqual([null, null]);
+  });
+});
+
 describe("P2 chain B: a genuine PostgreSQL write failure fails closed and executes nothing", () => {
   /** Every statement of a connection from this pool runs in a read-only transaction, so each INSERT is refused BY THE DATABASE (not by a mock). */
   const readOnly = () => new Pool({ connectionString: process.env.DAP_DATABASE_URL, options: "-c default_transaction_read_only=on", max: 2, connectionTimeoutMillis: 2000 });

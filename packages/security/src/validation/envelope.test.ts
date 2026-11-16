@@ -340,8 +340,8 @@ describe("parseEnvelope: attemptedAction (audit only)", () => {
     expect(attempted({ action: "sendEmail", params: { n: NaN } })).toBe("sendEmail");
   });
 
-  it("is absent when the name is not a string, or when there is no readable envelope", () => {
-    for (const input of ['{"action":42,"params":{}}', '{"action":null,"params":{}}', '{"action":["a"],"params":{}}', '{"params":{}}', "{}", "[1]", "42", "not json",
+  it("is absent for an empty or non-string name, or when there is no readable envelope", () => {
+    for (const input of ['{"action":"","params":{}}', '{"action":42,"params":{}}', '{"action":null,"params":{}}', '{"action":["a"],"params":{}}', '{"params":{}}', "{}", "[1]", "42", "not json",
       '{"action":"sendEmail","action":"other","params":{}}', '{"action":"sendEmail","params":{"__proto__":1}}', undefined, null]) {
       const result = parseEnvelope(input);
       expect(result.ok, String(input)).toBe(false);

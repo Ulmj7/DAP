@@ -112,10 +112,19 @@ export function assemble(deps: GatewayDependencies, extras: GatewayExtras = {}, 
   const telemetry = host === undefined ? {} : { telemetry: host };
   const writer = createAuditWriter({ sink: deps.audit, ...telemetry }, options);
   const events = createAuditEventFactory({ clock: deps.clock }, options);
+  const intake = createIntakeStage(caps);
+  const admitMalformed = createRateLimitStage(limiter, options, "intake");
   return Object.freeze({
     stages: {
       context: createContextStage(deps.clock, options),
-      intake: createIntakeStage(caps),
+      intake: async (request) => {
+        const result = await intake(request);
+        if (result.kind === "stop") {
+          const admission = await admitMalformed(request);
+          if (admission.kind === "stop") return admission;
+        }
+        return result;
+      },
       rate_limit: createRateLimitStage(limiter, options),
       replay: createReplayStage({ replay: deps.state.replay, retainSeconds: deps.config.replayRetentionSeconds }, options),
       resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),

@@ -1,15 +1,16 @@
-/** Focused regressions for EXEC-01, LOGIC-01 and TEST-01/03. */
+/** Focused regressions for EXEC-01, LOGIC-01, RATE-01, AUTHZ-01, TEST-01/02/03, LIMIT-02 and RISK-01. */
 import { describe, expect, it, vi } from "vitest";
 import { defineExecutor } from "@dap/contracts";
-import type { GatewayDependencies } from "@dap/contracts";
-import { createPolicyGateway } from "@dap/security";
-import { withGateway, WIDE_GATEWAY_CONFIG } from "@dap/testkit";
+import type { AnyActionDefinition, GatewayDependencies } from "@dap/contracts";
+import { buildRegistry, createPolicyGateway } from "@dap/security";
+import { ALL_TEST_CAPABILITIES, withGateway, WIDE_GATEWAY_CONFIG } from "@dap/testkit";
 import { assemble } from "../../packages/security/src/gateway/create-gateway.js";
 import { createPipeline } from "../../packages/security/src/gateway/pipeline.js";
 
 const alice = { tenant: "A", user: "alice" } as const;
 const ok = { outcome: "ALLOWED", category: "ok" };
 const types = (w: ReturnType<typeof withGateway>) => w.events().map(e => e.type);
+const registryWith = (id: string, patch: Partial<AnyActionDefinition>) => buildRegistry(ALL_TEST_CAPABILITIES.map(d => d.id === id ? { ...d, ...patch } : d));
 const submit = async (w: ReturnType<typeof withGateway>, overrides: Partial<GatewayDependencies>, action = "testSafeEcho") => {
   const bound = await w.submitterFor(alice);
   return createPolicyGateway({ ...w.deps, ...overrides }).proposals.forSession(bound.context, bound.run).submit(w.proposal(action));
@@ -89,5 +90,82 @@ describe("LOGIC-01 / TEST-01: durable ALLOW is the final policy decision", () =>
       executors: { executorFor: id => committed ? undefined : w.deps.executors.executorFor(id) },
     })).toEqual({ outcome: "ALLOWED", category: "try_later" });
     expect(w.executorCalls()).toBe(0); expect(types(w)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED"]);
+  });
+});
+
+describe("RATE-01: malformed raw JSON has exactly one proposal admission", () => {
+  it("malformed floods hit existing throttle with bounded state traffic", async () => {
+    const w = withGateway(); const answers = [];
+    for (let i = 0; i < 200; i++) answers.push(await w.submit(alice, { callId: `bad-${i}`, raw: "{" }));
+    expect(answers.filter(a => a.outcome === "INVALID_ACTION")).toHaveLength(6);
+    expect(answers.filter(a => a.outcome === "DENIED")).toHaveLength(194);
+    expect(w.stats().sharedStoreCalls).toBeLessThanOrEqual(50); expect(w.executorCalls()).toBe(0);
+    expect(w.events({ type: "AI_RATE_LIMITED" })).toHaveLength(194);
+  });
+  it("raw duplicate keys are rejected before replay or execution", async () => {
+    const w = withGateway();
+    expect((await w.submit(alice, { callId: "duplicate", raw: '{"action":"testSafeEcho","action":"testLowNavigate","params":{}}' })).outcome).toBe("INVALID_ACTION");
+    expect(w.stats().replayClaims).toHaveLength(0); expect(w.executorCalls()).toBe(0);
+    expect(types(w)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_DENIED"]);
+  });
+  it("valid proposals are charged once; a malformed proposal uses the same turn budget", async () => {
+    const w = withGateway({ config: { ...WIDE_GATEWAY_CONFIG, limits: { ...WIDE_GATEWAY_CONFIG.limits, proposalsPerTurn: 3 } } });
+    expect(await w.submit(alice, w.proposal("testSafeEcho"))).toEqual(ok);
+    expect((await w.submit(alice, { callId: "malformed", raw: "{" })).outcome).toBe("INVALID_ACTION");
+    expect(await w.submit(alice, w.proposal("testSafeEcho"))).toEqual(ok);
+    expect((await w.submit(alice, w.proposal("testSafeEcho"))).outcome).toBe("DENIED");
+    expect(w.executorCalls()).toBe(2); expect(w.stats().replayClaims).toHaveLength(2);
+  });
+});
+
+describe("AUTHZ-01 / TEST-02: resource and page checks narrow authorization", () => {
+  it("state changes with a null extracted resource cannot bypass the resource authorizer", async () => {
+    const w = withGateway({ mediumConfirmationJustification: "reversible" });
+    const registry = registryWith("testMediumDraft", { confirmation: { kind: "not-required", justification: "reversible" }, resource: () => null });
+    expect((await submit(w, { registry }, "testMediumDraft")).outcome).toBe("DENIED");
+    expect(w.executorCalls()).toBe(0); expect(types(w)).not.toContain("AI_ACTION_ALLOWED");
+  });
+  it("resource-authorized changes and legitimate null-resource reads still execute", async () => {
+    const w = withGateway({ mediumConfirmationJustification: "reversible" });
+    expect(await w.submit(alice, w.proposal("testMediumDraft"))).toEqual(ok);
+    expect(w.stats().resourceCalls).toBe(1);
+    expect(await w.submit(alice, w.proposal("testSafeEcho"))).toEqual(ok);
+    expect(w.stats().resourceCalls).toBe(1);
+  });
+  it.each(["allowed", "denied", "unknown", "throws", "hangs", "wrong-type", "no-permission"])("page restricted capability: %s", async mode => {
+    vi.useFakeTimers();
+    try {
+      const w = withGateway(); w.setReportedPage(mode === "denied" ? "other" : mode === "unknown" ? null : "home");
+      if (mode === "no-permission") w.setPermissionAnswer(false);
+      if (mode === "throws" || mode === "hangs" || mode === "wrong-type") w.injectFault("pages", mode);
+      const pending = submit(w, { registry: registryWith("testSafeEcho", { allowedPages: ["home" as never] }) });
+      await vi.advanceTimersByTimeAsync(20_000);
+      const result = await pending;
+      expect(result.outcome === "ALLOWED").toBe(mode === "allowed");
+      expect(w.executorCalls()).toBe(mode === "allowed" ? 1 : 0);
+      expect(w.stats().pageCalls).toBe(mode === "no-permission" ? 0 : mode === "throws" || mode === "hangs" || mode === "wrong-type" ? 0 : 1);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("LIMIT-02 / RISK-01", () => {
+  it("audit outage is not user abuse; the session executes immediately after recovery", async () => {
+    const w = withGateway(); w.audit.failAppend(true);
+    for (let i = 0; i < 6; i++) expect((await w.submit(alice, w.proposal("testSafeEcho"), { turn: `outage-${i}` })).outcome).toBe("DENIED");
+    expect(w.executorCalls()).toBe(0); w.audit.failAppend(false);
+    expect(await w.submit(alice, w.proposal("testSafeEcho"), { turn: "recovered" })).toEqual(ok);
+    expect(w.executorCalls()).toBe(1);
+  });
+  it("actual policy abuse still blocks the session", async () => {
+    const w = withGateway();
+    for (let i = 0; i < 7; i++) await w.submit(alice, { callId: `abuse-${i}`, raw: '{"action":"noSuchAction","params":{}}' });
+    expect(w.events().at(-1)?.reason).toBe("denial_throttle"); expect(w.executorCalls()).toBe(0);
+  });
+  it.each([1, 1000])("MEDIUM opt-out justification length %i is executable", async length => {
+    const w = withGateway({ mediumConfirmationJustification: "x".repeat(length) });
+    expect(await w.submit(alice, w.proposal("testMediumDraft"))).toEqual(ok);
+  });
+  it.each([["empty", ""], ["blank", " "], ["too long", "x".repeat(1001)]])("invalid MEDIUM justification is rejected at registration (%s)", (_name, justification) => {
+    expect(() => withGateway({ mediumConfirmationJustification: justification })).toThrow();
   });
 });

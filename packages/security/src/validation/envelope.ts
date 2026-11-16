@@ -66,7 +66,7 @@ export type EnvelopeResult =
   | EnvelopeFailure;
 
 const failure = (outcome: EnvelopeFailure["outcome"], reason: ReasonCode, attemptedAction?: string): EnvelopeFailure =>
-  Object.freeze(attemptedAction === undefined ? { ok: false, outcome, reason } : { ok: false, outcome, reason, attemptedAction });
+  Object.freeze(attemptedAction === undefined || attemptedAction.length === 0 ? { ok: false, outcome, reason } : { ok: false, outcome, reason, attemptedAction });
 const malformed = (attemptedAction?: string): EnvelopeFailure => failure("INVALID_ACTION", "malformed_envelope", attemptedAction);
 
 /**
