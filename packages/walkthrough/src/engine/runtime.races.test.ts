@@ -48,9 +48,8 @@ it("native rejected promises are observed even when their own then getter throws
 
 it("presenter re-entry queues one event, cannot start a busy run, and cancel clears timers", () => {
   const h = makeHarness();
-  let runtime: ReturnType<typeof createWalkthroughRuntime>;
   const refusals: unknown[] = [];
-  runtime = createWalkthroughRuntime({ ...h.options, presenter: { apply: effect => {
+  const runtime: ReturnType<typeof createWalkthroughRuntime> = createWalkthroughRuntime({ ...h.options, presenter: { apply: effect => {
     h.effects.push(effect);
     if (effect.type === "present" && effect.stepId === "v1") {
       refusals.push(runtime.startWalkthrough("goSettings"));
