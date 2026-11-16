@@ -14,25 +14,28 @@
 //   reference host, dev auth -> Gateway -> PostgreSQL audit -> executor : integration/reference-host (six numbered groups)
 // Not part of M1 and not run here: exhaustive catalogue, mutation, determinism double-run, flood and multi-replica tests, the confirmation service.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkReport } from "./m1-gate-check.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const fail = (message) => { console.error(`m1-gate: FAIL: ${message}`); process.exit(1); };
+const fail = (message) => { throw new Error(message); };
 const run = (args) => spawnSync(process.execPath, args, { cwd: root, stdio: "inherit", env: process.env });
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+function main() {
   for (const name of ["DAP_DATABASE_URL", "DAP_MIGRATE_DATABASE_URL"]) if (!process.env[name]) fail(`${name} is not set (use a throwaway database, never a shared one)`);
   if (run(["db/migrate.mjs"]).status !== 0) fail("the migration step failed");
   const dir = mkdtempSync(join(tmpdir(), "m1-gate-"));
   const out = join(dir, "report.json");
   try {
+    // Vitest does not inherit the root CLI expect options into inline projects. Apply assertion checks to each project explicitly.
+    const config = join(dir, "vitest.config.mjs");
+    writeFileSync(config, `import base from ${JSON.stringify(pathToFileURL(join(root, "vitest.config.ts")).href)}; export default { ...base, test: { ...base.test, projects: base.test.projects.map(project => ({ ...project, test: { ...project.test, allowOnly: false, expect: { ...project.test?.expect, requireAssertions: true } } })) } };`);
     const projects = ["unit", "arch", "security", "conformance", "integration"].flatMap((name) => ["--project", name]);
     const selected = ["tests/architecture/", "tests/security/", "/state/conformance/", "tests/integration/", "apps/reference-host/src/startup.test.ts", "packages/security/src/state/postgres/pool.test.ts"];
-    const vitest = run(["node_modules/vitest/vitest.mjs", "run", ...projects, ...selected, "--allowOnly=false", "--expect.requireAssertions=true", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`]);
+    const vitest = run(["node_modules/vitest/vitest.mjs", "run", "--config", config, "--maxWorkers=2", ...projects, ...selected, "--allowOnly=false", "--expect.requireAssertions=true", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`]);
     let report;
     try { report = JSON.parse(readFileSync(out, "utf8")); } catch { fail("vitest produced no report"); }
     const problems = checkReport(report);
@@ -41,4 +44,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     const files = report.testResults.length;
     console.log(`m1-gate: PASS (${files} files, ${report.numPassedTests} passed, ${report.numTodoTests} todo, every todo tagged OPTIONAL or FUTURE)`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  try { main(); } catch (error) { console.error(`m1-gate: FAIL: ${error.message}`); process.exitCode = 1; }
 }

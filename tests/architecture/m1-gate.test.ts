@@ -2,7 +2,10 @@
  * T071: the M1 gate's own checks (scripts/m1-gate-check.mjs) are able to fail. A gate that cannot reject a missing, empty, skipped or failing suite, a reference-host
  * group that did not run, or an untagged todo would pass vacuously. Pure data in, problems out; no database.
  */
-import { readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { PROJECT_PATHS, REFERENCE_HOST_CASES, REFERENCE_HOST_GROUPS, REQUIRED_SUITES, checkReport as inspectReport } from "../../scripts/m1-gate-check.mjs";
 
@@ -103,5 +106,29 @@ it("a tier in an ancestor title cannot excuse an untagged or REQUIRED todo", () 
 it("the runner refuses focused tests and assertion-free early returns", () => {
   const source = readFileSync(new URL("../../scripts/m1-gate.mjs", import.meta.url), "utf8");
   expect(source).toContain('"--allowOnly=false"');
-  expect(source).toContain('"--expect.requireAssertions=true"');
+  expect(source).toContain("requireAssertions: true");
+});
+
+
+it("the CLI rejects a nonzero Vitest exit despite a healthy report, and removes temporary output on failure", () => {
+  const root = mkdtempSync(join(tmpdir(), "qa-gate-cli-"));
+  let generated: string | undefined;
+  try {
+    for (const dir of ["scripts", "db", "node_modules/vitest"]) mkdirSync(join(root, dir), { recursive: true });
+    for (const name of ["m1-gate.mjs", "m1-gate-check.mjs"]) cpSync(new URL(`../../scripts/${name}`, import.meta.url), join(root, "scripts", name));
+    writeFileSync(join(root, "package.json"), '{"type":"module"}');
+    writeFileSync(join(root, "db/migrate.mjs"), "// This CLI protocol test never connects to a database.\n");
+    writeFileSync(join(root, "node_modules/vitest/vitest.mjs"), `import {writeFileSync} from 'node:fs'; const out = process.argv.find(a => a.startsWith('--outputFile.json=')).split('=')[1]; console.log('QA_REPORT='+out); writeFileSync(out, process.env.QA_REPORT); process.exit(7);`);
+    const report = healthy();
+    const adjusted = { ...report, testResults: report.testResults.map(entry => ({ ...entry, name: entry.name.replace("/repo", root) })) };
+    const result = spawnSync(process.execPath, [join(root, "scripts/m1-gate.mjs")], { cwd: tmpdir(), encoding: "utf8", timeout: 10_000, env: { ...process.env, DAP_DATABASE_URL: "unused", DAP_MIGRATE_DATABASE_URL: "unused", QA_REPORT: JSON.stringify(adjusted) } });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("vitest exited with status 7");
+    generated = /QA_REPORT=(.+)/.exec(result.stdout)?.[1];
+    expect(generated).toBeDefined();
+    expect(existsSync(generated!)).toBe(false);
+  } finally {
+    if (generated !== undefined) rmSync(join(generated, ".."), { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 });
