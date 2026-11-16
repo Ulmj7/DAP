@@ -125,14 +125,24 @@ describe("the AI layer has no path to executors, the mint entry or the Gateway's
 
 /** The reference host (T131, T136): a production composition root. */
 const APP = "apps/reference-host/";
-/** Edges the host must never have: test infrastructure, the mint entry, and the database driver (pools come from @dap/security). */
+/** Edges the host must never have, from the resolved graph: test infrastructure and the mint entry. (The graph leaves out external libraries, so `pg` is checked on the specifiers below.) */
 function forbiddenAppEdges(graph: Graph): string[] {
   return graph.modules.filter((module) => module.source.startsWith(APP)).flatMap((module) => module.dependencies
-    .filter((dependency) => dependency.resolved.startsWith("packages/testkit/") || dependency.module === "@dap/testkit" || dependency.resolved === MINT_ENTRY || dependency.module === "pg" || dependency.module?.startsWith("pg/") === true || dependency.resolved.startsWith("node_modules/pg/"))
+    .filter((dependency) => dependency.resolved.startsWith("packages/testkit/") || dependency.module === "@dap/testkit" || dependency.resolved === MINT_ENTRY)
     .map((dependency) => `${module.source} -> ${dependency.module ?? dependency.resolved}`));
 }
-/** The app modules that import a package, by their resolved edge into it. */
-const appImportersOf = (graph: Graph, prefix: string): string[] => graph.modules.filter((module) => module.source.startsWith(APP) && module.dependencies.some((dependency) => dependency.resolved.startsWith(prefix))).map((module) => module.source).sort();
+/** Every module specifier the TypeScript scanner finds in a source text: static, type-only, re-export, dynamic import() and require(). */
+const specifiersOf = (text: string): string[] => ts.preProcessFile(text, true, true).importedFiles.map((imported) => imported.fileName);
+/** The database driver is reachable only through @dap/security (pools come from createPostgresPool): the host's sources must not name it. */
+const driverImports = (files: Readonly<Record<string, string>>): string[] => Object.entries(files).flatMap(([file, text]) => specifiersOf(text).filter((name) => name === "pg" || name.startsWith("pg/") || name === "node:pg").map((name) => `${file} -> ${name}`));
+const appSources = (): Record<string, string> => {
+  const found: Record<string, string> = {};
+  const walk = (dir: string): void => { for (const entry of fs.readdirSync(dir, { withFileTypes: true })) { const full = path.join(dir, entry.name); if (entry.isDirectory()) walk(full); else if (entry.name.endsWith(".ts")) found[path.relative(ROOT, full)] = fs.readFileSync(full, "utf8"); } };
+  walk(path.join(ROOT, APP, "src"));
+  return found;
+};
+/** The app's production modules (its own unit tests are not wiring) that import a package, by their resolved edge into it. */
+const appImportersOf = (graph: Graph, prefix: string): string[] => graph.modules.filter((module) => module.source.startsWith(APP) && !module.source.endsWith(".test.ts") && module.dependencies.some((dependency) => dependency.resolved.startsWith(prefix))).map((module) => module.source).sort();
 
 /** The exported names of a module, and the property names of an exported type, as the TypeScript checker sees them. */
 function surface(file: string): { exports: string[]; members: (name: string) => string[] } {
@@ -155,15 +165,18 @@ function surface(file: string): { exports: string[]; members: (name: string) => 
 
 describe("the reference host (T131, T136): its AI-facing handle is a submit function and nothing else", () => {
   const graph = cruise(ROOT);
-  it("has modules in the graph, and no edge into the testkit, the mint entry or the database driver", () => {
+  it("has modules in the graph, and no edge into the testkit or the mint entry, and no import of the database driver", () => {
     expect(graph.modules.filter((module) => module.source.startsWith(APP)).length, "the check is not vacuous").toBeGreaterThan(5);
     expect(forbiddenAppEdges(graph)).toEqual([]);
+    expect(Object.keys(appSources()).length, "the scan sees the host's sources").toBeGreaterThan(5);
+    expect(driverImports(appSources())).toEqual([]);
   });
-  it("is proven able to fail: a planted host -> testkit, host -> mint and host -> pg edge are each reported", () => {
+  it("is proven able to fail: a planted host -> testkit and host -> mint edge, and a pg import in every form, are each reported", () => {
     const planted: Graph = { summary: { violations: [] }, modules: [{ source: `${APP}src/a.ts`, dependencies: [
-      { couldNotResolve: false, resolved: "packages/testkit/src/world.ts", module: "@dap/testkit" }, { couldNotResolve: false, resolved: MINT_ENTRY, module: "@dap/contracts/mint" }, { couldNotResolve: false, resolved: "node_modules/pg/lib/index.js", module: "pg" },
+      { couldNotResolve: false, resolved: "packages/testkit/src/world.ts", module: "@dap/testkit" }, { couldNotResolve: false, resolved: MINT_ENTRY, module: "@dap/contracts/mint" },
       { couldNotResolve: false, resolved: "packages/security/src/index.ts", module: "@dap/security" } ] }] };
-    expect(forbiddenAppEdges(planted)).toHaveLength(3);
+    expect(forbiddenAppEdges(planted)).toHaveLength(2);
+    expect(driverImports({ "a.ts": 'import { Pool } from "pg";', "b.ts": 'import type { Pool } from "pg";', "c.ts": 'export * from "pg";', "d.ts": 'const p = import("pg");', "e.ts": 'const p = require("pg/lib");', "f.ts": 'import { ok } from "./pg-like.js"; import "@dap/security";' })).toHaveLength(5);
   });
   it("wires the trusted pieces in the composition root alone: only compose.ts (and config.ts, for the default limits) import the security package, only compose.ts imports the AI package, nothing imports the actions package", () => {
     expect(appImportersOf(graph, "packages/security/")).toEqual([`${APP}src/compose.ts`, `${APP}src/config.ts`]);
