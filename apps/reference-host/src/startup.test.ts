@@ -144,3 +144,13 @@ describe("T132: sessions are looked up in a Map and fail closed", () => {
     expect(await auth.authenticate(old!.token)).toBeNull();
   });
 });
+
+// QA: deployment spelling must not turn production into a development environment.
+it.each(["Production", "PRODUCTION", " production", "production\n", " ProDuction "])("refuses production spelling %j", value => {
+  expect(() => loadConfig(env({ NODE_ENV: value }))).toThrow(DevAuthError);
+});
+
+it("rejects an oversized table and session-id collisions even across tenants",()=>{
+ expect(()=>parseDevSessions(JSON.stringify(Array.from({length:101},(_,i)=>session({token:`token-number-${i}`.padEnd(20,"x"),sessionId:`s-${i}`}))))).toThrow(DevAuthError);
+ expect(()=>parseDevSessions(JSON.stringify([session(),session({token:`tok-${randomUUID()}`,tenantId:randomUUID()})]))).toThrow(/session id/);
+});

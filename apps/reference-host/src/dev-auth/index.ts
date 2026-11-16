@@ -52,7 +52,7 @@ const sessionSchema = z.strictObject({
 
 /** Refuses to enable development authentication in production, or without the explicit opt-in. */
 export function assertDevAuthAllowed(env: Readonly<Record<string, string | undefined>>): void {
-  if (env.NODE_ENV === "production") throw new DevAuthError("Development authentication is refused when NODE_ENV=production");
+  if (env.NODE_ENV?.trim().toLowerCase() === "production") throw new DevAuthError("Development authentication is refused when NODE_ENV=production");
   if (env.DAP_ALLOW_DEV_AUTH !== "1") throw new DevAuthError("Development authentication requires the explicit opt-in DAP_ALLOW_DEV_AUTH=1");
 }
 
