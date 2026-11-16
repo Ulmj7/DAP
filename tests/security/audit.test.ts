@@ -4,6 +4,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { assemble } from "../../packages/security/src/gateway/create-gateway.js";
+import { createPipeline } from "../../packages/security/src/gateway/pipeline.js";
 import { buildAuditEvent } from "../../packages/security/src/audit/event-builder.js";
 import type { AuditEvent, AuditEventType } from "@dap/contracts";
 import { createPolicyGateway } from "@dap/security";
@@ -167,4 +169,20 @@ it.each([['ATK-AUDIT-02', 'decision'], ['ATK-AUDIT-03', 'executed']] as const)("
   const observation = await scenario(id).run({ ...target, submit: call => submitter.submit(call), auditWriteFailures: () => failures.length });
   expect(scenario(id).verify(observation)).toEqual([]);
   expect(failures).toContain(kind);
+});
+
+
+it("consistent-looking audit facts without an opaque durable receipt cannot reach the REAL execute stage", async () => {
+  const world = withGateway();
+  const bound = await world.submitterFor(A_ALICE);
+  const { stages, auditor } = assemble(world.deps);
+  // Simulate an audit-stage regression. All other stages, including execute and its guarded executor, are real.
+  stages.audit = request => ({ kind: "continue", data: { eventId: randomUUID(), actionId: "testSafeEcho", version: 1, risk: "SAFE", paramsDigest: (request.facts.validate as { paramsDigest: string }).paramsDigest, confirmationId: null } });
+  const requestId = randomUUID();
+  const answer = await createPipeline(stages, { audit: auditor }).evaluate({ context: bound.context, run: bound.run, requestId: requestId as never, decisionId: requestId, readProposal: () => world.proposal("testSafeEcho") });
+  expect(answer.decision.outcome).toBe("DENIED");
+  expect(world.executorCalls()).toBe(0);
+  expect(world.events().some(event => event.type === "AI_ACTION_ALLOWED" || event.type === "AI_ACTION_EXECUTED")).toBe(false);
+  expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"))).toEqual({ outcome: "ALLOWED", category: "ok" });
+  expect(world.executorCalls()).toBe(1);
 });
