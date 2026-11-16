@@ -41,6 +41,8 @@ export function createWalkthroughCatalog(registry: SemanticRegistry, postconditi
   const byId = new Map<string, WalkthroughDef>();
   if (!Array.isArray(definitions)) throw new WalkthroughCatalogError(["definitions must be an array"]);
 
+  if (definitions.length > 100) throw new WalkthroughCatalogError(["at most 100 walkthroughs are allowed"]);
+
   for (const raw of definitions as readonly unknown[]) {
     if (!isBag(raw)) { issues.push("definition must be an object"); continue; }
     const wid = isValidId(raw.id) ? raw.id : undefined;
@@ -55,6 +57,7 @@ export function createWalkthroughCatalog(registry: SemanticRegistry, postconditi
     if (extra.length > 0) bad(`unknown field ${extra.join(", ")}`);
     if (!Array.isArray(raw.steps) || raw.steps.length === 0) { bad("steps must be a non-empty array"); continue; }
 
+    if (raw.steps.length > 100) { bad("at most 100 steps are allowed"); continue; }
     const steps = new Map<string, Bag>();
     for (const rawStep of raw.steps as readonly unknown[]) {
       if (!isBag(rawStep)) { bad("step must be an object"); continue; }
@@ -119,7 +122,16 @@ export function createWalkthroughCatalog(registry: SemanticRegistry, postconditi
         changed = false;
         for (const [sid, out] of edges) if (!canFinish.has(sid) && out.some((n) => canFinish.has(n))) { canFinish.add(sid); changed = true; }
       }
-      for (const sid of reached) if (!canFinish.has(sid)) issues.push(`${at}.${sid}: no path to a complete step`);
+      for (const sid of reached) {
+        if (!canFinish.has(sid)) issues.push(`${at}.${sid}: no path to a complete step`);
+        const seen = new Set<string>();
+        let current = sid;
+        while (steps.get(current)?.kind !== "complete" && !seen.has(current)) {
+          seen.add(current);
+          current = steps.get(current)!.next as string;
+        }
+        if (steps.get(current)?.kind !== "complete") issues.push(`${at}.${sid}: next chain cannot reach a complete step`);
+      }
     }
 
     if (issues.length === before && wid !== undefined) byId.set(wid, freezeDefinition(raw as unknown as WalkthroughDef));

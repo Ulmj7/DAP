@@ -114,3 +114,16 @@ describe("every rejection", () => {
     expect(() => createWalkthroughCatalog(registry, [], "x" as never)).toThrow(WalkthroughCatalogError);
   });
 });
+
+it("rejects a happy-path cycle even when recovery can reach completion", () => {
+  const guide = (id: string, next: string, recover?: string) => ({ id, kind: "guide", target: "profile.saveButton", text: "Continue.", wait: "click", next, ...(recover === undefined ? {} : { recover }) });
+  expect(issues(minimal([guide("x1", "x2", "rescue"), guide("x2", "x1"), guide("rescue", "xdone"), done]))).toContain("next chain cannot reach a complete step");
+});
+it("bounds catalogs and steps at 100, including their exact accepted boundaries", () => {
+  const defs = Array.from({ length: 100 }, (_, i) => ({ id: `w${i}`, title: "T", description: "D", start: "xdone", steps: [done] }));
+  expect(build(...defs).list()).toHaveLength(100);
+  expect(() => build(...defs, { ...defs[0], id: "overflow" })).toThrow(/at most 100 walkthroughs/);
+  const steps = Array.from({ length: 99 }, (_, i) => ({ id: `s${i}`, kind: "guide", target: "profile.saveButton", text: "T", wait: "click", next: i === 98 ? "xdone" : `s${i + 1}` }));
+  expect(build(minimal([...steps, done], "s0")).list()).toHaveLength(1);
+  expect(() => build(minimal([...steps, done, { ...done, id: "overflow" }], "s0"))).toThrow(/at most 100 steps/);
+});
