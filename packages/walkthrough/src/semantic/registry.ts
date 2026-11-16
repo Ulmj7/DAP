@@ -18,7 +18,8 @@ export class SemanticRegistryError extends Error {
   }
 }
 
-const plainText = (value: unknown, max: number): value is string =>
+/** The one text rule (also used for walkthrough text): non-blank, bounded, none of `< > & " ' `.` */
+export const isPlainText = (value: unknown, max: number): value is string =>
   typeof value === "string" && value.trim().length > 0 && value.length <= max && !MARKUP.test(value);
 
 /** Builds the frozen registry, or throws a `SemanticRegistryError` listing every problem. */
@@ -44,8 +45,8 @@ export function createSemanticRegistry(input: SemanticRegistryInput): SemanticRe
     else if (byId.has(source.id)) issues.push(`${at}: duplicate id`);
     if (typeof source.route !== "string" || !routeSet.has(source.route)) issues.push(`${at}: unknown route`);
     if (!(ROLES as readonly unknown[]).includes(source.role)) issues.push(`${at}: unknown role`);
-    if (!plainText(source.label, MAX_LABEL)) issues.push(`${at}: label must be plain text of 1 to ${MAX_LABEL} characters`);
-    if (!plainText(source.description, MAX_DESCRIPTION)) issues.push(`${at}: description must be plain text of 1 to ${MAX_DESCRIPTION} characters`);
+    if (!isPlainText(source.label, MAX_LABEL)) issues.push(`${at}: label must be plain text of 1 to ${MAX_LABEL} characters`);
+    if (!isPlainText(source.description, MAX_DESCRIPTION)) issues.push(`${at}: description must be plain text of 1 to ${MAX_DESCRIPTION} characters`);
     if (!Array.isArray(operations) || operations.length === 0 || operations.some((op: unknown) => !(OPERATIONS as readonly unknown[]).includes(op))) issues.push(`${at}: operations must be a non-empty subset of ${OPERATIONS.join("|")}`);
     if (!(PRIVACY_LEVELS as readonly unknown[]).includes(source.privacy)) issues.push(`${at}: unknown privacy`);
     if (issues.length !== before) continue;
