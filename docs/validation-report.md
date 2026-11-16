@@ -41,6 +41,8 @@ One line per command: result, what was observed, log. All on the same fresh data
 | 19 | quickstart step 2 and 7 "break it on purpose", architecture | PASS (the check fails as it should) | appending `import type {} from "@dap/actions"` to `packages/ai/src/index.ts`: `check:deps` reports `ai-not-to-security-or-actions: packages/ai/src/index.ts -> packages/actions/src/index.ts`; `test:arch` fails in `graph.test.ts` "has no forbidden edge". File restored with `git checkout`, tree clean | `/tmp/step10/g-arch-break.log` |
 | 20 | quickstart step 7 "break it on purpose", authorization | PASS (the suite fails as it should) | making the authorize stage continue instead of answering `permission_missing` fails 17 tests in 4 files, including `privilege-escalation.test.ts` (ATK-PRIV-01, 02) and `execution-cap.test.ts`. File restored, tree clean | `/tmp/step10/g-break-authz.log` |
 
+The documentation-only head `eabf1a8` was then re-checked on the same database: `db:migrate`, `lint`, `typecheck`, `check:deps`, `test:m1-gate` (50 files, 1841 passed, 76 todo), `npm test` (138 files, 5209 passed, 76 todo), `git diff --check` and the strict contracts compile all PASS (`/tmp/step10/f-*.log`).
+
 Test totals match the baseline of `dev` at `e610cf8` exactly (138 files, 5209 passed, 76 todo; gate 50 files, 1841 passed, 76 todo), as expected
 for a documentation-only change.
 
