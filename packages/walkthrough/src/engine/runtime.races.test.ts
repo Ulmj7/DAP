@@ -33,3 +33,15 @@ it("context rejects a route outside the registry instead of echoing port data", 
   const runtime = createWalkthroughRuntime({ ...h.options, router: { ...h.ports.router, current: () => "SECRET_BAD_PORT_VALUE" } });
   expect(runtime.context()).toEqual({ route: "", elements: [] });
 });
+
+it("native rejected promises are observed even when their own then getter throws", async () => {
+  const h = makeHarness();
+  const rejected = Promise.reject(new Error("private failure"));
+  Object.defineProperty(rejected, "then", { get() { throw new Error("poisoned then"); } });
+  h.answers.check = () => rejected;
+  h.runtime.startWalkthrough("verifyOnly");
+  h.runtime.dispatch({ type: "click", id: "profile.saveButton" });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(h.runtime.getState()).toMatchObject({ status: "FAILED", failure: "verification_failed" });
+});

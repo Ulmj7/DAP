@@ -149,8 +149,18 @@ export function createWalkthroughRuntime(options: RuntimeOptions): WalkthroughRu
           const check = Object.hasOwn(postconditions, effect.postcondition) ? postconditions[effect.postcondition] : undefined;
           if (typeof check !== "function") { settleVerify(token, false); return; }
           const answer: unknown = check();
-          if (answer !== null && typeof answer === "object" && typeof (answer as { then?: unknown }).then === "function") {
-            Promise.resolve(answer).then((value) => settleVerify(token, value), () => settleVerify(token, false));
+          if (answer !== null && typeof answer === "object") {
+            const settled = (value: unknown) => settleVerify(token, value);
+            try {
+              // Observe native promises without trusting an overridden own `then` getter.
+              Reflect.apply(Promise.prototype.then, answer, [settled, () => settled(false)]);
+            } catch {
+              const then: unknown = Reflect.get(answer, "then");
+              if (typeof then === "function") {
+                void new Promise(resolve => { Reflect.apply(then, answer, [resolve, () => resolve(false)]); })
+                  .then(settled, () => settled(false));
+              } else settled(false);
+            }
           } else settleVerify(token, answer);
         } catch { settleVerify(token, false); }
         return;
