@@ -4,7 +4,6 @@ import type { GrantBinding } from "@dap/contracts/mint";
 import type { AuditWriter } from "../../audit/audit-writer.js";
 import type { AuditEventFactory } from "../../audit/event-factory.js";
 import { projectParams } from "../../audit/projection.js";
-import { snapshotAnswer } from "../answer-snapshot.js";
 import { underDeadline, nativeTimer, type HookTimer } from "../deadline.js";
 import { allowedDecision, denyDecision } from "../decision.js";
 import type { ExecutionStatus, PolicyStage } from "../pipeline.js";
@@ -82,16 +81,20 @@ export function createExecuteStage({ registry, executors, events, writer, teleme
     const status = await underDeadline<ExecutionStatus>(
       () => Reflect.apply(run as ActionExecutor["execute"], executor, [call]),
       (raw) => {
-        const result = snapshotAnswer(raw) as { readonly status?: unknown; readonly affected?: unknown } | null | undefined;
-        // (A result that is null, undefined or not an object has no status: the optional chain reads it as absent.)
-        const reported = result?.status;
+        if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new TypeError("Invalid executor result");
+        // ExecutionResult.value is opaque application data, not JSON or audit input.
+        const reported: unknown = Reflect.get(raw, "status");
         if (reported !== "success" && reported !== "failure") throw new TypeError("Invalid executor result");
-        if (reported === "success") affected = affectedRef(result?.affected);
+        if (reported === "success") {
+          try { affected = affectedRef(Reflect.get(raw, "affected")); } catch { /* Optional audit metadata cannot undo a known success. */ }
+        }
         return reported;
       },
       () => "failure",
       left, timer,
     );
+
+    request.reportExecution?.(status);
 
     // Record the result. Whatever happens here, the executor has already run: nothing below can change the outcome.
     try {

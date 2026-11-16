@@ -16,9 +16,9 @@
  */
 import { z } from "zod";
 import { RISK_LEVELS } from "@dap/contracts";
-import type { JsonValue, RiskLevel } from "@dap/contracts";
+import type { JsonValue, PipelineStage, RiskLevel } from "@dap/contracts";
 import { snapshotAnswer } from "../answer-snapshot.js";
-import type { PipelineRecord } from "../pipeline.js";
+type StageFacts = Readonly<Partial<Record<PipelineStage, JsonValue>>>;
 
 const text = z.string().min(1);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -50,7 +50,7 @@ export interface AuditedFacts extends AllowFacts { readonly eventId: string }
  * The facts stage 7 decides from: what intake, resolve, validate and authorize published, proven consistent with each other (the action intake
  * read is the one resolve found; the resource validate extracted is the one authorize resolved). The risk class here is what RESOLVE found.
  */
-export function readPreRiskFacts(facts: PipelineRecord["facts"]): { readonly actionId: string; readonly version: number; readonly risk: RiskLevel } | undefined {
+export function readPreRiskFacts(facts: StageFacts): { readonly actionId: string; readonly version: number; readonly risk: RiskLevel } | undefined {
   const intake = SLOTS.intake.safeParse(facts.intake);
   const resolve = SLOTS.resolve.safeParse(facts.resolve);
   const validate = SLOTS.validate.safeParse(facts.validate);
@@ -63,14 +63,14 @@ export function readPreRiskFacts(facts: PipelineRecord["facts"]): { readonly act
 }
 
 /** What the confirmation position reads back from the risk stage: a risk fact that says no confirmation was needed, for the class resolve found. */
-export function readNoConfirmationNeeded(facts: PipelineRecord["facts"]): boolean {
+export function readNoConfirmationNeeded(facts: StageFacts): boolean {
   const pre = readPreRiskFacts(facts);
   const risk = z.strictObject({ risk: allowedRisk, confirmation: z.literal("not_required") }).safeParse(facts.risk);
   return pre !== undefined && risk.success && risk.data.risk === pre.risk;
 }
 
 /** The consistent facts an ALLOWED path rests on, or undefined if any slot is missing, malformed, or disagrees with another. */
-export function readAllowFacts(facts: PipelineRecord["facts"]): AllowFacts | undefined {
+export function readAllowFacts(facts: StageFacts): AllowFacts | undefined {
   const intake = SLOTS.intake.safeParse(facts.intake);
   const resolve = SLOTS.resolve.safeParse(facts.resolve);
   const validate = SLOTS.validate.safeParse(facts.validate);
@@ -86,7 +86,7 @@ export function readAllowFacts(facts: PipelineRecord["facts"]): AllowFacts | und
 }
 
 /** The same facts, plus the allow-event the audit stage wrote, proven to describe exactly this action, version, risk, digest and confirmation. */
-export function readAuditedFacts(facts: PipelineRecord["facts"]): AuditedFacts | undefined {
+export function readAuditedFacts(facts: StageFacts): AuditedFacts | undefined {
   const base = readAllowFacts(facts);
   const audit = SLOTS.audit.safeParse(facts.audit);
   if (base === undefined || !audit.success) return undefined;

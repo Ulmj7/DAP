@@ -31,7 +31,7 @@ function build(options: { clock?: () => unknown; timer?: HookTimer; claim?: (inp
   const stage = createAuditStage({
     registry: world.registry, events: createAuditEventFactory({ clock }, options.timer === undefined ? {} : { timer: options.timer }),
     writer: createAuditWriter({ sink: world.deps.audit }, options.timer === undefined ? {} : { timer: options.timer }),
-    limiter: limiter as never,
+    limiter: limiter as never, executors: world.deps.executors,
   }, options.timer === undefined ? {} : { timer: options.timer }) as PolicyStage;
   return { world, stage, claims };
 }
