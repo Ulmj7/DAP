@@ -29,6 +29,13 @@ Phase 1 of the Constitution's phased delivery still owes the **UI semantic regis
 | **Input waits complete on the committed `change` event** (blur/Enter), not every keystroke | Deterministic, no timers or debouncing, natural UX because clicking Save blurs the field first | Debounced keystroke detection |
 | **Untrusted (synthetic) DOM events are ignored by default** (`trustedEventsOnly: true`) | One line; makes "registered raw user interaction" real. Tests construct the bridge with `false`; an arch check keeps production `main.ts` on the default | Accepting all events |
 
+**Presentation boundary (2026-11-16).** The UI/UX is designed separately by a human, so the walkthrough core is deliberately non-visual. It emits typed,
+presentation-neutral effects as plain data (`present { stepId, target?, text, expects }` and `clear`) to a `presenter` port, asks a `targets` port
+whether a semantic id is available, and receives semantic events (`click`, `input` with `nonEmpty`, `routeChanged`, `targetAvailable`, `targetGone`,
+`ack`) through `runtime.dispatch`. No effect carries a selector, style, coordinate or element. The DOM bridge, the hash-router wiring, the help
+launcher and progress UI, and the three product walkthrough definitions follow once the UI exists (T211 and T213 UI parts, T216 to T223). The Slice 1
+DOM targets and overlay stay as the working demo adapter; the designed UI will replace the overlay's appearance, not the core.
+
 ## 4. Architecture
 
 ```text
