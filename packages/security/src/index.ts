@@ -27,6 +27,8 @@ export { DEFAULT_GATEWAY_CONFIG, DEFAULT_LIMIT_CONFIG, validateGatewayConfig, va
 export { PostgresReplayGuard } from "./state/postgres/replay.js";
 export { PostgresRateLimiter } from "./state/postgres/rate-limiter.js";
 export { PostgresAuditStore } from "./state/postgres/audit.js";
+export { createPostgresPool } from "./state/postgres/pool.js";
+export type { PostgresPoolOptions } from "./state/postgres/pool.js";
 export { buildAuditEvent, createAuditEventBuilder, isBuiltAuditEvent } from "./audit/event-builder.js";
 export type { AuditEventInput } from "./audit/event-builder.js";
 export { projectParams, MASKED } from "./audit/projection.js";
