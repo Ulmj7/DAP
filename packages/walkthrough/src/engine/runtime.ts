@@ -70,7 +70,7 @@ export function createWalkthroughRuntime(options: RuntimeOptions): WalkthroughRu
 
   let state: EngineState = Object.freeze({ status: "IDLE" });
   const listeners = new Set<(snapshot: EngineSnapshot) => void>();
-  const queue: Input[] = [];
+  const queue: { readonly input: Input; readonly valid: () => boolean }[] = [];
   let draining = false;
   let cancelRequested = false;
   const cancelers: Record<TimerKey, Cancel | null> = { targetWait: null, verify: null };
@@ -90,27 +90,33 @@ export function createWalkthroughRuntime(options: RuntimeOptions): WalkthroughRu
     for (const listener of [...listeners]) { try { listener(view); } catch { /* a subscriber's failure is its own */ } }
   };
 
-  const feed = (input: Input): void => { queue.push(input); drain(); };
+  const feed = (input: Input, valid: () => boolean = () => true): void => { queue.push({ input, valid }); drain(); };
   const stopTimer = (key: TimerKey): void => {
     sequence[key]++;
     const cancel = cancelers[key];
     cancelers[key] = null;
     try { cancel?.(); } catch { /* nothing to do */ }
   };
-  const startTimer = (key: TimerKey, ms: number, onFire: () => void): void => {
+  const startTimer = (key: TimerKey, ms: number, onFire: (valid: () => boolean) => void): void => {
     stopTimer(key);
     const mine = sequence[key];
     try {
-      cancelers[key] = timers.set(() => { if (sequence[key] === mine) onFire(); }, ms);
+      let fired = false;
+      cancelers[key] = timers.set(() => {
+        if (!fired && sequence[key] === mine) {
+          fired = true;
+          onFire(() => sequence[key] === mine);
+        }
+      }, ms);
     } catch { feed({ type: "internalError" }); }
   };
 
   const settleVerify = (token: number, ok: unknown): void => {
     if (token !== sequence.verify) return; // superseded by a newer verification, a cancel or the end of the step
-    feed(ok === true ? { type: "verified", ok: true } : { type: "verifyFailed" });
+    feed(ok === true ? { type: "verified", ok: true } : { type: "verifyFailed" }, () => token === sequence.verify);
   };
   const beginVerify = (): number => {
-    startTimer("verify", verifyTimeoutMs, () => feed({ type: "verifyFailed" }));
+    startTimer("verify", verifyTimeoutMs, valid => feed({ type: "verifyFailed" }, valid));
     return sequence.verify;
   };
 
@@ -150,7 +156,7 @@ export function createWalkthroughRuntime(options: RuntimeOptions): WalkthroughRu
         return;
       }
       case "startTimer":
-        startTimer(effect.key, effect.ms, () => feed({ type: "targetWaitExpired" }));
+        startTimer(effect.key, effect.ms, valid => feed({ type: "targetWaitExpired" }, valid));
         return;
       case "cancelTimer":
         stopTimer(effect.key);
@@ -162,7 +168,9 @@ export function createWalkthroughRuntime(options: RuntimeOptions): WalkthroughRu
     if (draining) return;
     draining = true;
     try {
-      for (let input = queue.shift(); input !== undefined; input = queue.shift()) {
+      for (let entry = queue.shift(); entry !== undefined; entry = queue.shift()) {
+        if (!entry.valid()) continue;
+        const input = entry.input;
         const next = transition(catalog, state, input);
         if (next.state !== state) { state = next.state; notify(); }
         if (input.type === "cancel") cancelRequested = false;
