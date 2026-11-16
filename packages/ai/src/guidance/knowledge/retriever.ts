@@ -51,23 +51,49 @@ export interface Retriever {
   search(query: unknown): readonly RetrievedChunk[];
 }
 
-const round6 = (value: number): number => Number(value.toFixed(6));
+export const round6 = (value: number): number => Number(value.toFixed(6));
+
+/** One document for the scorer: weighted term frequencies and its weighted length. */
+export interface Bm25Doc { readonly tf: ReadonlyMap<string, number>; readonly length: number }
+/** Builds a scorer document from token lists, each with a weight (a token counts `weight` times, in the term frequency and in the length). */
+export function bm25Doc(fields: readonly (readonly [tokens: readonly string[], weight: number])[]): Bm25Doc {
+  const tf = new Map<string, number>();
+  let length = 0;
+  for (const [tokens, weight] of fields) for (const token of tokens) { tf.set(token, (tf.get(token) ?? 0) + weight); length += weight; }
+  return { tf, length };
+}
+/**
+ * The ONE BM25 formula of this package (k1 1.2, b 0.75; IDF ln(1 + (N - df + 0.5)/(df + 0.5)), always positive), shared by the knowledge retriever and the
+ * walkthrough-selection guard. `score(doc, terms)` sums over the DISTINCT `terms` and is NOT rounded; callers round with `round6`.
+ */
+export function createBm25(docs: readonly Bm25Doc[]): { score(doc: Bm25Doc, terms: readonly string[]): number } {
+  const documentFrequency = new Map<string, number>();
+  for (const doc of docs) for (const term of doc.tf.keys()) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
+  const total = docs.length;
+  const averageLength = total === 0 ? 0 : docs.reduce((sum, doc) => sum + doc.length, 0) / total;
+  return {
+    score(doc, terms) {
+      let score = 0;
+      for (const term of terms) {
+        const tf = doc.tf.get(term);
+        if (tf === undefined) continue;
+        const df = documentFrequency.get(term) ?? 0;
+        const idf = Math.log(1 + (total - df + 0.5) / (df + 0.5));
+        score += idf * ((tf * (BM25_K1 + 1)) / (tf + BM25_K1 * (1 - BM25_B + BM25_B * (doc.length / averageLength))));
+      }
+      return score;
+    },
+  };
+}
 
 export function createRetriever(chunks: readonly KnowledgeChunk[]): Retriever {
-  interface Entry { readonly chunk: KnowledgeChunk; readonly tf: Map<string, number>; readonly length: number }
-  const entries: Entry[] = [...chunks].map((chunk) => {
-    const tf = new Map<string, number>();
-    let length = 0;
-    const add = (tokens: readonly string[], weight: number): void => { for (const token of tokens) { tf.set(token, (tf.get(token) ?? 0) + weight); length += weight; } };
-    add(tokenize(chunk.text), 1);
-    add(tokenize(chunk.title), 2);
-    add(tokenize(chunk.tags.join(" ")), 2);
-    return { chunk: Object.freeze({ ...chunk }), tf, length };
-  });
-  const documentFrequency = new Map<string, number>();
-  for (const entry of entries) for (const term of entry.tf.keys()) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
+  interface Entry { readonly chunk: KnowledgeChunk; readonly doc: Bm25Doc }
+  const entries: Entry[] = [...chunks].map((chunk) => ({
+    chunk: Object.freeze({ ...chunk }),
+    doc: bm25Doc([[tokenize(chunk.text), 1], [tokenize(chunk.title), 2], [tokenize(chunk.tags.join(" ")), 2]]),
+  }));
+  const bm25 = createBm25(entries.map((entry) => entry.doc));
   const total = entries.length;
-  const averageLength = total === 0 ? 0 : entries.reduce((sum, entry) => sum + entry.length, 0) / total;
 
   return Object.freeze({
     search(query: unknown): readonly RetrievedChunk[] {
@@ -76,15 +102,7 @@ export function createRetriever(chunks: readonly KnowledgeChunk[]): Retriever {
         if (terms.length === 0 || total === 0) return [];
         const scored: RetrievedChunk[] = [];
         for (const entry of entries) {
-          let score = 0;
-          for (const term of terms) {
-            const tf = entry.tf.get(term);
-            if (tf === undefined) continue;
-            const df = documentFrequency.get(term) ?? 0;
-            const idf = Math.log(1 + (total - df + 0.5) / (df + 0.5));
-            score += idf * ((tf * (BM25_K1 + 1)) / (tf + BM25_K1 * (1 - BM25_B + BM25_B * (entry.length / averageLength))));
-          }
-          const rounded = round6(score);
+          const rounded = round6(bm25.score(entry.doc, terms));
           if (rounded >= MIN_RELEVANCE) scored.push(Object.freeze({ id: entry.chunk.id, docId: entry.chunk.docId, title: entry.chunk.title, text: entry.chunk.text, score: rounded }));
         }
         scored.sort((a, b) => (b.score !== a.score ? b.score - a.score : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
