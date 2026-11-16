@@ -1,0 +1,41 @@
+* { box-sizing: border-box; }
+body { margin: var(--zero); background: var(--dap-bg); color: var(--dap-ink); font: var(--type-body)/var(--line-body) var(--font-ui); }
+a { color: var(--dap-accent); }
+button, input, textarea { font: inherit; }
+button, a { -webkit-tap-highlight-color: var(--dap-accent-wash); }
+:where(a, button, input, textarea, select):focus-visible { outline: var(--focus); outline-offset: var(--focus-offset); }
+.app-header { min-height: var(--header-height); display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-6); padding: var(--space-3) var(--space-8); border-bottom: var(--border); background: var(--dap-surface); }
+.brand { padding: var(--space-2) var(--space-4); border-radius: var(--radius-pill); background: var(--dap-ink); color: var(--dap-surface); font-weight: var(--weight-medium); }
+.nav-group { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1); background: var(--dap-bg); border-radius: var(--radius-pill); }
+.nav-chip { min-height: var(--touch); display: inline-flex; align-items: center; padding: var(--space-2) var(--space-4); border-radius: var(--radius-pill); text-decoration: none; color: var(--dap-text-muted); font-size: var(--type-small); }
+.nav-chip[aria-current] { background: var(--dap-accent-wash); color: var(--dap-accent); font-weight: var(--weight-medium); }
+.page-container { max-width: var(--page-width); margin: var(--space-12) auto; padding: var(--zero) var(--space-8); }
+h1 { font: var(--weight-normal) var(--type-title)/var(--line-title) var(--font-display); letter-spacing: var(--tracking-title); margin: var(--zero) var(--zero) var(--space-4); }
+h2 { font-size: var(--type-card); font-weight: var(--weight-medium); margin: var(--zero) var(--zero) var(--space-3); }
+p { margin: var(--zero) var(--zero) var(--space-4); }
+.page-intro { color: var(--dap-text-muted); margin-bottom: var(--space-8); }
+.home-grid { display: grid; grid-template-columns: repeat(2, minmax(var(--zero), var(--column))); gap: var(--space-6); }
+.card, .panel { background: var(--dap-surface); border: var(--border); border-radius: var(--radius-card); padding: var(--space-8); margin-bottom: var(--space-6); min-width: var(--zero); }
+.home-grid .card { margin-bottom: var(--zero); }
+.info-card { margin-top: var(--space-6); color: var(--dap-text-muted); }
+.button { min-height: var(--touch); padding: var(--space-2) var(--space-6); border: var(--border); border-radius: var(--radius-control); background: var(--dap-surface); color: var(--dap-ink); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; font-weight: var(--weight-medium); }
+.button.primary { background: var(--dap-accent); color: var(--dap-surface); border-color: var(--dap-accent); }
+.button:disabled { cursor: default; opacity: var(--disabled-opacity); }
+.profile-form { max-width: var(--form-width); }
+.field { margin-bottom: var(--space-6); }
+label { display: block; font-weight: var(--weight-medium); margin-bottom: var(--space-2); }
+input { min-height: var(--touch); width: var(--full); min-width: var(--zero); border: var(--border); border-radius: var(--radius-control); padding: var(--space-2) var(--space-3); background: var(--dap-surface); color: var(--dap-ink); }
+.hint, .status { color: var(--dap-text-muted); font-size: var(--type-small); margin-top: var(--space-2); }
+.error, [aria-invalid="true"] { color: var(--dap-danger); }
+[aria-invalid="true"] { border-color: var(--dap-danger); }
+.demo { margin-top: var(--space-8); padding-top: var(--space-6); border-top: var(--border); }
+.demo .button { margin: var(--zero) var(--space-2) var(--space-2) var(--zero); }
+[hidden] { display: none; }
+@media (max-width: 767px) {
+ .app-header { padding: var(--space-3) var(--space-4); gap: var(--space-3); }
+ .nav-group { width: var(--full); border-radius: var(--radius-control); }
+ .nav-chip { flex-grow: var(--one); justify-content: center; padding: var(--space-2); }
+ .page-container { margin: var(--space-8) auto; padding: var(--zero) var(--space-4); }
+ .home-grid { grid-template-columns: minmax(var(--zero), var(--column)); }
+ .card, .panel { padding: var(--space-6); }
+}
