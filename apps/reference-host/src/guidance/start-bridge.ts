@@ -9,7 +9,7 @@
  * The Gateway's feedback is mapped to a CLOSED result; no raw feedback, issue list or error text is ever returned:
  *   ALLOWED with category `ok`                       -> `walkthrough` (accepted; the executor ran)
  *   UNAUTHORIZED, FORBIDDEN_POLICY, or DENIED        -> `unsupported(not_permitted)` (DENIED with category `try_later` is a throttle or an outage: `unavailable`)
- *   anything else (including ALLOWED with `try_later`, which means the executor failed and NOTHING started) -> `unsupported(unavailable)`
+ *   anything else (including ALLOWED with `try_later`, which means execution failed or was not confirmed; a side effect may already have occurred) -> `unsupported(unavailable)`
  */
 import { randomUUID } from "node:crypto";
 import { WALKTHROUGH_ID, unsupportedResult } from "@dap/ai";
@@ -23,6 +23,7 @@ export async function submitWalkthroughStart(session: AiSession, walkthroughId: 
   try {
     feedback = await session.submit({ providerCallId: `guidance-start-${randomUUID()}`, arguments: JSON.stringify({ action: START_WALKTHROUGH_ACTION_ID, params: { walkthroughId } }) });
   } catch { return unsupportedResult("unavailable"); }
+  if (feedback === null || typeof feedback !== "object" || Array.isArray(feedback)) return unsupportedResult("unavailable");
   let outcome: unknown; let category: unknown;
   try { outcome = (feedback as { outcome?: unknown } | null)?.outcome; category = (feedback as { category?: unknown } | null)?.category; } catch { return unsupportedResult("unavailable"); }
   if (outcome === "ALLOWED" && category === "ok") return Object.freeze({ kind: "walkthrough", walkthroughId });

@@ -49,7 +49,7 @@ describe("submitWalkthroughStart: the Gateway feedback becomes a closed result",
   it.each([
     ["DENIED", "try_later"], ["ALLOWED", "try_later"], ["REQUIRES_CONFIRMATION", "needs_user_confirmation"], ["INVALID_PARAMETERS", "invalid_input"], ["INVALID_ACTION", "not_available"],
     ["WHATEVER", "ok"], ["ALLOWED", "not_available"], ["ALLOWED", undefined],
-  ])("%s/%s -> unsupported(unavailable): in particular ALLOWED with try_later means the executor FAILED and nothing started", async (outcome, category) => {
+  ])("%s/%s -> unsupported(unavailable): in particular ALLOWED with try_later means execution failed or was not confirmed", async (outcome, category) => {
     expect(await submitWalkthroughStart(fakeSession(() => feedback(outcome, category as string)).session, "profileUpdate")).toMatchObject({ kind: "unsupported", reason: "unavailable" });
   });
   it.each([null, undefined, "ALLOWED", 5, [], {}])("a malformed feedback (%j) -> unavailable", async (answer) => {
@@ -67,6 +67,12 @@ describe("submitWalkthroughStart: the Gateway feedback becomes a closed result",
   it("raw feedback (issues, extra fields) never reaches the result", async () => {
     const result = await submitWalkthroughStart(fakeSession(() => feedback("INVALID_PARAMETERS", "invalid_input", { issues: [{ path: "/walkthroughId", code: "format" }], note: SECRET })).session, "profileUpdate");
     expect(JSON.stringify(result)).not.toMatch(/SECRET|issues|walkthroughId|format/);
+  });
+  it.each([
+    Object.assign(() => undefined, { outcome: "ALLOWED", category: "ok" }),
+    Object.assign([], { outcome: "ALLOWED", category: "ok" }),
+  ])("non-record feedback cannot claim success", async (answer) => {
+    expect(await submitWalkthroughStart(fakeSession(() => answer).session, "profileUpdate")).toMatchObject({ reason: "unavailable" });
   });
   it("a feedback with a throwing getter -> unavailable", async () => {
     const hostile = { get outcome(): string { throw new Error(SECRET); }, category: "ok" };
