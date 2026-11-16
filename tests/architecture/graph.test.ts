@@ -181,11 +181,11 @@ describe("the reference host (T131, T136): its AI-facing handle is a submit func
     expect(forbiddenAppEdges(planted)).toHaveLength(2);
     expect(driverImports({ "a.ts": 'import { Pool } from "pg";', "b.ts": 'import type { Pool } from "pg";', "c.ts": 'export * from "pg";', "d.ts": 'const p = import("pg");', "e.ts": 'const p = require("pg/lib");', "f.ts": 'import { ok } from "./pg-like.js"; import "@dap/security";' })).toHaveLength(5);
   });
-  it("wires the trusted pieces in the composition root alone: only compose.ts (and config.ts, for the default limits) import the security package, only compose.ts imports the AI package, nothing imports the actions package", () => {
-    expect(appImportersOf(graph, "packages/security/")).toEqual([`${APP}src/compose.ts`, `${APP}src/config.ts`]);
+  it("wires the trusted pieces in the composition root alone: the two composition roots (and config.ts for limits) import security, guidance modules import pure AI helpers, nothing imports the actions package", () => {
+    expect(appImportersOf(graph, "packages/security/")).toEqual([`${APP}src/compose.ts`, `${APP}src/config.ts`, `${APP}src/guidance/compose-guidance.ts`]);
     // Feature 003: the trusted guidance modules (src/guidance/) use the AI package's pure parsing, chunking, validation and result helpers; they import no other trusted package
-    // (the scrubber is injected, the capability and its executor use the contracts only).
-    expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`, `${APP}src/guidance/capability.ts`, `${APP}src/guidance/knowledge-loader.ts`, `${APP}src/guidance/start-bridge.ts`, `${APP}src/guidance/walkthrough-summaries.ts`]);
+    // (compose-guidance injects the scrubber; the capability and its executor use the contracts only).
+    expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`, `${APP}src/guidance/anthropic-model.ts`, `${APP}src/guidance/capability.ts`, `${APP}src/guidance/compose-guidance.ts`, `${APP}src/guidance/demo-model.ts`, `${APP}src/guidance/demo-render.ts`, `${APP}src/guidance/knowledge-loader.ts`, `${APP}src/guidance/start-bridge.ts`, `${APP}src/guidance/walkthrough-summaries.ts`]);
     expect(appImportersOf(graph, "packages/actions/")).toEqual([]);
   });
   it("Feature 003 Slice 3: no production module of the host imports the walkthrough runtime or the testkit (the starter is a structural interface the composition root fills)", () => {
