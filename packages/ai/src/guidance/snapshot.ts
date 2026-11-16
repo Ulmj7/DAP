@@ -11,13 +11,15 @@ const MAX_DEPTH = 6;
 const MAX_NODES = 4000;
 const MAX_KEYS = 64;
 const MAX_ITEMS = 128;
-const MAX_STRING = 5000;
+const DEFAULT_MAX_STRING = 5000;
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 export type Snapshot = { readonly ok: true; readonly value: unknown } | { readonly ok: false };
 const REFUSED: Snapshot = Object.freeze({ ok: false });
 
-export function snapshotPlainData(raw: unknown): Snapshot {
+/** `maxString` raises the per-string bound for callers that legitimately take long text (knowledge documents); every other bound is fixed. */
+export function snapshotPlainData(raw: unknown, options: { readonly maxString?: number } = {}): Snapshot {
+  const MAX_STRING = options.maxString ?? DEFAULT_MAX_STRING;
   let nodes = 0;
   const ancestors = new Set<object>();
   const take = (value: unknown, depth: number): { readonly v: unknown } | null => {

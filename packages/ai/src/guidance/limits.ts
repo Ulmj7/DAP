@@ -23,3 +23,11 @@ export const GUIDANCE_LIMITS = Object.freeze({
   answerChars: MAX_ANSWER_CHARS, messageChars: MAX_MESSAGE_CHARS, modelCalls: MAX_MODEL_CALLS, modelDeadlineMs: MODEL_DEADLINE_MS,
   labelChars: MAX_LABEL_CHARS, descriptionChars: MAX_DESCRIPTION_CHARS,
 });
+
+// --- knowledge retrieval (Slice 2) ---
+export const MAX_KNOWLEDGE_DOCS = 200;
+export const MAX_DOC_CHARS = 20_000;
+export const MAX_DOC_TAGS = 8;
+export const MAX_TOPIC_CHARS = 64;
+/** The most characters of prompt text (system plus user) that go to a model. */
+export const MAX_PROMPT_CHARS = 16_000;

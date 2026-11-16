@@ -18,3 +18,6 @@ export const isPlainText = (value: unknown, max: number): value is string =>
 export const isBoundedText = (value: unknown, max: number): value is string =>
   typeof value === "string" && value.length >= 1 && value.length <= max && value.trim().length > 0 && !CONTROL.test(value);
 export const isId = (value: unknown, pattern: RegExp): value is string => typeof value === "string" && pattern.test(value) && !RESERVED_NAMES.has(value);
+/** Document text: like bounded text, but tabs and line breaks are allowed (other control characters are not). */
+export const isDocumentText = (value: unknown, max: number): value is string =>
+  typeof value === "string" && value.length >= 1 && value.length <= max && value.trim().length > 0 && !CONTROL.test(value.replace(/[\t\n\r]/g, ""));
