@@ -2,13 +2,16 @@
  * T071: the M1 gate's own checks (scripts/m1-gate-check.mjs) are able to fail. A gate that cannot reject a missing, empty, skipped or failing suite, a reference-host
  * group that did not run, or an untagged todo would pass vacuously. Pure data in, problems out; no database.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { PROJECT_PATHS, REFERENCE_HOST_GROUPS, REQUIRED_SUITES, checkReport } from "../../scripts/m1-gate-check.mjs";
+import { PROJECT_PATHS, REFERENCE_HOST_CASES, REFERENCE_HOST_GROUPS, REQUIRED_SUITES, checkReport as inspectReport } from "../../scripts/m1-gate-check.mjs";
+
+const checkReport = (report: unknown, options: { suites?: readonly string[]; groups?: readonly string[]; root?: string } = {}) => inspectReport(report, { root: "/repo", ...options });
 
 type Status = "passed" | "failed" | "skipped" | "todo";
 const test = (status: Status, title = "t", group = "g") => ({ ancestorTitles: [group], title, status });
 const file = (path: string, tests: ReturnType<typeof test>[]) => ({ name: `/repo/${path}`, assertionResults: tests });
-const hostTests = REFERENCE_HOST_GROUPS.map((group) => test("passed", "x", group));
+const hostTests = REFERENCE_HOST_CASES.map(([group, title]) => test("passed", title, group));
 /** One passing file for every required suite, one for every project, the host with all its groups. */
 const healthy = () => ({
   success: true, numFailedTests: 0, numFailedTestSuites: 0,
@@ -43,9 +46,9 @@ describe("the M1 gate's checks", () => {
     expect(checkReport({ ...healthy(), success: false, numFailedTests: 2 }).join("\n")).toMatch(/vitest reported failures/);
   });
   it.each(REFERENCE_HOST_GROUPS)("a reference-host group that did not pass is a failure: %s", (group) => {
-    const tests = REFERENCE_HOST_GROUPS.filter((name) => name !== group).map((name) => test("passed", "x", name));
+    const tests = hostTests.filter(entry => entry.ancestorTitles[0] !== group);
     expect(checkReport(replace(healthy(), HOST, tests))).toContain(`reference host group did not pass: ${group}`);
-    const skipped = REFERENCE_HOST_GROUPS.map((name) => test(name === group ? "skipped" : "passed", "x", name));
+    const skipped = hostTests.map(entry => ({ ...entry, status: entry.ancestorTitles[0] === group ? "skipped" : "passed" }));
     expect(checkReport(replace(healthy(), HOST, skipped))).toContain(`reference host group did not pass: ${group}`);
   });
   it("a project in which no test ran is a failure", () => {
@@ -71,4 +74,34 @@ describe("the M1 gate's checks", () => {
 it("the gate requires the existing dev-auth startup and PostgreSQL pool guards, not only integration files", () => {
   expect(REQUIRED_SUITES).toContain("apps/reference-host/src/startup.test.ts");
   expect(REQUIRED_SUITES).toContain("packages/security/src/state/postgres/pool.test.ts");
+});
+
+
+it("matches required files inside the repository, never an unrelated suffix or conformance look-alike", () => {
+  const report = healthy();
+  const unrelated = { ...report, testResults: report.testResults.map(entry => ({ ...entry, name: `/unrelated${entry.name}` })) };
+  expect(checkReport(unrelated)).toContain(`missing suite: ${HOST}`);
+  const impostor = { ...report, testResults: report.testResults.filter(entry => !entry.name.includes("/state/conformance/")).concat(file("unrelated/state/conformance/fake.test.ts", [test("passed")])) };
+  expect(checkReport(impostor, { suites: [] })).toContain("no test ran in the conformance project");
+});
+it("supports a different repository root and Windows report separators", () => {
+  const report = healthy();
+  const windows = { ...report, testResults: report.testResults.map(entry => ({ ...entry, name: entry.name.replace("/repo", "C:/work/repo").replaceAll("/", "\\") })) };
+  expect(checkReport(windows, { root: "C:/work/repo" })).toEqual([]);
+});
+it("rejects a file-level failure even if Vitest's aggregate counts and test statuses look healthy", () => {
+  const report = healthy();
+  expect(checkReport({ ...report, testResults: report.testResults.map(entry => ({ ...entry, status: "failed" })) })).not.toEqual([]);
+});
+it("requires the state-changing proof, not just some passing test under its numbered group", () => {
+  const report = replace(healthy(), HOST, hostTests.filter(entry => !entry.title.startsWith("a valid dev session and a registered state-changing proposal")));
+  expect(checkReport(report).join("\n")).toMatch(/reference host case did not pass/);
+});
+it("a tier in an ancestor title cannot excuse an untagged or REQUIRED todo", () => {
+  expect(checkReport(replace(healthy(), "tests/security/positive.test.ts", [test("passed"), test("todo", "untagged", "parent (OPTIONAL)")])).join("\n")).toMatch(/todo without/);
+});
+it("the runner refuses focused tests and assertion-free early returns", () => {
+  const source = readFileSync(new URL("../../scripts/m1-gate.mjs", import.meta.url), "utf8");
+  expect(source).toContain('"--allowOnly=false"');
+  expect(source).toContain('"--expect.requireAssertions=true"');
 });

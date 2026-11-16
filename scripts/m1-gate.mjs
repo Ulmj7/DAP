@@ -32,7 +32,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
     const projects = ["unit", "arch", "security", "conformance", "integration"].flatMap((name) => ["--project", name]);
     const selected = ["tests/architecture/", "tests/security/", "/state/conformance/", "tests/integration/", "apps/reference-host/src/startup.test.ts", "packages/security/src/state/postgres/pool.test.ts"];
-    const vitest = run(["node_modules/vitest/vitest.mjs", "run", ...projects, ...selected, "--reporter=default", "--reporter=json", `--outputFile.json=${out}`]);
+    const vitest = run(["node_modules/vitest/vitest.mjs", "run", ...projects, ...selected, "--allowOnly=false", "--expect.requireAssertions=true", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`]);
     let report;
     try { report = JSON.parse(readFileSync(out, "utf8")); } catch { fail("vitest produced no report"); }
     const problems = checkReport(report);
