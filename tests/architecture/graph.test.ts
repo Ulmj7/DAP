@@ -213,7 +213,8 @@ describe("workspace manifests", () => {
     expect(dirs.sort()).toEqual(Object.keys(ALLOWED_MANIFEST_EDGES).sort());
   });
   it("keeps the AI layer's reach to contracts only, and nothing production-side on testkit", () => {
-    expect(Object.keys(manifest("packages/ai").dependencies ?? {})).toEqual(["@dap/contracts"]);
+    // Feature 003 added `zod` (validation of untrusted model output); the workspace reach stays contracts only.
+    expect(Object.keys(manifest("packages/ai").dependencies ?? {}).filter((name) => name.startsWith("@dap/"))).toEqual(["@dap/contracts"]);
     for (const dir of ["packages/contracts", "packages/ai", "packages/actions", "packages/security"]) {
       for (const field of ["dependencies", "devDependencies", "peerDependencies"]) expect(Object.keys(manifest(dir)[field] ?? {}), `${dir} ${field}`).not.toContain("@dap/testkit");
     }
