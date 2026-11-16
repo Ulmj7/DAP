@@ -82,3 +82,6 @@ Everything the brief lists as not MVP, plus: C01 and its transport, admin and an
 - The developer demo controls remain, clearly labelled for removal in U2; the existing overlay is untouched (D8 removal deferred).
 - Dashboard has Profile/Settings navigation and an informational guides note, with no fake Guides action until U2.
 - Security stays visible; Advanced reveals only the inert two-factor control, following the current registry and articles.
+
+- U1 correction: capture-phase bridge checks stay synchronous, but typed event delivery uses a cancellable FIFO macrotask after application handlers/default actions, because the runtime verifies postconditions synchronously.
+- Profile verification no longer uses a microtask barrier; it waits only for an actual in-flight save. Test-only injected definitions prove toggle, route and save ordering through the real runtime; no definitions ship.
