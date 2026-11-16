@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import * as dom from "./index.js";
 
-it("the DOM adapter entry loads under jsdom", () => {
-  expect(dom).toBeDefined();
-  expect(typeof document.createElement).toBe("function");
+it("the DOM adapter entry exports the targets and overlay factories", () => {
+  expect(typeof dom.createTargets).toBe("function");
+  expect(typeof dom.createOverlay).toBe("function");
 });
