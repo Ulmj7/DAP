@@ -19,7 +19,15 @@ export interface PostgresPoolOptions {
 
 export function createPostgresPool(connectionString: string, options: PostgresPoolOptions = {}): Pool {
   if (typeof connectionString !== "string" || connectionString.length === 0) throw new TypeError("A PostgreSQL connection string is required");
-  const pool = new Pool({ connectionString, max: options.max ?? 10, connectionTimeoutMillis: options.connectionTimeoutMillis ?? 2000 });
+  let max: number; let timeout: number;
+  try {
+    const url = new URL(connectionString);
+    max = options.max ?? 10;
+    timeout = options.connectionTimeoutMillis ?? 2000;
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname || url.pathname.length <= 1 ||
+      !Number.isSafeInteger(max) || max < 1 || !Number.isInteger(timeout) || timeout < 1 || timeout > 2147483647) throw new TypeError();
+  } catch { throw new TypeError("Invalid PostgreSQL pool configuration"); }
+  const pool = new Pool({ connectionString, max, connectionTimeoutMillis: timeout });
   pool.on("error", () => undefined);
   return pool;
 }
