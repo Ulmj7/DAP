@@ -60,7 +60,7 @@ Registered SAFE/LOW proposal
 | Gateway test world with the real chain | not built | REQUIRED (T070) |
 | Persistent audit sink and migration | not built | REQUIRED, minimal (T093, T094) |
 | Representative security scenarios | partly built (`attacks2`) | REQUIRED, reduced |
-| Composition root, development authentication, one integration test | not built | REQUIRED (T131, T132, T136 reduced) |
+| Composition root, development authentication, one integration test | M1 reference-host composition root, dev-auth stub and integration test built | REQUIRED (T131, T132, T136 reduced) |
 | Confirmation store, binding, service, endpoints | store built on branch `confirm-store` | OPTIONAL, parked |
 | Coverage gate, double-run, dependency matrix, mutation testing, metrics, Kubernetes | partly built (`tooling`) | FUTURE, parked |
 

@@ -30,7 +30,7 @@ module.exports = {
       "contracts may depend on external libraries only."),
     forbid("testkit-allowed-edges", "^packages/testkit/", "^(packages/actions|apps)/",
       "testkit may depend on contracts, security, and ai only."),
-    forbid("production-not-to-testkit", "^packages/(contracts|ai|actions|security)/", "^packages/testkit/",
+    forbid("production-not-to-testkit", "^(packages/(contracts|ai|actions|security)|apps)/", "^packages/testkit/",
       "No production package may import test infrastructure."),
     forbid("nothing-imports-apps", "^packages/", "^apps/",
       "Apps are composition roots; nothing imports them."),

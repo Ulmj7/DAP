@@ -15,3 +15,10 @@ executors. The AI layer is only ever given an `AiSession`: one `submit` function
 
 Confirmation is not built: a HIGH/CRITICAL capability stops at `REQUIRES_CONFIRMATION` and its executor never runs (the store and channel are fail-closed placeholders).
 The end-to-end proof is `tests/integration/reference-host.test.ts`; startup and dev-auth checks are `src/startup.test.ts`.
+
+Each trusted `openSession` starts a new turn: reusing a provider call id inside that turn
+is a replay, while the same id in a new host-opened turn is a new proposal. The AI-facing
+handle cannot open turns. This is not exactly-once execution across host retries.
+`composeReferenceHost` and its trusted result are host APIs, never model tools. AiSession
+limits object capabilities; it is not a sandbox for arbitrary JavaScript or process globals.
+Production mode checks ignore surrounding whitespace and case; opt-in remains exactly `1`.

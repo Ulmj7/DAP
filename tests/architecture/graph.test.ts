@@ -223,6 +223,7 @@ describe("planted edges in a disposable workspace", () => {
   const dirOf = (name: string) => (name === "reference-host" ? "apps/reference-host" : `packages/${name}`);
   /** [from, to, rule that must name it, or null when the edge is allowed] */
   const EDGES: [string, string, string | null][] = [
+    ["reference-host", "testkit", "production-not-to-testkit"],
     ["ai", "security", "ai-not-to-security-or-actions"], ["ai", "actions", "ai-not-to-security-or-actions"],
     ["actions", "ai", "actions-not-to-ai-or-security"], ["actions", "security", "actions-not-to-ai-or-security"],
     ["security", "ai", "security-not-to-ai-or-actions"], ["security", "actions", "security-not-to-ai-or-actions"],
