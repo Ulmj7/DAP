@@ -1,30 +1,31 @@
 import { h } from "../dom.js";
-
-export interface ProfileActions {
-  /** The slice-1 demo: highlight a registered element with a tooltip. */
-  readonly showMe: () => void;
-  /** Asks for an id that is not registered; nothing may be highlighted. */
-  readonly showMissing: () => void;
-}
-
-export function profilePage(actions: ProfileActions): HTMLElement {
-  const showMe = h("button", { type: "button", id: "show-me" }, "Show me");
-  showMe.addEventListener("click", actions.showMe);
-  const showMissing = h("button", { type: "button", id: "show-missing" }, "Ask for a missing element");
-  showMissing.addEventListener("click", actions.showMissing);
-  return h("section", {},
-    h("h1", {}, "Profile"),
-    h("label", { for: "name" }, "Name"),
-    h("input", { id: "name", type: "text", "data-ai-id": "profile.nameInput" }),
-    h("label", { for: "email" }, "Email"),
-    h("input", { id: "email", type: "email", "data-ai-private": true, "data-ai-id": "profile.emailInput" }),
-    h("label", { for: "phone" }, "Phone"),
-    h("input", { id: "phone", type: "text", "data-ai-redact": true }),
-    h("label", { for: "password" }, "Password"),
-    // Deliberately carries a data-ai-id although it is not registered and is a password field: it must stay untargetable.
-    h("input", { id: "password", type: "password", "data-ai-id": "profile.passwordInput" }),
-    h("div", {}, h("button", { type: "button", "data-ai-id": "profile.saveButton" }, "Save")),
-    h("div", { class: "panel", "data-ai-ignore": true }, h("strong", {}, "Billing notes"), h("p", {}, "Private to this device. The guidance layer never sees this panel."), h("input", { type: "text", "aria-label": "Billing note" })),
-    h("div", { class: "demo" }, h("p", {}, "Slice 1 demo:"), showMe, showMissing),
-  );
+import { copy } from "../copy.js";
+import { button, card, field, heading, statusMessage } from "../ui/pieces.js";
+import type { ProfileState } from "../profile-state.js";
+export interface ProfileActions { readonly showMe: () => void; readonly showMissing: () => void; readonly edit: (draft: string) => void; readonly save: () => void }
+export function profilePage(actions: ProfileActions) {
+ const c = copy.profile;
+ const name = field("name", c.name, { type: "text", maxlength: "80", "data-ai-id": "profile.nameInput", "aria-describedby": "name-hint" });
+ const hint = h("p", { id: "name-hint", class: "hint" }, c.hint); const error = h("p", { id: "name-error", class: "error", hidden: true }); name.element.append(hint, error);
+ name.input.addEventListener("input", () => actions.edit(name.input.value));
+ const save = button(c.save, true); save.type = "submit"; save.setAttribute("data-ai-id", "profile.saveButton");
+ const status = statusMessage();
+ const email = field("email", c.email, { type: "email", "data-ai-private": true, "data-ai-id": "profile.emailInput" });
+ const phone = field("phone", c.phone, { type: "tel", "data-ai-redact": true });
+ const password = field("password", c.password, { type: "password", "data-ai-private": true, "data-ai-id": "profile.passwordInput" });
+ const form = h("form", { class: "profile-form", novalidate: true }, h("h2", {}, c.section), name.element, email.element, phone.element, password.element, save, status);
+ form.addEventListener("submit", event => { event.preventDefault(); actions.save(); });
+ const show = button(c.show); show.id = "show-me"; show.addEventListener("click", actions.showMe);
+ const missing = button(c.missing); missing.id = "show-missing"; missing.addEventListener("click", actions.showMissing);
+ const billing = field("billing-note", c.billingLabel, { type: "text" });
+ const element = h("section", {}, heading(c.title, c.intro), card(form), h("section", { class: "panel", "data-ai-ignore": true }, h("h2", {}, c.billing), h("p", {}, c.billingText), billing.element), h("section", { class: "demo" }, h("h2", {}, c.demo), show, missing));
+ return { element, update(state: ProfileState) {
+  if (name.input.value !== state.draft) name.input.value = state.draft;
+  save.disabled = state.status === "saving"; name.input.disabled = state.status === "saving";
+  save.setAttribute("aria-busy", String(state.status === "saving")); save.textContent = state.status === "saving" ? c.savingButton : c.save;
+  error.hidden = state.error === null; error.textContent = state.error === null ? "" : c[state.error];
+  name.input.setAttribute("aria-invalid", String(state.error !== null)); name.input.setAttribute("aria-describedby", state.error === null ? "name-hint" : "name-hint name-error");
+  const messages = { ready: c.ready, dirty: c.dirty, "validation-error": c.validation, saving: c.saving, saved: c.saved, "save-failed": c.failed };
+  status.textContent = messages[state.status];
+ } };
 }
