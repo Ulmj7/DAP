@@ -102,12 +102,14 @@ export function createWalkthroughRuntime(options: RuntimeOptions): WalkthroughRu
     const mine = sequence[key];
     try {
       let fired = false;
-      cancelers[key] = timers.set(() => {
+      const cancel = timers.set(() => {
         if (!fired && sequence[key] === mine) {
           fired = true;
           onFire(() => sequence[key] === mine);
         }
       }, ms);
+      if (typeof cancel !== "function") throw new TypeError("Invalid timer cancellation handle");
+      cancelers[key] = cancel;
     } catch { feed({ type: "internalError" }); }
   };
 

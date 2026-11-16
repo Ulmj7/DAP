@@ -45,3 +45,76 @@ it("native rejected promises are observed even when their own then getter throws
   await Promise.resolve();
   expect(h.runtime.getState()).toMatchObject({ status: "FAILED", failure: "verification_failed" });
 });
+
+it("presenter re-entry queues one event, cannot start a busy run, and cancel clears timers", () => {
+  const h = makeHarness();
+  let runtime: ReturnType<typeof createWalkthroughRuntime>;
+  const refusals: unknown[] = [];
+  runtime = createWalkthroughRuntime({ ...h.options, presenter: { apply: effect => {
+    h.effects.push(effect);
+    if (effect.type === "present" && effect.stepId === "v1") {
+      refusals.push(runtime.startWalkthrough("goSettings"));
+      runtime.dispatch({ type: "click", id: "profile.saveButton" });
+      runtime.cancel();
+    }
+  } } });
+  runtime.startWalkthrough("verifyOnly");
+  expect(refusals).toEqual([{ ok: false, reason: "busy" }]);
+  expect(runtime.getState().status).toBe("CANCELLED");
+  expect(h.pending()).toHaveLength(0);
+  expect(h.effects.at(-1)).toEqual({ type: "clear" });
+});
+
+it("a cancelled timer and a late postcondition from an earlier run are inert", async () => {
+  const h = makeHarness();
+  let resolve: (value: boolean) => void = () => undefined;
+  h.answers.check = () => new Promise<boolean>(done => { resolve = done; });
+  h.runtime.startWalkthrough("verifyOnly");
+  h.runtime.dispatch({ type: "click", id: "profile.saveButton" });
+  const old = h.timers.at(-1)!;
+  h.runtime.cancel();
+  h.runtime.startWalkthrough("findSecurity");
+  const before = h.runtime.getState();
+  old.fire(); resolve(true);
+  await Promise.resolve(); await Promise.resolve();
+  expect(h.runtime.getState()).toEqual(before);
+  expect(h.pending()).toHaveLength(0);
+});
+
+it("availability while presenting or waiting does not advance a step; route events still verify the port", () => {
+  const h = makeHarness();
+  h.runtime.startWalkthrough("verifyOnly");
+  const before = h.runtime.getState();
+  h.runtime.dispatch({ type: "targetAvailable", id: "profile.saveButton" });
+  expect(h.runtime.getState()).toEqual(before);
+  h.runtime.cancel();
+  h.runtime.startWalkthrough("userGoesSettings");
+  h.runtime.dispatch({ type: "routeChanged", route: "settings" }); // port still dashboard
+  expect(h.runtime.getState()).toMatchObject({ status: "FAILED", failure: "verification_failed" });
+});
+
+it("a never-settling target promise remains unavailable until its injected deadline", () => {
+  const h = makeHarness();
+  const runtime = createWalkthroughRuntime({ ...h.options, targets: { resolve: () => new Promise(() => undefined) as never } });
+  runtime.startWalkthrough("verifyOnly");
+  expect(runtime.getState().status).toBe("RESOLVING");
+  h.pending()[0]!.fire();
+  expect(runtime.getState()).toMatchObject({ status: "FAILED", failure: "target_unavailable" });
+  expect(h.pending()).toHaveLength(0);
+});
+
+it("a timer port that never fires cannot measure time; cancellation still releases it", () => {
+  const h = makeHarness(); h.available.clear();
+  h.runtime.startWalkthrough("verifyOnly");
+  expect(h.runtime.getState().status).toBe("RESOLVING");
+  expect(h.pending()).toHaveLength(1);
+  h.runtime.cancel();
+  expect(h.pending()).toHaveLength(0);
+});
+
+it("a timer port returning no cancellation function fails closed", () => {
+  const h = makeHarness();
+  const runtime = createWalkthroughRuntime({ ...h.options, timers: { set: () => undefined as never } });
+  runtime.startWalkthrough("verifyOnly");
+  expect(runtime.getState()).toMatchObject({ status: "FAILED", failure: "internal_error" });
+});
