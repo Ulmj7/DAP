@@ -172,7 +172,8 @@ executors and is never reachable from an `AiSession`.
   system. Evidence: `apps/reference-host/src/startup.test.ts`, `tests/integration/reference-host.test.ts` group 2.
 - **End-to-end proof**: `tests/integration/reference-host.test.ts` (six numbered groups plus boundary probes) runs dev auth, submit, the real Gateway,
   the durable PostgreSQL `ALLOWED` row, the trusted executor and the `EXECUTED` row on a real database; every denial, the real database trigger
-  fault and the HIGH capability leave the executors at zero calls. `npm run test:m1-gate` requires all six groups to have passed.
+  fault and the HIGH capability leave the executors at zero calls. `npm run test:m1-gate` requires all six groups and seven pinned cases of them to have passed, and
+  also requires the dev-auth startup checks (`apps/reference-host/src/startup.test.ts`) and the pool checks (`packages/security/src/state/postgres/pool.test.ts`).
 
 ## 9. What is not here (so no one reads it into the picture)
 

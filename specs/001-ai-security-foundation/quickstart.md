@@ -79,9 +79,11 @@ There is **no HTTP server** and no `curl` walkthrough: the host is an in-process
 npm run test:m1-gate
 ```
 
-It migrates the database, runs the `arch`, `security`, `conformance` and `integration` test projects, and **fails** if any of 24 named suites is
-missing, empty, skipped or failing, if a reference-host group did not run, or if any remaining `todo` is not tagged OPTIONAL or FUTURE. Run it twice
-on the same database to see that it is repeatable. The gate is representative, not exhaustive.
+It migrates the database and runs the `arch`, `security`, `conformance` and `integration` test projects plus two focused unit guards (the dev-auth
+startup checks `apps/reference-host/src/startup.test.ts` and the PostgreSQL pool checks `packages/security/src/state/postgres/pool.test.ts`), with
+`.only` refused and every test required to assert. It **fails** if any of the 26 named suites is missing, empty, skipped or failing, if a
+reference-host group or one of its seven pinned cases did not pass, or if any remaining `todo` is not tagged OPTIONAL or FUTURE. Run it twice on the
+same database to see that it is repeatable. The gate is representative, not exhaustive.
 
 ## 6. Look at the audit trail in the database
 
