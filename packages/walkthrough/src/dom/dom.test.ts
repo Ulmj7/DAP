@@ -174,3 +174,9 @@ it.each(['<div inert><input data-ai-id="profile.nameInput"></div>', '<details><s
   html(markup);
   expect(createTargets(root, registry).find("profile.nameInput")).toBeNull();
 });
+
+
+it.each(["cc-number", "current-password", "one-time-code"])("sensitive autocomplete=%s cannot be targeted", autocomplete => {
+  html(`<input type="text" autocomplete="${autocomplete}" data-ai-id="profile.nameInput">`);
+  expect(createTargets(root, registry).find("profile.nameInput")).toBeNull();
+});

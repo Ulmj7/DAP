@@ -20,6 +20,8 @@ export interface ElementFacts {
   readonly redact: boolean;
   readonly tagName: string;
   readonly inputType?: string | null;
+  /** Standard autocomplete tokens identifying credentials or payment-card data. */
+  readonly autocomplete?: string | null;
   /** The registry's privacy for this element, when it is registered. */
   readonly registryPrivacy?: SemanticPrivacy;
 }
@@ -31,6 +33,8 @@ export function effectivePrivacy(facts: ElementFacts): EffectivePrivacy {
   if (facts.ignoredByAncestorOrSelf) return "ignore";
   const type = typeof facts.inputType === "string" ? facts.inputType.trim().toLowerCase() : "";
   if (String(facts.tagName).toLowerCase() === "input" && (type === "password" || type === "hidden")) return "ignore";
+  const autocomplete = typeof facts.autocomplete === "string" ? facts.autocomplete.trim().toLowerCase().split(/\s+/) : [];
+  if (autocomplete.some(token => token.startsWith("cc-") || token === "current-password" || token === "new-password" || token === "one-time-code")) return "ignore";
   if (facts.private || facts.registryPrivacy === "private") return "private";
   if (facts.redact || facts.registryPrivacy === "redact") return "redact";
   return "public";

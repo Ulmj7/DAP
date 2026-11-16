@@ -44,6 +44,7 @@ function isIgnored(element: HTMLElement, registryPrivacy: "public" | "private" |
     redact: element.hasAttribute(ATTR_REDACT),
     tagName: element.tagName,
     inputType: element.getAttribute("type"),
+    autocomplete: element.getAttribute("autocomplete"),
     registryPrivacy,
   }) === "ignore";
 }
@@ -79,7 +80,7 @@ export function createTargets(root: HTMLElement, registry: SemanticRegistry): Ta
     const observer = new view.MutationObserver(() => { try { callback(); } catch { /* a subscriber's failure is its own */ } });
     observer.observe(root, {
       childList: true, subtree: true, attributes: true,
-      attributeFilter: [ATTR_ID, ATTR_IGNORE, ATTR_PRIVATE, ATTR_REDACT, "hidden", "aria-hidden", "style", "class", "type", "open", "inert"],
+      attributeFilter: [ATTR_ID, ATTR_IGNORE, ATTR_PRIVATE, ATTR_REDACT, "hidden", "aria-hidden", "style", "class", "type", "open", "inert", "autocomplete"],
     });
     return () => observer.disconnect();
   };

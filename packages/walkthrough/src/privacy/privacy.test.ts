@@ -83,3 +83,8 @@ describe("buildSemanticContext", () => {
     expect(buildSemanticContext(registry, "settings", (() => "yes") as never).elements[0]?.available).toBe(false);
   });
 });
+
+
+it.each(["cc-number", "current-password", "one-time-code"])("ignores sensitive autocomplete hint %s even on a public text input", autocomplete => {
+  expect(effectivePrivacy(facts({ autocomplete }))).toBe("ignore");
+});
