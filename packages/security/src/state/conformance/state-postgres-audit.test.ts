@@ -200,19 +200,23 @@ describe("T094 PostgreSQL audit store: an abandoned append never commits", () =>
     return { release: async (how: "COMMIT" | "ROLLBACK") => { await client.query(how); client.release(); } };
   }
   /** A pool that records every statement each of its connections is asked to run (a SQL spy), and can react to one. */
-  function spied(max: number, after?: (sql: string) => void) {
+  function spied(max: number, after?: (sql: string) => void, rewrite?: (sql: string) => string) {
     const statements: string[] = [];
+    const releases: unknown[] = [];
+    const errors: unknown[] = [];
     const pool = new Pool({ connectionString: process.env.DAP_DATABASE_URL, max, connectionTimeoutMillis: 5000 });
+    pool.on("release", (error) => { releases.push(error); });
     pool.on("connect", (client) => {
       const original = client.query.bind(client) as (...args: unknown[]) => unknown;
       (client as unknown as { query: unknown }).query = (...args: unknown[]) => {
-        const sql = typeof args[0] === "string" ? args[0] : "";
+        const raw = typeof args[0] === "string" ? args[0] : "";
+        const sql = rewrite === undefined ? raw : rewrite(raw);
         statements.push(sql);
-        const result = original(...args);
-        return after === undefined || !(result instanceof Promise) ? result : result.then((value) => { after(sql); return value; });
+        const result = original(...(typeof args[0] === "string" ? [sql, ...args.slice(1)] : args));
+        return !(result instanceof Promise) ? result : result.then((value) => { after?.(sql); return value; }, (error: unknown) => { errors.push(error !== null && typeof error === "object" ? Reflect.get(error, "code") : undefined); throw error; });
       };
     });
-    return { pool, statements };
+    return { pool, statements, releases, errors };
   }
   const generic = async (promise: Promise<unknown>) => {
     const error = await promise.then(() => undefined, (thrown: unknown) => thrown as Error);
@@ -220,6 +224,16 @@ describe("T094 PostgreSQL audit store: an abandoned append never commits", () =>
     expect(error!.message).toBe("Audit store unavailable");
     return error!;
   };
+
+  it("malformed or unreadable cancellation signals fail generically before borrowing a connection", async () => {
+    const { pool, statements } = spied(1);
+    try {
+      const store = new PostgresAuditStore(pool);
+      const throwing = Object.defineProperty({}, "signal", { get() { throw new Error("CANARY hidden option"); } });
+      for (const options of [throwing, { signal: { aborted: "yes" } }, { signal: null }, { signal: { aborted: true } }]) await generic(store.append(auditEvent(randomUUID()), options as never));
+      expect(statements).toEqual([]); expect(pool.totalCount).toBe(0);
+    } finally { await pool.end(); }
+  });
 
   it("success path is unaffected: with a signal that is never aborted it commits once, and replaying the event is a no-op", async () => {
     const t = randomUUID(); const event = auditEvent(t); const signal = { aborted: false };
@@ -281,13 +295,130 @@ describe("T094 PostgreSQL audit store: an abandoned append never commits", () =>
   it("the database bounds a blocked append by itself: with NO signal and writeTimeoutMs of 150 it is cancelled by the database, generically, and no row follows the release", async () => {
     const t = randomUUID(); const event = auditEvent(t);
     const hold = await blocker(event);
-    const started = Date.now();
-    const error = await generic(new PostgresAuditStore(app, { writeTimeoutMs: 150 }).append(event));
-    expect(Date.now() - started).toBeLessThan(1500); // bounded by the database, not by waiting for the blocker
-    expect(`${error.message} ${error.stack ?? ""}`).not.toMatch(/lock_timeout|statement_timeout|canceling|sec_audit_events/);
-    await hold.release("ROLLBACK");
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const pending = generic(new PostgresAuditStore(app, { writeTimeoutMs: 150 }).append(event));
+    try {
+      const error = await Promise.race([pending, new Promise<never>((_, reject) => { watchdog = setTimeout(() => reject(new Error("database timeout did not bound the blocked INSERT")), 1500); })]);
+      expect(`${error.message} ${error.stack ?? ""}`).not.toMatch(/lock_timeout|statement_timeout|canceling|sec_audit_events/);
+    } finally {
+      clearTimeout(watchdog);
+      await hold.release("ROLLBACK");
+      await pending.catch(() => undefined);
+    }
     await settle(100);
     expect(await countRows(t, event.id)).toBe(0);
+  });
+
+  it("statement_timeout alone cancels a genuine slow INSERT without any lock or signal", async () => {
+    let slow = true;
+    const { pool, statements, errors } = spied(1, undefined, (sql) => {
+      if (sql.includes("set_config('lock_timeout'")) return sql.replace("set_config('lock_timeout', $1, true)", "set_config('lock_timeout', '0', true)");
+      return slow && sql.startsWith("INSERT") ? `${sql} RETURNING pg_sleep(0.4)` : sql;
+    });
+    try {
+      const store = new PostgresAuditStore(pool, { writeTimeoutMs: 100 });
+      const t = randomUUID(); const event = auditEvent(t);
+      await generic(store.append(event)); // deliberately NO append options or signal
+      expect(statements.some((sql) => sql.includes("RETURNING pg_sleep"))).toBe(true);
+      expect(errors).toContain("57014"); // real server statement cancellation, not a lock error or a SQL syntax mistake
+      expect(statements).toContain("ROLLBACK"); expect(statements).not.toContain("COMMIT");
+      expect(await countRows(t, event.id)).toBe(0);
+      expect(pool.idleCount).toBe(1); expect(pool.waitingCount).toBe(0);
+      slow = false;
+      await store.append(event); // the very same INSERT works once only the artificial SQL work is removed
+      expect(await countRows(t, event.id)).toBe(1);
+    } finally { await pool.end(); }
+  });
+
+  it("tenant and timeout settings are local to the transaction and absent for the next borrower", async () => {
+    const { pool, statements } = spied(1);
+    const read = () => pool.query("SELECT pg_backend_pid() AS pid, current_setting('lock_timeout') AS locks, current_setting('statement_timeout') AS statements, NULLIF(current_setting('app.tenant_id',true),'') AS tenant");
+    try {
+      const before = (await read()).rows;
+      await new PostgresAuditStore(pool, { writeTimeoutMs: 97 }).append(auditEvent(randomUUID()));
+      expect((await read()).rows).toEqual(before); // size 1: the SAME physical connection, no session pollution
+      expect(statements).toContain("SELECT set_config('app.tenant_id', $1, true)");
+      expect(statements).toContain("SELECT set_config('lock_timeout', $1, true), set_config('statement_timeout', $1, true)");
+    } finally { await pool.end(); }
+  });
+
+  it("a replay abandoned after read-back rolls back a no-op and preserves the earlier committed event", async () => {
+    const event = auditEvent(randomUUID()); await new PostgresAuditStore(app).append(event);
+    const signal = { aborted: false };
+    const { pool, statements, releases } = spied(1, (sql) => { if (sql.includes("WHERE id=$1")) signal.aborted = true; });
+    try {
+      await generic(new PostgresAuditStore(pool).append(event, { signal }));
+      expect(signal.aborted).toBe(true); expect(statements.some((sql) => sql.includes("WHERE id=$1"))).toBe(true);
+      expect(statements).toContain("ROLLBACK"); expect(statements).not.toContain("COMMIT");
+      expect(releases).toHaveLength(1); expect(pool.idleCount).toBe(1);
+      expect(await new PostgresAuditStore(app).listForTenant(event.tenantId)).toEqual([event]);
+    } finally { await pool.end(); }
+  });
+
+  it.each(["INSERT", "read-back", "COMMIT", "ROLLBACK"] as const)("%s failure loops do not leak a one-client pool; failed rollback destroys it", async (point) => {
+    let injecting = false;
+    const { pool, releases } = spied(1, undefined, (sql) => {
+      if (!injecting) return sql;
+      if ((point === "INSERT" || point === "ROLLBACK") && sql.startsWith("INSERT")) return `${sql} RETURNING 1/0`;
+      if (point === "read-back" && sql.includes("WHERE id=$1")) return "SELECT 1/0";
+      if (point === "COMMIT" && sql === "COMMIT") return "SELECT 1/0";
+      if (point === "ROLLBACK" && sql === "ROLLBACK") return "ROLLBACK broken";
+      return sql;
+    });
+    try {
+      const store = new PostgresAuditStore(pool);
+      for (let i = 0; i < 4; i++) {
+        const event = auditEvent(randomUUID());
+        injecting = false;
+        if (point === "read-back") await store.append(event);
+        const mark = releases.length;
+        injecting = true;
+        await generic(store.append(event));
+        expect(releases).toHaveLength(mark + 1);
+        expect(Boolean(releases[mark])).toBe(point === "ROLLBACK");
+        expect(pool.waitingCount).toBe(0); expect(pool.idleCount).toBe(point === "ROLLBACK" ? 0 : 1);
+        if (point !== "ROLLBACK") expect(pool.totalCount).toBe(1);
+        expect(await countRows(event.tenantId, event.id)).toBe(point === "read-back" ? 1 : 0);
+      }
+      injecting = false;
+      await store.append(auditEvent(randomUUID()));
+      expect(pool.idleCount).toBe(1); expect(pool.waitingCount).toBe(0);
+    } finally { await pool.end(); }
+  });
+
+  it("queued and pre-COMMIT aborts repeatedly return a one-client pool without a row", async () => {
+    let signal = { aborted: false }; let afterInsert = false;
+    const { pool, statements } = spied(1, (sql) => { if (afterInsert && sql.startsWith("INSERT")) signal.aborted = true; });
+    try {
+      const store = new PostgresAuditStore(pool);
+      for (let i = 0; i < 4; i++) {
+        const event = auditEvent(randomUUID());
+        const held = await pool.connect(); const mark = statements.length;
+        signal = { aborted: false };
+        const waiting = generic(store.append(event, { signal }));
+        expect(pool.waitingCount).toBe(1);
+        signal.aborted = true; held.release(); await waiting;
+        expect(statements.length).toBe(mark); // acquired after abort, no SQL sent
+        signal = { aborted: false }; afterInsert = true;
+        await generic(store.append(event, { signal }));
+        afterInsert = false;
+        expect(statements.at(-1)).toBe("ROLLBACK");
+        expect(await countRows(event.tenantId, event.id)).toBe(0);
+        expect(pool.waitingCount).toBe(0); expect(pool.idleCount).toBe(1); expect(pool.totalCount).toBe(1);
+      }
+    } finally { await pool.end(); }
+  });
+
+  it("the residual window is honest: abort after the server COMMIT cannot erase a durable row", async () => {
+    const controller = new AbortController();
+    const { pool, statements } = spied(1, (sql) => { if (sql === "COMMIT") controller.abort(); });
+    try {
+      const event = auditEvent(randomUUID());
+      await new PostgresAuditStore(pool).append(event, { signal: controller.signal });
+      expect(controller.signal.aborted).toBe(true); expect(statements).toContain("COMMIT");
+      expect(statements).not.toContain("ROLLBACK");
+      expect(await countRows(event.tenantId, event.id)).toBe(1);
+    } finally { await pool.end(); }
   });
 
   it("validates writeTimeoutMs: an integer from 1 to 10000", () => {

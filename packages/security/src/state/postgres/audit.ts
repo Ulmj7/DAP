@@ -12,8 +12,8 @@
  *   level security enforces it again in the database.
  * - FAIL CLOSED: any database failure (connection, timeout, constraint, permission) rejects with a generic error that carries no
  *   driver text, host, database, user or SQL. The audit writer then treats the write as failed (an allow is not executed).
- * - CANCELLATION: the audit writer aborts `options.signal` when it gives up on an append (timeout and the like). An abandoned append never
- *   commits: it does not start once the signal is aborted (before a connection is taken and again right after), and inside the transaction the
+ * - CANCELLATION: the audit writer aborts `options.signal` when it gives up on an append (timeout and the like). Before COMMIT is issued,
+ *   abandonment prevents new writes: it does not start once the signal is aborted (before a connection is taken and again right after), and inside the transaction the
  *   signal is read live just before COMMIT, ROLLBACK replacing it when aborted. As a second, independent bound the DATABASE cancels a blocked
  *   or slow statement itself (`lock_timeout` and `statement_timeout`, `writeTimeoutMs`). Residual risk: once COMMIT has been issued its
  *   outcome is uncertain if the writer gives up at that moment.
@@ -95,11 +95,18 @@ export class PostgresAuditStore implements AuditSink, AuditEventSource {
     const e = checked.data;
     const tenantId = e.tenantId.toLowerCase();
     // Read live every time: the writer may abort at any moment while this append is blocked in the database.
-    const signal: unknown = options?.signal;
-    const abandoned = (): boolean => typeof signal === "object" && signal !== null && Reflect.get(signal, "aborted") === true;
+    let signal: unknown;
+    const abandoned = (): boolean => {
+      if (signal === undefined) return false;
+      if (typeof signal !== "object" || signal === null) throw new TypeError("Invalid cancellation signal");
+      const aborted: unknown = Reflect.get(signal, "aborted");
+      if (typeof aborted !== "boolean") throw new TypeError("Invalid cancellation signal");
+      return aborted;
+    };
     let client: PoolClient | undefined;
     let discard = false;
     try {
+      signal = options?.signal;
       if (abandoned()) throw new Error("abandoned");
       client = await this.pool.connect();
       if (abandoned()) throw new Error("abandoned"); // nothing has been sent on this connection
