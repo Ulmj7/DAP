@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { parseSemanticContextInput } from "../../packages/ai/src/index.js";
 import { createSemanticRegistry, createWalkthroughCatalog, createWalkthroughRuntime, defineWalkthrough } from "../../packages/walkthrough/src/index.js";
 import type { SemanticElementDef, TargetAvailability } from "../../packages/walkthrough/src/index.js";
+import type { WalkthroughStarter } from "../../apps/reference-host/src/guidance/capability.js";
 
 const el = (id: string, route: string, role: SemanticElementDef["role"], privacy: SemanticElementDef["privacy"] = "public"): SemanticElementDef =>
   ({ id, route, role, label: `Label of ${id}`, description: `Description of ${id}`, operations: ["highlight"], privacy });
@@ -81,5 +82,17 @@ describe("the AI-side semantic context schema accepts every real runtime.context
     const context = runtimeAt("profile", () => "available").context();
     expect(Object.keys(context).sort()).toEqual(["elements", "route"]);
     for (const element of context.elements) expect(Object.keys(element).sort()).toEqual(["available", "description", "id", "label", "privacy", "role"]);
+  });
+});
+
+describe("the host's structural WalkthroughStarter adapts Feature 002's runtime with a one-line wrapper (type and shape compatibility only; the end-to-end start is T318)", () => {
+  it("runtime.startWalkthrough(id) fits WalkthroughStarter.start(id): { ok: true } for a catalog id, { ok: false, reason } otherwise", () => {
+    const runtime = runtimeAt("dashboard", () => "available");
+    const starter: WalkthroughStarter = { start: (id) => runtime.startWalkthrough(id) }; // compiles only if StartResult is assignable to the host's result type
+    expect(starter.start("profileUpdate")).toEqual({ ok: true });
+    runtime.cancel();
+    expect(starter.start("adminTakeover")).toEqual({ ok: false, reason: "unknown_walkthrough" });
+    expect(starter.start("__proto__")).toMatchObject({ ok: false });
+    runtime.cancel();
   });
 });
