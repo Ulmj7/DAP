@@ -70,7 +70,11 @@ export function callGuidanceModel(args: { readonly model: GuidanceModel; readonl
       let answer: unknown;
       try { answer = args.model.generate(request.request); } catch { return finish(failed("model_unavailable")); }
       observe(answer,
-        (value) => { const decision = parseGuidanceDecision(value); finish(decision === null ? failed("invalid_model_output") : Object.freeze({ ok: true, decision })); },
+        (value) => {
+          const decision = parseGuidanceDecision(value);
+          const tooLong = decision?.kind === "answer" && decision.answer.length > request.request.maxOutputChars;
+          finish(decision === null || tooLong ? failed("invalid_model_output") : Object.freeze({ ok: true, decision }));
+        },
         () => finish(failed("model_unavailable")));
     } catch { finish(failed("model_unavailable")); }
   });

@@ -52,6 +52,15 @@ describe("success", () => {
   it("a plain value (not a promise) is accepted the same way", async () => {
     expect(await run(() => validDecision).promise).toEqual({ ok: true, decision: validDecision });
   });
+  it("enforces the caller's smaller answer bound as well as the global bound", async () => {
+    const req = { ...request(), maxOutputChars: 1 };
+    const accepted = run(() => ({ kind: "answer", answer: "x", sources: ["a.1"] }), { request: req });
+    expect(await accepted.promise).toMatchObject({ ok: true });
+    const refused = run(() => ({ kind: "answer", answer: "xx", sources: ["a.1"] }), { request: req });
+    expect(await refused.promise).toEqual({ ok: false, reason: "invalid_model_output" });
+    expect(refused.seen).toHaveLength(1);
+    expect(refused.timers[0]!.cancelled).toBe(true);
+  });
   it("the model receives the validated frozen request, not the caller's object", async () => {
     const original = request();
     const r = run(() => validDecision, { request: original });
