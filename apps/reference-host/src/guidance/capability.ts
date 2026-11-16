@@ -76,7 +76,14 @@ export function createStartWalkthroughExecutor(deps: { readonly catalog: Walkthr
       if (!known) return { status: "failure", code: "unknown_walkthrough" satisfies StartFailureCode };
       try {
         const result: unknown = starter.start(id);
-        if ((result as { ok?: unknown } | null)?.ok === true) return { status: "success" };
+        if (result !== null && typeof result === "object") {
+          // The starter is synchronous: observe an accidentally returned native Promise, but never accept it as a start.
+          try { Promise.prototype.then.call(result, () => undefined, () => undefined); }
+          catch {
+            const proto: unknown = Object.getPrototypeOf(result);
+            if ((proto === Object.prototype || proto === null) && !("then" in result) && (result as { ok?: unknown }).ok === true) return { status: "success" };
+          }
+        }
       } catch { /* a throwing starter is a failed start */ }
       return { status: "failure", code: "start_refused" satisfies StartFailureCode };
     },

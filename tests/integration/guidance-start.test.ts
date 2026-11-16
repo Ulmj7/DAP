@@ -269,6 +269,21 @@ describe("the executor re-validates against the HOST catalog and fails closed", 
       expect(JSON.stringify(await rows(run.tenant))).not.toContain("SECRET");
     }
   });
+  it.each([
+    ["callable success", () => Object.assign(() => undefined, { ok: true })],
+    ["promise-shaped success", () => Object.assign(Promise.resolve({ ok: true }), { ok: true })],
+    ["rejected promise", () => Promise.reject(new Error(SECRET))],
+  ] as const)("rejects %s without an unhandled rejection", async (_name, produce) => {
+      let calls = 0;
+      const run = await start({ starter: { start: () => { calls++; return produce() as never; } } });
+      const feedback = await (await run.open("alice")).submit(proposal({ walkthroughId: "profileUpdate" }));
+      expect(feedback).toEqual({ outcome: "ALLOWED", category: "try_later" });
+      expect(calls).toBe(1);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const trail = await rows(run.tenant);
+      expect(trail.at(-1)).toMatchObject({ execution_result: "failure" });
+      expect(JSON.stringify(trail)).not.toContain("SECRET");
+  });
   it("a starter that returns a non-object, a truthy non-true ok, or a promise is a failure", async () => {
     for (const result of [undefined, null, "ok", { ok: 1 }, { ok: "true" }, Promise.resolve({ ok: true })]) {
       const run = await start({ starter: { start: () => result as never } });
