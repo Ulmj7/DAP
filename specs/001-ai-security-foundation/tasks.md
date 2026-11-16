@@ -57,7 +57,7 @@ Completed task IDs and their `[X]` state are unchanged. Every open task now carr
 Implemented code in OPTIONAL and FUTURE areas **stays in the repository**; the tag only says whether
 completing the task is required.
 
-**Open task counts (2026-11-16, after completing T089, T090, T104a, T146, T070, T078, T059, T072, T073, T052, T053, T054, T082, T083, T084, T093, T094, T095, T131, T132, T136, T071, T140, T142, T143, T144 and T145): REQUIRED 0, OPTIONAL 21, FUTURE 9.** Feature 001 Milestone M1 is complete. T059, T072 and T073 are built on `attacks2` and merged with `main`; their QA review (#10) passed. Their REQUIRED end-to-end scenario runs (ATK-PRIV-01, 02, 06, ATK-XTENANT-01 to 03, and the AI-layer reach walk) now go through `withGateway()`.
+**Open task counts (2026-11-16, after completing T089, T090, T104a, T146, T070, T078, T059, T072, T073, T052, T053, T054, T082, T083, T084, T093, T094, T095, T131, T132, T136, T071, T140, T142, T143, T144 and T145): REQUIRED 0, OPTIONAL 21, FUTURE 9.** Feature 001 Milestone M1 has all REQUIRED tasks complete and all M1 criteria evidenced; maintainer sign-off is recorded separately. T059, T072 and T073 are built on `attacks2` and merged with `main`; their QA review (#10) passed. Their REQUIRED end-to-end scenario runs (ATK-PRIV-01, 02, 06, ATK-XTENANT-01 to 03, and the AI-layer reach walk) now go through `withGateway()`.
 
 **Branch handling.** `exec` is REQUIRED critical-path work. `attacks2` is merged only for the
 representative trust-boundary tests. `confirm-store` is OPTIONAL: preserved, does not block M1.
