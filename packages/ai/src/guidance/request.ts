@@ -23,11 +23,15 @@ const element = z.strictObject({
   privacy: z.enum(["public", "private", "redact"]),
   available: z.boolean(),
 });
-const contextSchema = z.strictObject({
-  route: z.string().max(MAX_ROUTE_CHARS).refine((v) => ROUTE.test(v)),
+/**
+ * The mirror of Feature 002's `runtime.context()` shape. A page whose route is not in the registry yields the EMPTY route with no elements, so `""` is
+ * accepted, but only together with an empty element list (found by the contract test against the real runtime, tests/integration/guidance-context-contract.test.ts).
+ */
+export const contextSchema = z.strictObject({
+  route: z.string().max(MAX_ROUTE_CHARS).refine((v) => v === "" || ROUTE.test(v)),
   elements: z.array(element).max(MAX_CONTEXT_ELEMENTS),
-});
-const summarySchema = z.strictObject({
+}).refine((c) => c.route !== "" || c.elements.length === 0);
+export const summarySchema = z.strictObject({
   id: z.string().refine((v) => isId(v, WALKTHROUGH_ID)),
   title: plain(MAX_TITLE_CHARS),
   description: plain(MAX_DESCRIPTION_CHARS),

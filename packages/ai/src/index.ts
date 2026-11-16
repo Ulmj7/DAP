@@ -39,3 +39,6 @@ export { renderGuidancePrompt, GUIDANCE_SYSTEM_PROMPT } from "./guidance/prompt.
 export type { RenderedPrompt } from "./guidance/prompt.js";
 export { answerQuestion, buildAnswerRequest, groundDecision } from "./guidance/answer.js";
 export type { AnswerChunk } from "./guidance/answer.js";
+
+// Feature 003 Slice 3: the public parser for the semantic context that arrives from the browser (strict mirror of Feature 002's context() shape).
+export { parseSemanticContextInput } from "./guidance/context-input.js";
