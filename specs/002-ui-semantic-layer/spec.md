@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-13
 
-**Status**: Draft
+**Status**: Draft. **SUPERSEDED (2026-11-16)** by [`specs/002-semantic-walkthrough-runtime`](../002-semantic-walkthrough-runtime/spec.md), a concise, delivery-scoped specification. This document is kept for history only. Its P1 intent (explicit registry, privacy annotations, sanitized context, unknown IDs fail closed) is carried into the new feature; its P2 preview and hidden-data catalogue items are OPTIONAL or FUTURE there.
 
 **Input**: User description:
 
