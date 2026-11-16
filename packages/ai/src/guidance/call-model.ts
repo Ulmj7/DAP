@@ -18,6 +18,30 @@ export function createModelCallGuard(limit: number = MAX_MODEL_CALLS): ModelCall
   return Object.freeze({ take: () => (used < limit ? (used++, true) : false) });
 }
 
+const intrinsicThen = Promise.prototype.then; // captured once: later changes to Promise.prototype or to a promise's own `then` do not matter
+
+/**
+ * Observes whatever `generate` returned, exactly once. A genuine native promise is observed with the intrinsic `then` (its own `then` property is never
+ * read, so a poisoned one cannot throw or leave its rejection unhandled); anything else that has a `then` is a foreign thenable, whose `then` is read
+ * once, called once, and answered through once-only callbacks; a plain value is the answer itself. Never throws.
+ */
+function observe(answer: unknown, onValue: (value: unknown) => void, onReject: () => void): void {
+  let done = false;
+  const once = <T>(next: (value: T) => void) => (value: T): void => { if (!done) { done = true; next(value); } };
+  const value = once(onValue);
+  const reject = once<unknown>(() => onReject());
+  try { intrinsicThen.call(answer as Promise<unknown>, value, reject); return; } catch { /* not a native promise */ }
+  if (answer !== null && (typeof answer === "object" || typeof answer === "function")) {
+    let then: unknown;
+    try { then = (answer as { then?: unknown }).then; } catch { reject(undefined); return; }
+    if (typeof then === "function") {
+      try { Reflect.apply(then, answer, [value, reject]); } catch { reject(undefined); }
+      return;
+    }
+  }
+  value(answer);
+}
+
 const failed = (reason: ModelCallFailure): ModelCallOutcome => Object.freeze({ ok: false, reason });
 
 export function callGuidanceModel(args: { readonly model: GuidanceModel; readonly request: unknown; readonly timers: GuidanceTimers; readonly guard?: ModelCallGuard }): Promise<ModelCallOutcome> {
@@ -42,10 +66,9 @@ export function callGuidanceModel(args: { readonly model: GuidanceModel; readonl
       cancel = handle as () => void;
       let answer: unknown;
       try { answer = args.model.generate(request.request); } catch { return finish(failed("model_unavailable")); }
-      Promise.resolve(answer).then(
+      observe(answer,
         (value) => { const decision = parseGuidanceDecision(value); finish(decision === null ? failed("invalid_model_output") : Object.freeze({ ok: true, decision })); },
-        () => finish(failed("model_unavailable")),
-      );
+        () => finish(failed("model_unavailable")));
     } catch { finish(failed("model_unavailable")); }
   });
 }
