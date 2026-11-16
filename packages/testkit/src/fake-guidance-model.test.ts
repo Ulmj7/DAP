@@ -26,7 +26,6 @@ describe("the fake guidance model", () => {
     expect(model.requests[0]).not.toBe(original);
     expect(Object.isFrozen(model.requests[0])).toBe(true);
     expect(Object.isFrozen(model.requests[0]!.input.semanticContext.elements[0])).toBe(true);
-    original.input.query === "x"; // the caller's object is untouched
     expect(original.input.query).toBe("How do I change my name?");
   });
   it("the behaviour sees the request and the zero-based call index", async () => {

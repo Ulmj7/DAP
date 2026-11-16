@@ -75,6 +75,8 @@ type GuidanceResult =                                    // what askGuidance ret
   | { kind: "clarify"; message: string }
   | { kind: "unsupported"; message: string; reason: GuidanceReason };   // closed list of safe codes
 ```
+**Refinement (2026-11-17, Slice 1):** `GuidanceModelRequest` is a structured, validated, bounded payload `{ input: { query, semanticContext, walkthroughSummaries, sources }, maxOutputChars }` (strict zod schema, `parseGuidanceModelRequest`), not rendered text; the prompt renderer with fences (T309) is a helper the host adapter calls on it. Untrusted model output and untrusted request input are first copied into a bounded plain-data snapshot (own enumerable data properties only, read once) before any schema sees them.
+
 `parseGuidanceDecision` uses strict objects: unknown kinds, extra properties (`confirmed`, `selector`, `script`, `url`, `sql`), ids not matching `^[A-Za-z][A-Za-z0-9]{0,63}$`, over-length strings, control characters and markup characters are rejected; nothing is repaired. Strings from the model are plain text only and bounded; consumers render them as text.
 
 ## 6. Retrieval design (small, deterministic)
