@@ -63,7 +63,6 @@ async function start(options: Options = {}) {
   const open = async (who: "alice" | "bob"): Promise<AiSession> => { const session = await host.openSession(token[who]); if (session === null) throw new Error("session refused"); return session; };
   return { host, trusted, guidance, tenant, startCalls, open };
 }
-type Run = Awaited<ReturnType<typeof start>>;
 
 /** A session wrapper that counts what the bridge submits. */
 const counting = (session: AiSession) => { const calls: RawToolCall[] = []; return { calls, session: { submit: (call: RawToolCall) => { calls.push(call); return session.submit(call); } } as AiSession }; };
