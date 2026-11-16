@@ -69,7 +69,7 @@ export function checkReport(report, { suites = REQUIRED_SUITES, groups = REFEREN
     for (const test of file.assertionResults) {
       if (test.status !== "todo") continue;
       const title = [...test.ancestorTitles, test.title].join(" > ");
-      if (!TIER.test(test.title) || /\(REQUIRED\b/.test(test.title)) problems.push(`todo without an OPTIONAL or FUTURE tag (or tagged REQUIRED): ${file.name.split("/tests/").pop()}: ${title.slice(0, 90)}`);
+      if (!TIER.test(test.title) || /\(REQUIRED\b/.test(title)) problems.push(`todo without an OPTIONAL or FUTURE tag (or tagged REQUIRED): ${file.name.split("/tests/").pop()}: ${title.slice(0, 90)}`);
     }
   }
   return problems;

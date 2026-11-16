@@ -101,6 +101,7 @@ it("requires the state-changing proof, not just some passing test under its numb
   expect(checkReport(report).join("\n")).toMatch(/reference host case did not pass/);
 });
 it("a tier in an ancestor title cannot excuse an untagged or REQUIRED todo", () => {
+  expect(checkReport(replace(healthy(), "tests/security/positive.test.ts", [test("passed"), test("todo", "x (OPTIONAL)", "parent (REQUIRED)")])).join("\n")).toMatch(/todo without/);
   expect(checkReport(replace(healthy(), "tests/security/positive.test.ts", [test("passed"), test("todo", "untagged", "parent (OPTIONAL)")])).join("\n")).toMatch(/todo without/);
 });
 it("the runner refuses focused tests and assertion-free early returns", () => {
