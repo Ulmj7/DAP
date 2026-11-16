@@ -38,3 +38,25 @@ window remains; no cross-system atomicity is claimed.
 The in-memory recorder/capture remains a lightweight adapter, not a PostgreSQL contract
 validator or general arbitrary-object recorder. Production-backed tests cover these specific
 differences. Reference-host integration (T131/T132/T136) remains separate work.
+
+## Independent QA follow-up
+
+The runner accepts commit and execution checkpoints only as opaque, evaluation-bound
+objects produced by the real stages. Structural audit facts, a JSON callback argument,
+a reused receipt, or an execute fixture's claimed status cannot attest a write or execution.
+This protects the internal stage protocol; it does not sandbox malicious trusted server code.
+`tests/security/review-probes.test.ts` pins these cases and a complete real execution chain.
+
+The execution outcome is checkpointed before optional affected-resource metadata is read.
+A getter that throws or consumes the remaining time cannot reverse a known success.
+Registry justification length uses UTF-16 code units, matching the runtime check: 500
+astral characters fit, while one additional character is rejected at registration.
+
+The reconstructed 200-malformed-proposal flood drops shared-store calls from 395 to 32.
+It still records 400 audit events (one proposal and one decision per request). Admission
+bounds shared limiter work, not the number of received proposals or their required audit
+records; these repairs introduce no ingress load shedding or audit suppression.
+
+The PostgreSQL regression cases additionally read back missing-binding, spent-budget,
+and hung-executor/result-write outcomes. Confirmed ALLOW remains the sole policy decision;
+failed or canceled result recording never creates a contradictory denial.

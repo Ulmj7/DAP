@@ -6,10 +6,13 @@
  * Needs the PostgreSQL of deploy/compose.yaml (DAP_DATABASE_URL / DAP_MIGRATE_DATABASE_URL): like the other PostgreSQL tests it fails loudly, never skips.
  * Audit rows are append-only, so nothing is cleaned up: every test uses its own seed (request ids) and its own instant, and reads only its own.
  */
+import { randomUUID } from "node:crypto";
+import { assemble } from "../../packages/security/src/gateway/create-gateway.js";
+import { createPipeline } from "../../packages/security/src/gateway/pipeline.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import type { AuditAppendOptions, AuditEvent, AuditSink } from "@dap/contracts";
-import { PostgresAuditStore, createAuditReader } from "@dap/security";
+import { PostgresAuditStore, createAuditReader, createPolicyGateway } from "@dap/security";
 import { ALICE, SECRET_CANARIES, TENANT_A, TENANT_B, WIDE_GATEWAY_CONFIG, secretFindings, withGateway } from "@dap/testkit";
 import type { GatewayWorld, WorldUser } from "@dap/testkit";
 import { withTenant } from "../../packages/security/src/state/postgres/tenant-tx.js";
@@ -252,5 +255,56 @@ describe("P5 reconstruction (SC-008) from events read BACK from PostgreSQL throu
     expect(readBack).toEqual(world.events()); // the same events, field for field, in the same order
     expect(reconstruct(readBack)).toEqual(EXPECTED);
     expect(reconstruct(world.events())).toEqual(reconstruct(readBack));
+  });
+});
+
+/** LOGIC-01: persistent rows, not only the in-memory capture, retain one committed policy. */
+describe("QA16 post-ALLOW PostgreSQL evidence", () => {
+  it.each(["before", "after"] as const)("executor binding absent %s ALLOW", async phase => {
+    let committed = false;
+    const { world } = fresh({ append: async (event, options) => { await store.append(event, options); if (event.type === "AI_ACTION_ALLOWED") committed = true; } });
+    const bound = await world.submitterFor(A_ALICE); let unavailable = true;
+    const gateway = createPolicyGateway({ ...world.deps, executors: { executorFor: id => unavailable && (phase === "before" || committed) ? undefined : world.deps.executors.executorFor(id) } });
+    const answer = await gateway.proposals.forSession(bound.context, bound.run).submit(world.proposal("testSafeEcho"));
+    expect(answer).toEqual({ outcome: phase === "before" ? "DENIED" : "ALLOWED", category: "try_later" });
+    expect(world.executorCalls()).toBe(0);
+    expect((await rowsOf(TENANT_A, world.requestIds())).map(row => row.event_type)).toEqual(phase === "before" ? ["AI_ACTION_PROPOSED", "AI_ACTION_DENIED"] : ["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED"]);
+    unavailable = false;
+    expect(await gateway.proposals.forSession(bound.context, bound.run).submit(world.proposal("testSafeEcho"))).toEqual({ outcome: "ALLOWED", category: "ok" });
+    expect(world.executorCalls()).toBe(1);
+  });
+  it("budget exhaustion after the PG commit does not add a contradictory denial", async () => {
+    let time = 0;
+    const { world } = fresh({ append: async (event, options) => { await store.append(event, options); if (event.type === "AI_ACTION_ALLOWED") time = 10000; } });
+    const bound = await world.submitterFor(A_ALICE); const { stages, auditor } = assemble(world.deps);
+    const result = await createPipeline(stages, { timer: { now: () => time, setTimeout: () => 0, clearTimeout: () => {} }, audit: auditor }).evaluate({ context: bound.context, run: bound.run, decisionId: randomUUID(), requestId: randomUUID() as never, readProposal: () => world.proposal("testSafeEcho") });
+    expect(result.decision.outcome).toBe("ALLOWED"); expect(result.executionStatus).toBe("failure"); expect(world.executorCalls()).toBe(0);
+    expect((await rowsOf(TENANT_A, world.requestIds())).map(row => row.event_type)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED"]);
+  });
+  it.each([false, true])("executor hangs=%s; a real blocked EXECUTED write cannot reverse policy or known status", async hangs => {
+    const locker = await owner.connect(); let held = false;
+    let signal: AuditAppendOptions["signal"];
+    const writes: Promise<void>[] = [];
+    const { world } = fresh({ append: async (event, options) => {
+      if (event.type === "AI_ACTION_EXECUTED") {
+        await locker.query("BEGIN"); held = true;
+        await locker.query("SELECT set_config('app.tenant_id',$1,true)", [event.tenantId]);
+        // A unique-id conflict blocks this one INSERT; other tests' rows stay independent.
+        await locker.query("INSERT INTO public.sec_audit_events (id,tenant_id,occurred_at,event_type,request_id,decision_id,user_id,ai_session_id,turn_id,model,params_view) VALUES ($1,$2,$3,'AI_ACTION_PROPOSED','executed-blocker','d','u','s','t','m','{}')", [event.id, event.tenantId, event.occurredAt]);
+        signal = options?.signal;
+      }
+      const writing = store.append(event, options); writes.push(writing); return writing;
+    } }, { config: { ...WIDE_GATEWAY_CONFIG, hookTimeoutMs: 100, proposalBudgetMs: 400 } });
+    if (hangs) world.executor("testSafeEcho").onRun(() => new Promise(() => {}));
+    try {
+      expect(await world.submit(A_ALICE, world.proposal("testSafeEcho"))).toEqual({ outcome: "ALLOWED", category: hangs ? "try_later" : "ok" });
+      expect(world.executorCalls()).toBe(1);
+      const until = Date.now() + 2000;
+      while (signal?.aborted !== true && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 5));
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      if (held) await locker.query("ROLLBACK"); locker.release(); await Promise.allSettled(writes);
+    }
+    expect((await rowsOf(TENANT_A, world.requestIds())).map(row => row.event_type)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED"]);
   });
 });
