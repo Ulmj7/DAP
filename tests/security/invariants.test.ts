@@ -66,7 +66,7 @@ describe("T125 catalogue invariants (recorded seed 125001)", () => {
     }), settings);
     expect(admitted).toBeGreaterThan(10); expect(refused).toBeGreaterThan(10);
   });
-  it.todo("1: real gateway executor call implies every oracle prerequisite incl. durable allow-event; needs complete production chain incl. risk/confirmation/execute and positive control (no gateway stub)");
+  // SC-007 real-chain evidence: review-fixes.test.ts (preconditions and post-ALLOW faults) and integration/audit-postgres.test.ts (durable ALLOW before the body).
 
   it("2: same proposal and scope produce byte-identical validation and digest; the digest is bound to tenant and user", () => {
     let accepted = 0; let rejected = 0;
@@ -85,7 +85,8 @@ describe("T125 catalogue invariants (recorded seed 125001)", () => {
     }), settings);
     expect(accepted).toBeGreaterThan(20); expect(rejected).toBeGreaterThan(20);
   });
-  it.todo("2: same complete gateway proposal/state yields identical decision, audit reason and executor count on independent worlds; needs complete chain");
+  // Invariant 2 on the REAL chain: test-world.gateway.test.ts ("is deterministic: two worlds given the same proposals record identical events") and prompt-injection.test.ts
+  // ("every corpus string gives the benign outcome, audit reasons and executor count, on independent fresh worlds"); reconciled in T071, no longer a todo.
 
   it("3: planner-visible feedback for EVERY non-allowed outcome carries no canary and no internal reason", () => {
     const outcomes = fc.constantFrom("DENIED", "INVALID_ACTION", "FORBIDDEN_POLICY", "UNAUTHORIZED", "INVALID_PARAMETERS");
@@ -107,7 +108,7 @@ describe("T125 catalogue invariants (recorded seed 125001)", () => {
       expect(new LeakScanner({ canaries: [canary] }).scan({ output: canary }).some((finding) => finding.kind === "canary")).toBe(true);
     }), settings);
   });
-  it.todo("3: scan all real gateway planner-visible outputs under generated port faults for canaries/internal reasons; needs full pipeline and audit projection");
+  it.todo("3 (OPTIONAL): a GENERATED sweep of port faults over the real chain; the representative per-port faults with canaries and stack text are proven in secret-extraction.test.ts (T082 (2) and (4))");
 
   it("4: strict parameter intake never returns a value with two colliding keys or a prototype key, at any depth, however the key is spelled", () => {
     const spell = (key: string, mask: readonly boolean[]) => [...key].map((char, index) => (mask[index % mask.length] ? `${BS}u${char.charCodeAt(0).toString(16).padStart(4, "0")}` : char)).join("");

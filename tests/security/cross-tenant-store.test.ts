@@ -77,5 +77,6 @@ describe("T124 store and resource isolation", () => {
     expect(scanner.scan(foreign)).toEqual([]);
     expect(scanner.scan(own).some((item) => item.kind === "canary")).toBe(true);
   });
-  it.todo("ATK-XTENANT-10 real gateway response/audit for foreign resource never contains display-name canary; needs complete production chain (rate/replay, risk/confirmation, execute)");
+  // ATK-XTENANT-10 (a foreign resource never puts a display name in the response or the audit) is proven through the REAL gateway, for every kind and every resource capability,
+  // in cross-tenant.test.ts ("no foreign display name, resource id or tenant id reaches the planner or the audit events"); reconciled in T071, no longer a todo.
 });

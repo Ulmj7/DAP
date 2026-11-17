@@ -8,7 +8,8 @@ import { createPipeline, type PolicyStage } from "./pipeline.js";
 import { createPolicyGateway, pipelineOptions } from "./create-gateway.js";
 import type { HookTimer } from "./hook-wrapper.js";
 import { allowedDecision } from "./decision.js";
-import { dependencies, input, stageMap } from "./fixtures.test-support.js";
+import { chain } from "./chain.test-support.js";
+import { dependencies, input as rawInput, stageMap } from "./fixtures.test-support.js";
 
 /**
  * `gap` is time that passes BETWEEN stages: the runner clears a stage's timer as the stage settles, which is after the
@@ -22,21 +23,23 @@ class ManualTimer implements HookTimer {
   clearTimeout(handle: unknown): void { this.pending.delete(handle as number); this.time += this.gap; }
   advance(ms: number): void { this.time += ms; for (const [id, entry] of [...this.pending]) if (entry.at <= this.time) { this.pending.delete(id); entry.callback(); } }
 }
+const input = (name?: string) => ({ ...rawInput(name), readProposal: () => ({ callId: name ?? "budget", raw: { action: "openProject", params: { projectId: "p1" } } }) });
 const allow: PolicyStage = (request) => ({ kind: "stop", decision: allowedDecision({ decisionId: request.decisionId, requestId: request.requestId, actionId: "viewProject" as never, risk: "SAFE", paramsDigest: "a".repeat(64) as never }) });
 /** Every stage but the terminal one just continues, recording that it ran; time passes between stages via `timer.gap`. */
-function costing(timer: ManualTimer, gap: number, ran: PipelineStage[] = []) {
+function costing(timer: ManualTimer, gap: number, ran: PipelineStage[] = [], committed = false) {
   timer.gap = gap;
-  const stages = stageMap(allow);
-  for (const name of Object.keys(stages) as PipelineStage[]) if (name !== "execute") stages[name] = () => { ran.push(name); return { kind: "continue", data: {} }; };
+  const real = committed ? chain() : undefined;
+  const stages = real ? { ...real.built.stages, ...real.standIns } : stageMap(allow);
+  for (const name of Object.keys(stages) as PipelineStage[]) if (name !== "execute") { const stage = stages[name]!; stages[name] = request => { ran.push(name); return stage(request); }; }
   return stages;
 }
 
 describe("proposalBudgetMs", () => {
-  it("defaults to 10 000 ms: the terminal stage is reached with 1 ms left, and denied with none", async () => {
+  it("defaults to 10 000 ms: execution succeeds with budget left; a committed policy stays ALLOWED when execution cannot start", async () => {
     const within = new ManualTimer();
-    expect((await createPipeline(costing(within, 999), { timer: within, hookTimeoutMs: 2000 }).run(input())).outcome).toBe("ALLOWED"); // 10 gaps x 999 = 9990
+    expect(await createPipeline(costing(within, 999, [], true), { timer: within, hookTimeoutMs: 2000 }).evaluate(input())).toMatchObject({ decision: { outcome: "ALLOWED" }, executionStatus: "success" }); // 10 gaps x 999 = 9990
     const over = new ManualTimer();
-    expect(await createPipeline(costing(over, 1000), { timer: over, hookTimeoutMs: 2000 }).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" }); // 10 gaps x 1000 = 10000: nothing left
+    expect(await createPipeline(costing(over, 1000, [], true), { timer: over, hookTimeoutMs: 2000 }).evaluate(input())).toMatchObject({ decision: { outcome: "ALLOWED" }, executionStatus: "failure" }); // The allow-event committed before the last gap; no execution budget remains
   });
 
   it("defaults to exactly 10 000 ms: 9999 ms spent leaves the next stage 1 ms, 10 000 leaves none", async () => {
@@ -48,7 +51,7 @@ describe("proposalBudgetMs", () => {
       stages.intake = () => { ran.push("intake"); timer.gap = 0; return { kind: "continue", data: {} }; };
       const decision = await createPipeline(stages, { timer }).run(input());
       expect(ran.includes("intake"), String(spentMs)).toBe(reaches !== "intake");
-      expect(decision, String(spentMs)).toMatchObject({ outcome: spentMs === 9999 ? "ALLOWED" : "DENIED", ...(spentMs === 9999 ? {} : { stage: "intake", reason: "dependency_failure" }) });
+      expect(decision, String(spentMs)).toMatchObject({ outcome: "DENIED", stage: spentMs === 9999 ? "execute" : "intake", reason: "dependency_failure" });
     }
   });
 
@@ -161,26 +164,27 @@ describe("proposalBudgetMs", () => {
 
   it("is per proposal: one proposal's time does not reduce another's", async () => {
     const timer = new ManualTimer();
-    const pipeline = createPipeline(costing(timer, 400), { timer, proposalBudgetMs: 4400 });
-    expect((await pipeline.run(input("a"))).outcome).toBe("ALLOWED"); // 10 stages x 400 = 4000
-    expect((await pipeline.run(input("b"))).outcome).toBe("ALLOWED");
+    const pipeline = createPipeline(costing(timer, 400, [], true), { timer, proposalBudgetMs: 4400 });
+    expect(await pipeline.evaluate(input("a"))).toMatchObject({ decision: { outcome: "ALLOWED" }, executionStatus: "success" }); // 10 stages x 400 = 4000
+    expect(await pipeline.evaluate(input("b"))).toMatchObject({ decision: { outcome: "ALLOWED" }, executionStatus: "success" });
   });
 });
 
 describe("per-stage deadlines for the stages added by T089", () => {
   const hang = (stage: PipelineStage) => {
     const timer = new ManualTimer();
-    const stages = costing(timer, 0);
-    stages[stage] = () => new Promise(() => {}) as never;
+    const stages = costing(timer, 0, [], stage === "execute");
+    let entered = false;
+    stages[stage] = () => { entered = true; return new Promise(() => {}) as never; };
     let settled = false;
     const pending = createPipeline(stages, { timer, hookTimeoutMs: 100, proposalBudgetMs: 1000 }).run(input()).then((decision) => { settled = true; return decision; });
-    return { timer, pending, settled: () => settled };
+    return { timer, pending, settled: () => settled, entered: () => entered };
   };
-  const flush = async () => { for (let i = 0; i < 25; i++) await Promise.resolve(); };
+  const flush = async () => { for (let i = 0; i < 300; i++) await Promise.resolve(); };
 
   it("audit gets the remaining budget, not a hook timeout", async () => {
     const test = hang("audit");
-    await flush(); test.timer.advance(999); await flush();
+    await flush(); expect(test.entered()).toBe(true); test.timer.advance(999); await flush();
     expect(test.settled()).toBe(false);
     test.timer.advance(1);
     expect(await test.pending).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "audit" });
@@ -188,15 +192,15 @@ describe("per-stage deadlines for the stages added by T089", () => {
 
   it("execute gets the remaining budget plus one hook timeout, exactly", async () => {
     const test = hang("execute");
-    await flush(); test.timer.advance(1099); await flush();
+    await flush(); expect(test.entered()).toBe(true); test.timer.advance(1099); await flush();
     expect(test.settled()).toBe(false);
     test.timer.advance(1);
-    expect(await test.pending).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
+    expect(await test.pending).toMatchObject({ outcome: "ALLOWED" }); // The receipt is confirmed; the missing execution result is failure.
   });
 
   it("authorize gets the remaining budget", async () => {
     const test = hang("authorize");
-    await flush(); test.timer.advance(999); await flush();
+    await flush(); expect(test.entered()).toBe(true); test.timer.advance(999); await flush();
     expect(test.settled()).toBe(false);
     test.timer.advance(1);
     expect(await test.pending).toMatchObject({ stage: "authorize" });

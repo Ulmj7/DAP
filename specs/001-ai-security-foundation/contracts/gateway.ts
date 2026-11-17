@@ -9,11 +9,14 @@
  * The AI layer sees ONLY `ProposalSubmitter` and `PlannerFeedback`. It never receives the
  * registry's executors, the AuthorizationContext, the state store, or ConfirmationService.
  *
+ * Types only. The runtime signatures (toPlannerFeedback, createPolicyGateway) belong to
+ * @dap/security, not here.
+ *
  * Spec: FR-011..FR-017, FR-043, FR-044 | Constitution: I, II, III, XV
  */
 import type { ActionRegistry } from "./action-definition";
 import type { AuditSink } from "./audit";
-import type { ConfirmationChannel, ConfirmationService } from "./confirmation";
+import type { ConfirmationChannel } from "./confirmation";
 import type {
   ActionId,
   ConfirmationId,
@@ -87,7 +90,7 @@ export type PolicyDecision =
       readonly outcome: "REQUIRES_CONFIRMATION";
       readonly actionId: ActionId;
       readonly risk: RiskLevel;
-      /** Delivered to the user's session via ConfirmationChannel; never placed in PlannerFeedback. */
+      /** Reserved server handle, never placed in PlannerFeedback. M1 does not persist or deliver it; the confirmation service is not built. */
       readonly confirmationId: ConfirmationId;
     })
   | (DecisionBase & {
@@ -121,12 +124,6 @@ export interface PlannerFeedback {
   readonly category: PlannerCategory;
   readonly issues?: readonly FeedbackIssue[];
 }
-
-/** Pure, total, deterministic mapping from the internal decision to what the planner may see. */
-export declare function toPlannerFeedback(
-  decision: PolicyDecision,
-  executionStatus?: "success" | "failure",
-): PlannerFeedback;
 
 // ---------------------------------------------------------------------------
 // The seam the AI layer uses
@@ -188,14 +185,3 @@ export interface GatewayDependencies {
   readonly clock: Clock;
   readonly ids: IdGenerator;
 }
-
-/**
- * Wiring entry point. Returns the two doors separately so the composition root can hand
- * `proposals.forSession(...)` to the AI layer and `confirmations` only to the trusted HTTP path.
- * Fails startup (throws) if a required dependency is missing; a Gateway with an unconfigured
- * hook never serves a proposal (FR-023).
- */
-export declare function createPolicyGateway(deps: GatewayDependencies): {
-  readonly proposals: PolicyGateway;
-  readonly confirmations: ConfirmationService;
-};

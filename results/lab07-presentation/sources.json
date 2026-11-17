@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/Ulmj7/DAP",
+  "workflow": "https://github.com/Ulmj7/DAP/blob/755b0a71f1c2f0b21986273b07d7168f757b6ac7/.github/workflows/ci.yml",
+  "canva_requested": "https://canva.link/myykcp15cez56hk",
+  "canva_editor": "https://www.canva.com/design/DAHZyeisw2E/RqKwkuQgIRGziWdZ9aGDIQ/edit",
+  "canva_access": "HTTP 403 / browser Cloudflare challenge; not edited",
+  "runs": [
+    {
+      "id": 43919924981,
+      "url": "https://github.com/Ulmj7/DAP/actions/runs/43919924981",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "seconds": 117,
+      "sha": "755b0a71f1c2f0b21986273b07d7168f757b6ac7"
+    },
+    {
+      "id": 43921333197,
+      "url": "https://github.com/Ulmj7/DAP/actions/runs/43921333197",
+      "event": "push",
+      "conclusion": "failure",
+      "seconds": 104,
+      "sha": "4c866074567699a23c16da97360156880e4ade4e",
+      "failed_step": "All existing test suites",
+      "intentional_failure_verified": false
+    }
+  ]
+}

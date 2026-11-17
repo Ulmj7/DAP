@@ -112,10 +112,19 @@ export function assemble(deps: GatewayDependencies, extras: GatewayExtras = {}, 
   const telemetry = host === undefined ? {} : { telemetry: host };
   const writer = createAuditWriter({ sink: deps.audit, ...telemetry }, options);
   const events = createAuditEventFactory({ clock: deps.clock }, options);
+  const intake = createIntakeStage(caps);
+  const admitMalformed = createRateLimitStage(limiter, options, "intake");
   return Object.freeze({
     stages: {
       context: createContextStage(deps.clock, options),
-      intake: createIntakeStage(caps),
+      intake: async (request) => {
+        const result = await intake(request);
+        if (result.kind === "stop") {
+          const admission = await admitMalformed(request);
+          if (admission.kind === "stop") return admission;
+        }
+        return result;
+      },
       rate_limit: createRateLimitStage(limiter, options),
       replay: createReplayStage({ replay: deps.state.replay, retainSeconds: deps.config.replayRetentionSeconds }, options),
       resolve: createResolveStage({ registry: deps.registry, globalAllowlist: deps.globalAllowlist, tenantPolicy: deps.state.tenantPolicy }, options),
@@ -123,7 +132,7 @@ export function assemble(deps: GatewayDependencies, extras: GatewayExtras = {}, 
       authorize: createAuthorizeStage({ registry: deps.registry, permissions: deps.hooks.permissions, resources: deps.hooks.resources, pages: deps.hooks.pages, clock: deps.clock, limiter }, options),
       risk: createRiskGateStage({ registry: deps.registry, ids: deps.ids }),
       confirmation: createNoConfirmationStage(),
-      audit: createAuditStage({ registry: deps.registry, events, writer, limiter }, options),
+      audit: createAuditStage({ registry: deps.registry, events, writer, limiter, executors: deps.executors }, options),
       execute: createExecuteStage({ registry: deps.registry, executors: deps.executors, events, writer, ...telemetry }),
     },
     auditor: createDecisionAuditor({ registry: deps.registry, events, writer, registeredActionIds: new Set(deps.registry.list().map((entry) => entry.definition.id)), ...telemetry }),

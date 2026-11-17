@@ -6,6 +6,7 @@ export type ProvenDefinition = Pick<AnyActionDefinition, "id" | "version" | "inp
   readonly auditParams: readonly AuditParamRule[];
   /** Which executor runs it; read once, and checked by the stage that uses it. */
   readonly executorId: unknown;
+  readonly changesState: unknown;
   /** The confirmation policy as two plain reads (`kind`, `justification`), copied once, or undefined when it is not an object. The risk stage interprets it. */
   readonly confirmation: Readonly<{ kind: unknown; justification: unknown }> | undefined;
 };
@@ -64,6 +65,7 @@ export function provenDefinition(get: ActionRegistry["get"], resolved: Readonly<
     allowedPages: Reflect.get(definition, "allowedPages"),
     auditParams: auditRules(definition),
     executorId: Reflect.get(definition, "executorId"),
+    changesState: Reflect.get(definition, "changesState"),
     confirmation: confirmationPolicy(definition),
   }) as ProvenDefinition;
 }

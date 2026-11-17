@@ -8,7 +8,7 @@ afterEach(() => { vi.useRealTimers(); });
 const allow: PolicyStage = (request) => ({ kind: "stop", decision: allowedDecision({ decisionId: request.decisionId, requestId: request.requestId, actionId: "viewProject" as never, risk: "SAFE", paramsDigest: "a".repeat(64) as never }) });
 
 describe("ordered immutable request pipeline", () => {
-  it("runs every D6 position in order and allows only a terminal decision", async () => {
+  it("runs pre-execution D6 positions in order and refuses an unconfirmed terminal fixture", async () => {
     const seen: string[] = [];
     const stages = stageMap(allow);
     for (const name of [...PIPELINE_STAGES].reverse()) {
@@ -16,8 +16,8 @@ describe("ordered immutable request pipeline", () => {
       stages[name] = (request) => { seen.push(name); return original(request); };
     }
     const result = await createPipeline(stages).run(input());
-    expect(result.outcome).toBe("ALLOWED");
-    expect(seen).toEqual(PIPELINE_STAGES);
+    expect(result).toMatchObject({ outcome: "DENIED", stage: "execute", reason: "dependency_failure" });
+    expect(seen).toEqual(PIPELINE_STAGES.filter(name => name !== "execute"));
     expect(Object.isFrozen(result)).toBe(true);
   });
 
@@ -43,7 +43,7 @@ describe("ordered immutable request pipeline", () => {
       expect((earlier as { facts: object }).facts).not.toHaveProperty("intake");
       return { kind: "continue", data: {} };
     };
-    expect((await createPipeline(stages).run(input())).outcome).toBe("ALLOWED");
+    expect(await createPipeline(stages).run(input())).toMatchObject({ outcome: "DENIED", stage: "execute", reason: "dependency_failure" });
     expect(reads).toBe(1);
   });
 
@@ -55,14 +55,14 @@ describe("ordered immutable request pipeline", () => {
     const seen: unknown[] = [];
     const stages = stageMap(allow);
     stages.intake = (request) => { seen.push(request.readProposal(), request.readProposal(), request.readProposal()); return { kind: "continue", data: {} }; };
-    expect((await createPipeline(stages).run({ ...input(), readProposal: () => call as never })).outcome).toBe("ALLOWED");
+    expect(await createPipeline(stages).run({ ...input(), readProposal: () => call as never })).toMatchObject({ outcome: "DENIED", stage: "execute", reason: "dependency_failure" });
     expect([callIdReads, rawReads]).toEqual([1, 1]);
     expect(new Set(seen).size).toBe(1);
     expect(seen[0]).toEqual({ callId: "call", raw });
     expect(Object.isFrozen(seen[0])).toBe(true);
   });
 
-  it.each(PIPELINE_STAGES.filter((name) => name !== "intake"))("%s cannot read the untrusted proposal; only intake may", async (stage) => {
+  it.each(PIPELINE_STAGES.filter((name) => name !== "intake" && name !== "execute"))("%s cannot read the untrusted proposal; only intake may", async (stage) => {
     let reads = 0;
     let executions = 0;
     const call = { get callId(): string { reads++; return "call"; }, get raw(): unknown { reads++; return {}; } };
@@ -92,7 +92,7 @@ describe("ordered immutable request pipeline", () => {
     for (const name of PIPELINE_STAGES) { const original = stages[name]!; stages[name] = (request) => { calls++; return original(request); }; }
     expect(await createPipeline(stages).run({ ...input(), run: metadata })).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "context" });
     expect(calls).toBe(0);
-    expect((await createPipeline(stageMap(allow)).run(input())).outcome).toBe("ALLOWED");
+    expect(await createPipeline(stageMap(allow)).run(input())).toMatchObject({ outcome: "DENIED", stage: "execute", reason: "dependency_failure" });
   });
 
   it("denies before any stage when run metadata cannot even be read", async () => {
@@ -145,8 +145,8 @@ describe("ordered immutable request pipeline", () => {
   it("takes a snapshot of stage registrations", async () => {
     const stages = stageMap(allow);
     const pipeline = createPipeline(stages);
-    stages.execute = () => { throw new Error("replacement"); };
-    expect((await pipeline.run(input())).outcome).toBe("ALLOWED");
+    stages.intake = () => { throw new Error("replacement"); };
+    expect(await pipeline.run(input())).toMatchObject({ outcome: "DENIED", stage: "execute", reason: "dependency_failure" });
   });
 
   it("isolates concurrent requests through one pipeline", async () => {

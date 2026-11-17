@@ -3,17 +3,17 @@ import type { JsonValue, PolicyDecision, ProposalCall } from "@dap/contracts";
 import { createIntakeStage } from "./intake.js";
 import { createPipeline } from "../pipeline.js";
 import type { PipelineRecord } from "../pipeline.js";
-import { allowedDecision } from "../decision.js";
 import { toPlannerFeedback } from "../feedback.js";
 import { input, stageMap } from "../fixtures.test-support.js";
 
 const CAPS = { maxPayloadBytes: 16384, maxJsonDepth: 8 };
 const text = (action: unknown, params: unknown = {}) => JSON.stringify({ action, params });
 
-/** Runs intake inside the real pipeline; the terminal stage records exactly what a later stage would be handed. */
+/** Runs intake inside the real pipeline; an observer before the execution gate records what later stages receive. The incomplete fixture must still deny execution. */
 function harness(caps: { maxPayloadBytes?: number; maxJsonDepth?: number } = CAPS) {
   const seen: PipelineRecord[] = [];
-  const stages = stageMap((request) => { seen.push(request); return { kind: "stop", decision: allowedDecision({ decisionId: request.decisionId, requestId: request.requestId, actionId: "viewProject" as never, risk: "SAFE", paramsDigest: "a".repeat(64) as never }) }; });
+  const stages = stageMap(() => { throw new Error("No execution without a receipt"); });
+  stages.audit = request => { seen.push(request); return { kind: "continue", data: {} }; };
   stages.intake = createIntakeStage(caps);
   return { seen, stages, submit: (readProposal: () => ProposalCall): Promise<PolicyDecision> => createPipeline(stages).run({ ...input(), readProposal }) };
 }
@@ -25,7 +25,7 @@ describe("intake: the only stage that reads the proposal", () => {
   it("publishes callId, action and the frozen params, and nothing else", async () => {
     const test = harness();
     const decision = await test.submit(call(text("viewProject", { a: [1, { b: "x" }] }), "call_abc-123:9"));
-    expect(decision.outcome).toBe("ALLOWED");
+    expect(decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
     expect(test.seen).toHaveLength(1);
     const facts = test.seen[0]!.facts.intake as Record<string, JsonValue>;
     expect(facts).toEqual({ callId: "call_abc-123:9", action: "viewProject", params: { a: [1, { b: "x" }] } });
@@ -37,7 +37,7 @@ describe("intake: the only stage that reads the proposal", () => {
     const test = harness();
     const reads = { action: 0, params: 0, inner: 0 };
     const raw = { get action() { reads.action++; return "viewProject"; }, get params() { reads.params++; return { get inner() { reads.inner++; return "v"; } }; } };
-    expect((await test.submit(call(raw))).outcome).toBe("ALLOWED");
+    expect((await test.submit(call(raw)))).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
     expect(reads).toEqual({ action: 1, params: 1, inner: 1 });
     expect(test.seen[0]!.facts.intake).toMatchObject({ action: "viewProject", params: { inner: "v" } });
   });
@@ -64,9 +64,9 @@ describe("intake: the only stage that reads the proposal", () => {
   it("denies an oversized payload and honours the configured caps", async () => {
     const small = harness({ maxPayloadBytes: 60, maxJsonDepth: 8 });
     expect(await small.submit(call(text("viewProject", { pad: "x".repeat(100) })))).toMatchObject({ outcome: "INVALID_ACTION", reason: "payload_too_large", stage: "intake" });
-    expect((await small.submit(call(text("viewProject", {})))).outcome).toBe("ALLOWED");
+    expect((await small.submit(call(text("viewProject", {}))))).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
     const shallow = harness({ maxPayloadBytes: 16384, maxJsonDepth: 3 });
-    expect((await shallow.submit(call(text("viewProject", { a: { b: 1 } })))).outcome).toBe("ALLOWED");
+    expect((await shallow.submit(call(text("viewProject", { a: { b: 1 } }))))).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
     expect(await shallow.submit(call(text("viewProject", { a: { b: { c: 1 } } })))).toMatchObject({ outcome: "INVALID_ACTION", reason: "malformed_envelope" });
   });
 
@@ -133,7 +133,8 @@ describe("intake: callId is trusted input and is validated as such", () => {
   it("accepts the largest and a typical provider id", async () => {
     for (const callId of ["x".repeat(256), "toolu_01A09q90qw90lq917835lq9", "call-1:2/3"]) {
       const test = harness();
-      expect((await test.submit(call(text("viewProject"), callId))).outcome, callId.slice(0, 12)).toBe("ALLOWED");
+      expect(await test.submit(call(text("viewProject"), callId)), callId.slice(0, 12)).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
+      expect(test.seen).toHaveLength(1);
       expect((test.seen[0]!.facts.intake as { callId: string }).callId).toBe(callId);
     }
   });

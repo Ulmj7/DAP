@@ -16,9 +16,9 @@
  */
 import { z } from "zod";
 import { RISK_LEVELS } from "@dap/contracts";
-import type { JsonValue, RiskLevel } from "@dap/contracts";
+import type { JsonValue, PipelineStage, RiskLevel } from "@dap/contracts";
 import { snapshotAnswer } from "../answer-snapshot.js";
-import type { PipelineRecord } from "../pipeline.js";
+type StageFacts = Readonly<Partial<Record<PipelineStage, JsonValue>>>;
 
 const text = z.string().min(1);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -50,7 +50,7 @@ export interface AuditedFacts extends AllowFacts { readonly eventId: string }
  * The facts stage 7 decides from: what intake, resolve, validate and authorize published, proven consistent with each other (the action intake
  * read is the one resolve found; the resource validate extracted is the one authorize resolved). The risk class here is what RESOLVE found.
  */
-export function readPreRiskFacts(facts: PipelineRecord["facts"]): { readonly actionId: string; readonly version: number; readonly risk: RiskLevel } | undefined {
+export function readPreRiskFacts(facts: StageFacts): { readonly actionId: string; readonly version: number; readonly risk: RiskLevel } | undefined {
   const intake = SLOTS.intake.safeParse(facts.intake);
   const resolve = SLOTS.resolve.safeParse(facts.resolve);
   const validate = SLOTS.validate.safeParse(facts.validate);
@@ -63,14 +63,14 @@ export function readPreRiskFacts(facts: PipelineRecord["facts"]): { readonly act
 }
 
 /** What the confirmation position reads back from the risk stage: a risk fact that says no confirmation was needed, for the class resolve found. */
-export function readNoConfirmationNeeded(facts: PipelineRecord["facts"]): boolean {
+export function readNoConfirmationNeeded(facts: StageFacts): boolean {
   const pre = readPreRiskFacts(facts);
   const risk = z.strictObject({ risk: allowedRisk, confirmation: z.literal("not_required") }).safeParse(facts.risk);
   return pre !== undefined && risk.success && risk.data.risk === pre.risk;
 }
 
 /** The consistent facts an ALLOWED path rests on, or undefined if any slot is missing, malformed, or disagrees with another. */
-export function readAllowFacts(facts: PipelineRecord["facts"]): AllowFacts | undefined {
+export function readAllowFacts(facts: StageFacts): AllowFacts | undefined {
   const intake = SLOTS.intake.safeParse(facts.intake);
   const resolve = SLOTS.resolve.safeParse(facts.resolve);
   const validate = SLOTS.validate.safeParse(facts.validate);
@@ -86,7 +86,7 @@ export function readAllowFacts(facts: PipelineRecord["facts"]): AllowFacts | und
 }
 
 /** The same facts, plus the allow-event the audit stage wrote, proven to describe exactly this action, version, risk, digest and confirmation. */
-export function readAuditedFacts(facts: PipelineRecord["facts"]): AuditedFacts | undefined {
+export function readAuditedFacts(facts: StageFacts): AuditedFacts | undefined {
   const base = readAllowFacts(facts);
   const audit = SLOTS.audit.safeParse(facts.audit);
   if (base === undefined || !audit.success) return undefined;
@@ -94,3 +94,27 @@ export function readAuditedFacts(facts: PipelineRecord["facts"]): AuditedFacts |
   if (a.actionId !== base.actionId || a.version !== base.version || a.risk !== base.risk || a.paramsDigest !== base.paramsDigest || a.confirmationId !== base.confirmationId) return undefined;
   return Object.freeze({ ...base, eventId: a.eventId });
 }
+
+/** Internal, opaque checkpoints: JSON facts and structural copies cannot attest a commit or execution. */
+interface CheckpointScope { readonly requestId: string; readonly decisionId: string; readonly context: unknown; readonly budget: object }
+interface Checkpoint<T> extends CheckpointScope { readonly data: T }
+const allowedCheckpoints = new WeakMap<object, Checkpoint<AuditedFacts>>();
+const executionCheckpoints = new WeakMap<object, Checkpoint<"success" | "failure">>();
+function readCheckpoint<T>(entries: WeakMap<object, Checkpoint<T>>, scope: CheckpointScope, token: unknown): T | undefined {
+  const entry = token !== null && typeof token === "object" ? entries.get(token) : undefined;
+  return entry !== undefined && entry.requestId === scope.requestId && entry.decisionId === scope.decisionId && entry.context === scope.context && entry.budget === scope.budget ? entry.data : undefined;
+}
+/** Called only by the real audit stage, after its writer confirmed the durable append. Not a public package export. */
+export function createAllowedCheckpoint(scope: CheckpointScope, facts: StageFacts, data: Readonly<Record<string, JsonValue>>): object {
+  const audited = readAuditedFacts({ ...facts, audit: data });
+  if (audited === undefined) throw new TypeError("Invalid committed allow facts");
+  const token = Object.freeze({});
+  allowedCheckpoints.set(token, { requestId: scope.requestId, decisionId: scope.decisionId, context: scope.context, budget: scope.budget, data: snapshotAnswer(audited) as AuditedFacts });
+  return token;
+}
+export const readAllowedCheckpoint = (scope: CheckpointScope, token: unknown): AuditedFacts | undefined => readCheckpoint(allowedCheckpoints, scope, token);
+/** Called only after the real execute stage obtained an execution outcome. */
+export function createExecutionCheckpoint(scope: CheckpointScope, status: "success" | "failure"): object {
+  const token = Object.freeze({}); executionCheckpoints.set(token, { requestId: scope.requestId, decisionId: scope.decisionId, context: scope.context, budget: scope.budget, data: status }); return token;
+}
+export const readExecutionCheckpoint = (scope: CheckpointScope, token: unknown): "success" | "failure" | undefined => readCheckpoint(executionCheckpoints, scope, token);

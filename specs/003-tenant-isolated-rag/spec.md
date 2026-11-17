@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-13
 
-**Status**: Draft
+**Status**: Draft. **SUPERSEDED (2026-11-16)** by [`specs/003-ai-guidance`](../003-ai-guidance/spec.md), a compressed, delivery-scoped feature (small deterministic retrieval, no tenant machinery while the demo holds no tenant-owned data). This document is kept for history only. Its core ideas (retrieved text is untrusted data; the knowledge base holds only product knowledge; the tenant constraint belongs in the retrieval query when tenant-owned content appears) are carried into the new feature, and the enterprise parts (tenant-isolated vector storage, update/offboarding workflows, per-retrieval audit and quotas, access-equivalence filtering, the isolation catalogue) are FUTURE there.
 
 **Input**: User description:
 

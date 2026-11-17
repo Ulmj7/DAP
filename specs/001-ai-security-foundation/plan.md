@@ -1,6 +1,6 @@
 # Implementation Plan: AI Security Foundation
 
-**Branch**: `001-ai-security-foundation` (spec directory id; the repo is not under git, so no branch exists) | **Date**: 2026-11-13 | **Spec**: [spec.md](./spec.md)
+**Branch**: `001-ai-security-foundation` (spec directory id; development was integrated on `dev` and closed on 2026-11-16) | **Date**: 2026-11-13 | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `/specs/001-ai-security-foundation/spec.md`
 
@@ -25,7 +25,7 @@ Technical approach (details in [research.md](./research.md)):
   database clock, so controls hold across restarts and replicas.
 - Authentication and authorization are **host-implemented ports**. This feature builds neither.
 - A scripted hostile planner and a focused set of representative security scenarios prove each
-  control with no LLM (Milestone M1). The 102-scenario catalogue, the 36-case dependency-failure
+  control with no LLM (Milestone M1, **acceptance criteria evidenced; maintainer sign-off pending**; evidence in [docs/validation-report.md](../../docs/validation-report.md)). The 102-scenario catalogue, the 36-case dependency-failure
   matrix, and mutation testing are Future Work; code already built for them is retained.
 
 The requested pipeline is preserved: *AI Planner, Action Proposal, Schema Validation, Policy
@@ -52,17 +52,19 @@ Registered SAFE/LOW proposal
   -> deterministic success
 ```
 
-| Stage / piece | Status | Scope |
-|---------------|--------|-------|
-| Context, intake, rate-limit, replay, resolve, validate, authorize | merged | REQUIRED, retained |
-| Audit stage and execute stage, `evaluate()` runner result | built on branch `exec`, QA pending | REQUIRED (T089, T090) |
-| Risk decision stage (no confirmation records) | not built | REQUIRED (T104a) |
-| Gateway test world with the real chain | not built | REQUIRED (T070) |
-| Persistent audit sink and migration | not built | REQUIRED, minimal (T093, T094) |
-| Representative security scenarios | partly built (`attacks2`) | REQUIRED, reduced |
-| Composition root, development authentication, one integration test | not built | REQUIRED (T131, T132, T136 reduced) |
-| Confirmation store, binding, service, endpoints | store built on branch `confirm-store` | OPTIONAL, parked |
-| Coverage gate, double-run, dependency matrix, mutation testing, metrics, Kubernetes | partly built (`tooling`) | FUTURE, parked |
+| Stage / piece | Status (2026-11-16) | Scope |
+|---------------|--------------------|-------|
+| Context, intake, rate-limit, replay, resolve, validate, authorize | built, merged | REQUIRED |
+| Audit stage and execute stage, `evaluate()` runner result | built, merged (T089, T090, T146) | REQUIRED |
+| Risk decision stage (no confirmation records) | built, merged (T104a) | REQUIRED |
+| Gateway test world with the real chain | built, merged (T070, T078) | REQUIRED |
+| Persistent audit sink and migration | built, merged: `db/migrations/020_sec_audit_events.sql`, `PostgresAuditStore` (T093 to T095) | REQUIRED, minimal |
+| Representative security scenarios | built, merged, run on the real Gateway (T052 to T054, T059, T072, T073, T082 to T084) | REQUIRED, reduced |
+| Composition root, development authentication, one integration test | built, merged (T131, T132, T136): `apps/reference-host`, `tests/integration/reference-host.test.ts` | REQUIRED |
+| M1 gate and minimal CI | built, merged (T071, T140): `npm run test:m1-gate`, `.github/workflows/ci.yml` (replayed locally and linted with actionlint; no GitHub Actions run yet) | REQUIRED |
+| Documentation and validation | T142 to T145: `docs/architecture.md`, `docs/validation-report.md`, `docs/constitution-review.md` | REQUIRED |
+| Confirmation store, binding, service, endpoints | **not built on `dev`**: a store exists only on the parked `confirm-store` branch; the Gateway has a fail-closed stub | OPTIONAL, parked |
+| Coverage gate, double-run, dependency matrix, mutation testing, metrics, Kubernetes | **not built on `dev`** (some tooling on the parked `tooling` branch) | FUTURE, parked |
 
 Branch handling: `exec` is critical path; `attacks2` is merged only for the representative
 trust-boundary tests; `confirm-store` and `tooling` are preserved but do not block M1. No branch is
@@ -72,7 +74,7 @@ merged merely because the old task list marked it mandatory.
 
 **Language/Version**: TypeScript (strict, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`) on Node.js 22
 
-**Primary Dependencies**: Zod 4 (4.6.7 verified); `pg` (node-postgres, explicit parameterized SQL, no ORM); Fastify (reference host only); `pino` (`prom-client` and metrics are FUTURE). Dev: Vitest, fast-check, dependency-cruiser, ESLint with typescript-eslint, Stryker (FUTURE: nightly, optional). Versions other than Zod are pinned by the lockfile at implementation time
+**Primary Dependencies**: Zod 4 (4.6.7 verified); `pg` (node-postgres, explicit parameterized SQL, no ORM); Fastify (declared by the reference host's manifest but **not used**: the built host is in-process); `pino` (`prom-client` and metrics are FUTURE). Dev: Vitest, fast-check, dependency-cruiser, ESLint with typescript-eslint, Stryker (FUTURE: nightly, optional). Versions other than Zod are pinned by the lockfile at implementation time
 
 **Storage**: PostgreSQL 16 or newer (confirmations, replay claims, rate counters, audit events, tenant action policy) with forced row-level security; in-memory adapter for fast tests
 
@@ -103,28 +105,28 @@ earlier check against 1.0.0 (Principles I-XVII, all universal) is superseded.*
 |---|-----------|----------------------------|--------|
 | I | LLM is an untrusted planner | AI layer holds only a `ProposalSubmitter`; identity, tenant, run metadata, and `callId` come from trusted code | PASS, implemented |
 | II | LLM output never authorizes | Claims in text or parameters are unknown keys or ignored; confirmation is never taken from the model | PASS, implemented |
-| III | Deterministic Policy Gateway | Single chokepoint; executors need a single-use grant only the Gateway mints; no LLM in the decision path; static graph, types, runtime grant checks | PASS, implemented (audit/execute stages on `exec`) |
+| III | Deterministic Policy Gateway | Single chokepoint; executors need a single-use grant only the Gateway mints; no LLM in the decision path; static graph, types, runtime grant checks | PASS, implemented and merged (`docs/architecture.md`) |
 | IV | Default deny, allowlists | Exact-match registry, default-deny enablement, strict schemas, reserved names | PASS, implemented |
-| V | No secrets to the AI | Planner feedback is outcome, category, and field paths only; audit scrubber; canary test is an M1 test (T082) | PASS; canary test pending |
+| V | No secrets to the AI | Planner feedback is outcome, category, and field paths only; audit scrubber; canary test (T082) | PASS, implemented; `tests/security/secret-extraction.test.ts`, `tests/integration/audit-postgres.test.ts` P4 |
 | VI | Client-side redaction | Out of scope for this feature (a later UI feature); this feature accepts no DOM data | N/A here |
 | VII | No arbitrary execution | No `eval`, shell, network, or selector capability; static scan and graph tests | PASS, implemented |
 | VIII | Typed registered capabilities | `buildRegistry` rules R1-R12; executor binding | PASS, implemented |
 | IX | Backend authorization authoritative | Authorize stage re-judges session, permission, page, and resource against host ports | PASS, implemented |
-| X | No privilege amplification | Executors receive the requesting user's own minted context; parity test in M1 (T072) | PASS; parity test pending |
+| X | No privilege amplification | Executors receive the requesting user's own minted context; parity test (T072) | PASS, implemented; `tests/security/privilege-escalation.test.ts` (ATK-PRIV-01 parity), `positive.test.ts` (ATK-PRIV-04) |
 | XII | RAG is untrusted data | No RAG in this feature; feedback and audit never echo model text | N/A here |
-| XIV | Auditability | Audit builder, projection, scrubber, writer; audit succeeds before execution; persistent sink in M1 | PASS; stages on `exec`, sink pending |
+| XIV | Auditability | Audit builder, projection, scrubber, writer; durable ALLOWED before every execution; PostgreSQL sink | PASS, implemented, with the limits in `docs/constitution-review.md` (commit-acknowledgement window, best-effort PROPOSED/denial/EXECUTED) |
 | XV | Survives LLM compromise | Hostile planner; bounded per-turn execution and per-proposal budget | PASS, implemented |
 | XVI | Least privilege, strict schemas, minimal context, fail closed | Strict schemas at every boundary; every fault is a denial | PASS, implemented |
-| XVII | Focused security tests | Representative M1 set (see spec Scope Declaration); exhaustive catalogue is Future | PASS for scope; tests pending (T052 to T054, T072, T073, T082 to T084) |
+| XVII | Focused security tests | Representative M1 set (see spec Scope Declaration); exhaustive catalogue is Future | PASS for scope; run by `npm run test:m1-gate` and CI |
 
 ### Tier B: conditional controls and their triggers
 
 | Principle | Trigger | Present? | Consequence |
 |-----------|---------|----------|-------------|
 | XI Tenant isolation | A feature stores or retrieves tenant-owned data | Yes (audit, tenant policy) | Tenant-ready: tenant from the trusted context, tenant-scoped data, forced RLS (built). Demo may run one tenant |
-| XIII Confirmation | HIGH/CRITICAL capability, or MEDIUM requiring confirmation, delivered | No (test-only SAFE/LOW capabilities executed in M1) | Only the risk decision is REQUIRED (T104a). Store and binding retained on `confirm-store` |
-| Replay protection | Retry-sensitive or state-changing actions | Yes (one state-changing test capability) | Replay guard and stage built, retained |
-| Shared state across copies | More than one copy runs | No (single process) | In-memory adapters allowed, documented; Postgres adapters retained |
+| XIII Confirmation | HIGH/CRITICAL capability, or MEDIUM requiring confirmation, delivered | Only in the fallback form of XIII: the host registers a HIGH demo capability (`demoPublishNote`) that stops at `REQUIRES_CONFIRMATION` and never reaches an executor; no executable HIGH/CRITICAL or confirmation-required MEDIUM capability exists | Only the risk decision is REQUIRED (T104a), built. Store and binding exist only on the parked `confirm-store` branch |
+| Replay protection | Retry-sensitive or state-changing actions | Yes (one state-changing demo capability) | Replay guard (in-memory and PostgreSQL) and stage built and used by the host |
+| Shared state across copies | More than one copy runs | No (single process) | In-memory adapters allowed, documented; PostgreSQL adapters built and used by the reference host (no multi-replica test) |
 
 ### Tier C: Future Work (not prerequisites)
 
@@ -237,6 +239,12 @@ specs/001-ai-security-foundation/
 
 ### Source Code (repository root)
 
+> **Status of this tree (2026-11-16)**: it is the planned layout. Built on `dev`: `contracts`, `ai`, `security` (without `confirmation/`), `testkit` (without
+> `coverage`), `apps/reference-host` as an **in-process** composition root (`compose.ts`, `config.ts`, `capabilities.ts`, `host-ports.ts`, `dev-auth/`; no
+> `http/` and no `metrics.ts`), `db/migrations/` (000, 010, 011, 020, 040, 041, 050, 051, 060), `deploy/compose.yaml` only, `scripts/m1-gate*.mjs`,
+> `tests/{architecture,security,integration}` (integration tests run in-process against PostgreSQL, not over HTTP) and `.github/workflows/ci.yml`.
+> `packages/actions` is empty. `deploy/docker`, `deploy/k8s`, `deploy/prometheus` and `deploy/grafana` do not exist.
+
 ```text
 packages/
 ├── contracts/                  # @dap/contracts: types, constants, defineExecutor wrapper
@@ -262,7 +270,7 @@ packages/
     └── src/ { world, hostile-planner, attacks/, leak-scanner, recording-executor,
                coverage, test-capabilities/ }
 apps/
-└── reference-host/             # composition root and thin Fastify service (non-production)
+└── reference-host/             # composition root (non-production); in-process, no HTTP service was built
     └── src/ { compose.ts, dev-auth/ (REQUIRED, M1); http/ (OPTIONAL); metrics.ts (FUTURE) }
 db/
 └── migrations/                 # tables, forced RLS, privileges, audit append-only trigger
@@ -328,14 +336,14 @@ follows Principles XVIII and XIX.
 | 1 | Workspace, TypeScript, lint rules, dependency-cruiser, contracts, Zod behavior pins | foundation | REQUIRED | done |
 | 2 | Registry (R1-R12), strict intake, parameter validation and digest | US1, US2 | REQUIRED | done |
 | 3 | Context factory, host ports, Gateway pipeline, authorize stage | US1, US3 | REQUIRED | done |
-| 4 | Audit projection, scrubber, writer; audit and execute stages; grant minting | US4 | REQUIRED | primitives done; stages on `exec` (QA pending) |
+| 4 | Audit projection, scrubber, writer; audit and execute stages; grant minting | US4 | REQUIRED | done, merged (T089, T090) |
 | 5 | PostgreSQL adapters: tenant policy, replay, rate counters | US3, US6 | REQUIRED (retained) | done |
-| 5b | Persistent audit sink and migration (minimal) | US4 | REQUIRED | not built (T093, T094) |
-| 6 | Risk decision stage (no confirmation records) | US1, US5 | REQUIRED | not built (T104a) |
-| 6b | Confirmation store, binding, service, endpoints | US5 | OPTIONAL | store and binding on `confirm-store`, parked |
-| 7 | Gateway test world and representative scenarios | US1, US3, US4 | REQUIRED | partly built (T070 pending) |
-| 7b | Coverage gate, double-run, dependency matrix, mutation testing | US7 | FUTURE | partly built on `tooling`, parked |
-| 8a | Composition root, minimal development authentication, one integration path, minimal CI | delivery | REQUIRED | not built |
+| 5b | Persistent audit sink and migration (minimal) | US4 | REQUIRED | done, merged (T093 to T095) |
+| 6 | Risk decision stage (no confirmation records) | US1, US5 | REQUIRED | done, merged (T104a) |
+| 6b | Confirmation store, binding, service, endpoints | US5 | OPTIONAL | **not on `dev`**; store and binding on the parked `confirm-store` branch |
+| 7 | Gateway test world and representative scenarios | US1, US3, US4 | REQUIRED | done, merged (T070, T052 to T054, T072, T073, T082 to T084) |
+| 7b | Coverage gate, double-run, dependency matrix, mutation testing | US7 | FUTURE | not built on `dev`; some tooling on the parked `tooling` branch |
+| 8a | Composition root, minimal development authentication, one integration path, minimal CI | delivery | REQUIRED | done, merged (T131, T132, T136, T071, T140) |
 | 8b | Dockerfile, readiness endpoint, PR template | delivery | OPTIONAL | not built |
 | 8c | Prometheus, Grafana, Kubernetes, Minikube, enterprise hardening | delivery | FUTURE | not built |
 
@@ -358,7 +366,7 @@ What remains:
 
 1. **In-process supply-chain compromise** can reach the restricted mint functions. Mitigation is
    dependency scanning and review, not this design.
-2. **Post-execution audit failure**: the action has already happened. It raises a metric and alert;
+2. **Post-execution audit failure**: the action has already happened. The writer calls optional audit-failure telemetry; the reference host installs no metrics/alerting backend;
    reconciliation is out of scope.
 3. **Fixed-window rate limits** allow up to twice the limit across a window boundary.
 4. **Outcome type reveals one bit**: "unknown action" versus "not allowed for you". Low impact;
@@ -367,7 +375,7 @@ What remains:
    does not authenticate senders.
 6. **Confirmation UI** must render outside any DOM the AI can drive. This feature cannot enforce
    that; it is a hard requirement on the future UI feature.
-7. **Single PostgreSQL** is a dependency: when it is down everything is denied (by design).
+7. **Single PostgreSQL** is a dependency: new proposals fail closed when their required state/audit operations fail; already-confirmed ALLOWED outcomes and already-running executors are not retroactively denied.
 8. **Executor authority** (attention item 4) depends on executor implementations and review.
 9. **Reference host** includes a development-only authentication stub; mitigated by explicit
    opt-in and a production refusal, but it is attack surface in any shared environment.
@@ -389,8 +397,7 @@ What remains:
     itself bounds a blocked or slow statement (`lock_timeout`, `statement_timeout`,
     `writeTimeoutMs`, default 1500 ms). The unavoidable window is a COMMIT already in flight when
     the writer gives up: its outcome is uncertain, so an ALLOWED row may exist for a request that
-    was denied and never executed. The trail then truthfully shows ALLOWED without EXECUTED; it
-    never shows an execution that did not happen. The best-effort DENIED record may also exist;
+    was denied and never executed. The trail then truthfully shows ALLOWED without EXECUTED; an EXECUTED failure does not prove the body started. The best-effort DENIED record may also exist;
     consumers must not infer execution from ALLOWED alone. Legacy sinks that ignore the signal
     retain their broader old uncertainty, including writes abandoned before COMMIT.
 14. **Audit time and sequence precision**: the current Gateway clock supplies millisecond instants;

@@ -1,5 +1,8 @@
 name: ci
 
+# Feature 001 (AI Security Foundation), Milestone M1: enforces only what the M1 scope requires (lint, types, dependency boundaries,
+# PostgreSQL migrations, the security, conformance and integration suites, the reference-host vertical path, and the single M1 gate).
+# Optional and future checks (mutation, determinism, coverage report, container build, scanners) are deliberately not here.
 on:
   push:
     branches: [main]

@@ -5,6 +5,9 @@
  * the Policy Gateway (FR-011, FR-017). Executors live in `@dap/actions` and the AI layer has
  * no dependency on that package (research D4, D5).
  *
+ * Types only. The runtime pieces (defineExecutor wrapper, bindExecutors) live in the
+ * contracts execution runtime and @dap/security, not here.
+ *
  * Constitution: III, VII, VIII, IX, X
  */
 import type {
@@ -63,7 +66,7 @@ export type ExecutionResult<TValue = unknown> =
     }
   | {
       readonly status: "failure";
-      /** Short code for audit. Never raw error text, never shown to the model. */
+      /** Trusted executor failure code; the current Gateway records only success/failure, not this code. */
       readonly code: string;
     };
 
@@ -77,12 +80,6 @@ export interface ActionExecutor<TParams = unknown, TValue = unknown> {
   execute(call: ExecutionCall<TParams>): Promise<ExecutionResult<TValue>>;
 }
 
-/** Wraps an implementation with grant verification. The only supported way to create an executor. */
-export declare function defineExecutor<TParams, TValue>(spec: {
-  readonly id: ExecutorId;
-  readonly run: (call: ExecutionCall<TParams>) => Promise<ExecutionResult<TValue>>;
-}): ActionExecutor<TParams, TValue>;
-
 /**
  * Executors bound to registry entries at the composition root. Passed to createPolicyGateway()
  * and nowhere else; the AI layer never receives it (research D4).
@@ -90,9 +87,3 @@ export declare function defineExecutor<TParams, TValue>(spec: {
 export interface ExecutorTable {
   readonly executorFor: (id: ExecutorId) => ActionExecutor | undefined;
 }
-
-/** Validates registry-to-executor binding (rule R10). Throws RegistrationError on mismatch. */
-export declare function bindExecutors(
-  registry: import("./action-definition").ActionRegistry,
-  executors: readonly ActionExecutor[],
-): ExecutorTable;

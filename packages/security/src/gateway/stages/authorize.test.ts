@@ -344,11 +344,11 @@ describe("what the stage refuses to work from", () => {
 
   it("reads the registry once per request and each definition field once", async () => {
     const entry = registry.get("openProject")!;
-    let gets = 0; const reads = { requiredPermission: 0, allowedPages: 0, risk: 0 };
-    const counting = { ...registry, get: () => { gets++; return { definitionHash: entry.definitionHash, definition: { id: entry.definition.id, version: entry.definition.version, get risk() { reads.risk++; return "SAFE"; }, get requiredPermission() { reads.requiredPermission++; return "project:view"; }, get allowedPages() { reads.allowedPages++; return "any"; } } }; } } as unknown as ActionRegistry;
+    let gets = 0; const reads = { requiredPermission: 0, allowedPages: 0, risk: 0, changesState: 0 };
+    const counting = { ...registry, get: () => { gets++; return { definitionHash: entry.definitionHash, definition: { id: entry.definition.id, version: entry.definition.version, get changesState() { reads.changesState++; return false; }, get risk() { reads.risk++; return "SAFE"; }, get requiredPermission() { reads.requiredPermission++; return "project:view"; }, get allowedPages() { reads.allowedPages++; return "any"; } } }; } } as unknown as ActionRegistry;
     const test = harness({ registry: counting });
     expect((await test.stage(test.record(good())) as { kind: string }).kind).toBe("continue");
-    expect({ gets, ...reads }).toEqual({ gets: 1, requiredPermission: 1, allowedPages: 1, risk: 1 });
+    expect({ gets, ...reads }).toEqual({ gets: 1, requiredPermission: 1, allowedPages: 1, risk: 1, changesState: 1 });
   });
 });
 
@@ -439,7 +439,7 @@ describe("authorize inside the real runner", () => {
   it("lets four sequential host calls take longer in total than hookTimeoutMs, each within it: the stage's deadline is the proposal's, not a single hook's", async () => {
     const timer = new ManualTimer();
     const setup = pipelineWith({ timer, clock: spent(timer, 1500, NOW), has: spent(timer, 1500, true), page: spent(timer, 1500, "page.edit"), resolve: spent(timer, 1500, resolvedFor()) }, { hookTimeoutMs: 2000, proposalBudgetMs: 10_000 });
-    expect((await setup.run()).outcome).toBe("ALLOWED"); // 6000 ms in total, past hookTimeoutMs, inside the budget
+    expect(await setup.run()).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" }); // 6000 ms in total, past hookTimeoutMs, inside the budget
     expect(setup.test.log).toEqual(["clock", "has", "page", "resolve"]);
   });
 

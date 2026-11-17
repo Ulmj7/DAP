@@ -119,7 +119,7 @@ export function buildAuditEvent(input: AuditEventInput): AuditEvent {
       if (!isValidActionId(id) || !Number.isSafeInteger(version) || version < 1) reject("action");
       actionId = id;
       definitionVersion = version;
-    } else if (kind === "attempted") actionId = attemptedName(action.name);
+    } else if (kind === "attempted") actionId = attemptedName(action.name) || null;
     else reject("action");
   }
   if (shape.action === "registered" && definitionVersion === null) reject("action");

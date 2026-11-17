@@ -1,6 +1,6 @@
 /**
  * T090: ALLOWED is bound. Through the real chain, bend each fact the allow decision rests on (action, version, risk, digest, confirmation
- * id, resource) and the proposal is DENIED with the executor at zero calls, whichever stage is the one that sees the disagreement.
+ * id, resource) and the executor stays at zero calls. Pre-ALLOW faults deny; post-ALLOW faults retain the committed policy decision.
  * Also: a pipeline whose stage 7 is absent still fails closed, and the real gateway's telemetry sees the allowed decision.
  */
 import { describe, expect, it, vi } from "vitest";
@@ -28,11 +28,11 @@ describe("a disagreement seen at stage 9: the allow-event exists, the executor n
   ])("the recorded %s is not the one validated and resolved", async (_name, patch) => {
     const world = chain();
     const feedback = await submit(world, { audit: tamperedAudit(world, patch) });
-    expect(feedback).toEqual(TRY_LATER);
+    expect(feedback).toEqual({ outcome: "ALLOWED", category: "try_later" });
     expect(world.executorCalls).toHaveLength(0);
     const events = await world.events();
-    expect(types(events)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED", "AI_ACTION_DENIED"]);
-    expect(events[2]).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", actionId: "openProject" });
+    expect(types(events)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED"]);
+    expect(events[1]).toMatchObject({ outcome: "ALLOWED", actionId: "openProject" });
   });
 });
 

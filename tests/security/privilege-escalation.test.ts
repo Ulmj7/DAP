@@ -393,6 +393,6 @@ describe("the scenarios against the REAL gateway, through withGateway() (T072, R
 
 describe("the remaining scenarios against the end-to-end chain (OPTIONAL in M1)", () => {
   it.todo("ATK-PRIV-05 runScenario: every permission-changing name is FORBIDDEN_POLICY with a policy-violation record (OPTIONAL)");
-  it.todo("ATK-PRIV-07 runScenario: a spoofed page changes nothing (OPTIONAL; the page control is already proven in test-world.gateway.test.ts)");
+  it.todo("ATK-PRIV-07 runScenario: a spoofed page changes nothing (OPTIONAL; page narrowing and page-hook failures are proven in review-fixes.test.ts)");
   it.todo("ATK-PRIV-08 runScenario: an allow, the session expires, then UNAUTHORIZED (OPTIONAL)");
 });

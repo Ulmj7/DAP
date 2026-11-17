@@ -1,4 +1,4 @@
-import type { ActionRegistry } from "@dap/contracts";
+import type { ActionRegistry, ExecutorTable } from "@dap/contracts";
 import type { Limiter } from "../../limits/limiter.js";
 import { isMintedContext } from "@dap/contracts/mint";
 import type { AuditWriter } from "../../audit/audit-writer.js";
@@ -7,7 +7,7 @@ import { projectParams } from "../../audit/projection.js";
 import { denyDecision } from "../decision.js";
 import type { HookOptions } from "../hook-wrapper.js";
 import type { PolicyStage } from "../pipeline.js";
-import { readAllowFacts } from "./allow-facts.js";
+import { createAllowedCheckpoint, readAllowFacts } from "./allow-facts.js";
 import { createLimitGate } from "./limit-gate.js";
 import { provenDefinition } from "./registered.js";
 
@@ -28,11 +28,13 @@ import { provenDefinition } from "./registered.js";
  * is down is a `dependency_failure`. Either way nothing is written and nothing runs. The slot is never given back: a later failure of the audit
  * write or of the executor does not refund it, and a retry is a new proposal that needs a new slot.
  */
-export function createAuditStage({ registry, events, writer, limiter }: {
+export function createAuditStage({ registry, events, writer, limiter, executors }: {
   readonly registry: ActionRegistry; readonly events: AuditEventFactory; readonly writer: AuditWriter;
+  readonly executors: ExecutorTable;
   readonly limiter: Pick<Limiter, "claimExecution" | "recordDenial">;
 }, options: HookOptions = {}): PolicyStage {
   const get = registry.get.bind(registry);
+  const executorFor = executors.executorFor.bind(executors);
   const claimExecution = limiter.claimExecution.bind(limiter);
   const limitGate = createLimitGate(limiter, options);
   return async (request) => {
@@ -44,6 +46,9 @@ export function createAuditStage({ registry, events, writer, limiter }: {
     if (!isMintedContext(ctx) || allow === undefined) return stop("dependency_failure");
     const definition = provenDefinition(get, request.facts.resolve as Readonly<Record<string, unknown>>);
     if (definition === undefined) return stop("dependency_failure");
+    if (typeof definition.executorId !== "string" || !definition.executorId) return stop("dependency_failure");
+    const executor = executorFor(definition.executorId as never);
+    if (executor === undefined || typeof executor.execute !== "function") return stop("dependency_failure");
     // One read of the allowlist, before any await.
     const rules = definition.auditParams;
     // The execution slot, claimed before the allow-event can exist. The limiter's verdict (or its failure) is the decision; nothing below runs.
@@ -61,6 +66,8 @@ export function createAuditStage({ registry, events, writer, limiter }: {
     } catch { return stop("audit_unavailable"); }
     const committed = await writer.recordAllowedDurably(event, request.budget);
     if (!committed.ok) return stop("audit_unavailable");
-    return { kind: "continue", data: { eventId: event.id, actionId: allow.actionId, version: allow.version, risk: allow.risk, paramsDigest: allow.paramsDigest, confirmationId: allow.confirmationId } };
+    const data = { eventId: event.id, actionId: allow.actionId, version: allow.version, risk: allow.risk, paramsDigest: allow.paramsDigest, confirmationId: allow.confirmationId };
+    request.reportAllowed?.(createAllowedCheckpoint(request, request.facts, data));
+    return { kind: "continue", data };
   };
 }

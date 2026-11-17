@@ -340,9 +340,9 @@ describe.each(harnesses)("T108 direct limiter attacks over the %s adapter", (_na
   });
 });
 
-describe("T108 end-to-end rate attacks (pending)", () => {
-  const waiting = "full catalogue verify() needs complete audit linkage and risk/execute stages; rate/replay gateway controls and limiter faults run in rate-replay.gateway.test.ts";
-  for (const scenario of rateAbuseScenarios) it.todo(`${scenario.id} ${scenario.title}: run against the real gateway and verify(); ${waiting}`);
-  it.todo("ATK-RATE-01 database round trips measured on the real PostgreSQL adapter through the gateway (SequenceTarget.sharedStoreCalls)");
-  it.todo("ATK-DEP full dependency-failure matrix with audit linkage: limiter gateway faults already run in rate-replay.gateway.test.ts; remaining rows need complete production-chain wiring and per-port bound fixtures");
+describe("T108 end-to-end rate attacks (OPTIONAL as catalogue runs)", () => {
+  const waiting = "the bounded representative real-gateway controls (per-user and per-capability quotas, the denial throttle, limiter faults, depth and turn budget, the execution cap) are REQUIRED and run in rate-replay.gateway.test.ts and execution-cap.test.ts; this catalogue verify() form is T108 (OPTIONAL)";
+  for (const scenario of rateAbuseScenarios) it.todo(`${scenario.id} (OPTIONAL, T108) ${scenario.title}: run against the real gateway and verify(); ${waiting}`);
+  it.todo("ATK-RATE-01 (FUTURE): database round trips measured on the real PostgreSQL adapter through a 10,000-proposal flood (SequenceTarget.sharedStoreCalls)");
+  it.todo("ATK-DEP (FUTURE, T123): the full dependency-failure matrix with audit linkage; the representative port failures are in dependency-failure.test.ts and the files it names");
 });

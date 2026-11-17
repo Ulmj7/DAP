@@ -5,6 +5,31 @@
 This is the contract every AI capability is tested against. Scenario ids are stable: waivers,
 coverage reports, and CI output refer to them. Types: [`testkit.ts`](./testkit.ts).
 
+## Status on `dev` (reconciled 2026-11-16, T143)
+
+The catalogue below is the **target** (102 scenarios). It is **not** all built or run. Feature 001 M1 requires only the representative set
+(Constitution XVII; spec Scope Declaration); the rest is OPTIONAL or FUTURE and stays listed so nothing is lost. "Real Gateway" means the scenario's
+own oracle (or an equivalent focused test) runs through `withGateway()` and the full chain.
+
+| Family | Scenario objects in `packages/testkit/src/attacks/` | Run on the real Gateway (REQUIRED, representative) | Left as `todo` (tagged OPTIONAL or FUTURE) |
+|--------|------------------------------------------------------|-----------------------------------------------------|---------------------------------------------|
+| UNKNOWN | 01 to 06 | `tests/security/unknown-action.test.ts` | 04 and 08 through the gateway (OPTIONAL); 07 is a registry/startup rule, tested in `packages/security/src/registry/` |
+| PARAMS | 01 to 13 (definitions) | 01 to 05, 08, 09, 11 plus byte and depth boundaries: `tests/security/malformed-parameters.test.ts` | 06, 07, 10, 12, 13 (OPTIONAL) |
+| PRIV | 01 to 08 | 01, 02, 04, 06: `tests/security/privilege-escalation.test.ts`, `positive.test.ts` | 05, 07, 08 (OPTIONAL; equivalent proofs in `unknown-action.test.ts`, `review-fixes.test.ts`, `test-world.gateway.test.ts`); 03 needs confirmation |
+| INJECT | 01, 02, 05, 06 | 01, 02, 05: `tests/security/prompt-injection.test.ts` | 03, 04, 06 (OPTIONAL) |
+| XTENANT | 01 to 06, 08 (definitions) | 01 to 03 and the non-leak checks: `tests/security/cross-tenant.test.ts`; 05 and 09 at the database: conformance and `tests/integration/audit-postgres.test.ts` P3; 06: `rate-replay.gateway.test.ts`; 10: `cross-tenant.test.ts` | 04, 05..10 as one catalogue run (OPTIONAL); 07 needs confirmation |
+| SECRET | 01 to 04 | all four: `tests/security/secret-extraction.test.ts` | none |
+| AUDIT | 01 to 07 | 01 to 05: `tests/security/audit.test.ts`; 06 (append-only): `packages/security/src/state/conformance/audit-migration.test.ts`; 07 is static | none |
+| REPLAY | 01 to 08 | bounded real-Gateway controls: `tests/security/rate-replay.gateway.test.ts` | the catalogue `verify()` form (OPTIONAL); 05 needs confirmation |
+| RATE | 01 to 08 | bounded controls and the execution cap: `rate-replay.gateway.test.ts`, `execution-cap.test.ts` | the catalogue `verify()` form (OPTIONAL); the PostgreSQL 10,000-proposal round-trip count (FUTURE) |
+| DEP | the 36-case matrix (definitions only) | representative failures of the key ports: `test-world.gateway.test.ts`, `dependency-failure.test.ts` (hangs), `review-fixes.test.ts`, `audit-postgres.test.ts` | all 36 rows (FUTURE, T123); confirmation channel rows (OPTIONAL) |
+| ARCH | no scenario objects (plain tests) | 01, 05, 06, 10: `tests/architecture/*.test.ts`; 02, 03: `packages/contracts/src/execution-runtime.test.ts`; 04: `packages/security/src/gateway/stages/context.test.ts`; 07: `packages/security/src/registry/registry.immutability.test.ts`; 08: `tests/security/registry-drift.test.ts`; 09: `packages/security/src/registry/zod-behavior.test.ts` and `registry.rules.test.ts` | none |
+| CONFIRM | **not built** | none | all 16 (OPTIONAL, T096; the confirmation service does not exist) |
+| POS | POS-01 only | POS-01: `tests/security/positive.test.ts` | POS-02 to POS-04 (POS-03/04 need confirmation) |
+
+The coverage gate (`FR-048`, `SC-011`) and the double-run determinism script (`SC-012`) are FUTURE and not built. `npm run test:m1-gate` is the REQUIRED
+gate: it checks that the representative suites ran and passed and that every remaining `todo` is tagged OPTIONAL or FUTURE.
+
 ## How scenarios work
 
 - **No LLM.** A scripted `HostilePlanner` emits the proposals a compromised model could emit.

@@ -259,5 +259,5 @@ describe("the scenarios against the REAL gateway, through withGateway() (T073, R
 
 describe("the remaining scenarios against the end-to-end chain (OPTIONAL in M1)", () => {
   it.todo("ATK-XTENANT-04 runScenario: a foreign resource returned by the host is a tenant_mismatch, indistinguishable to the planner (OPTIONAL; the control is already proven in test-world.gateway.test.ts)");
-  it.todo("ATK-XTENANT-05..10 store isolation, same callId in two tenants, confirmations, rate counters, reviewer queries and display-name canaries: belong to the PostgreSQL, confirmation, limits and reader batches (T093/T094, T104/T105, T115-T119)");
+  it.todo("ATK-XTENANT-05..10 (OPTIONAL as one catalogue run): store isolation (cross-tenant-store.test.ts, conformance), same callId in two tenants (rate-replay.gateway.test.ts), reviewer queries (integration/audit-postgres.test.ts P3) and display-name canaries (above) are already proven; confirmations (07) need the confirmation service (T096) and rate counters (08) are the limits batch (T108)");
 });

@@ -20,7 +20,7 @@ const fields = {
   allowedPages: z.union([z.literal("any"), z.array(text).min(1)]),
   confirmation: z.discriminatedUnion("kind", [
     z.strictObject({ kind: z.literal("required") }),
-    z.strictObject({ kind: z.literal("not-required"), justification: text.optional() }),
+    z.strictObject({ kind: z.literal("not-required"), justification: text.refine(value => value.length <= 1000).optional() }),
   ]),
   changesState: z.boolean(),
   audit: auditSchema,

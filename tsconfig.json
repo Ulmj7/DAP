@@ -14,7 +14,13 @@
       "path": "packages/security"
     },
     {
+      "path": "packages/walkthrough"
+    },
+    {
       "path": "packages/testkit"
+    },
+    {
+      "path": "apps/reference-web"
     },
     {
       "path": "apps/reference-host"

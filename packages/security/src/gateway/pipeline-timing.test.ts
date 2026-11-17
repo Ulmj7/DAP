@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { HookTimer } from "./hook-wrapper.js";
 import { createPipeline, type PolicyStage } from "./pipeline.js";
 import { allowedDecision } from "./decision.js";
+import { chain } from "./chain.test-support.js";
 import { input, stageMap } from "./fixtures.test-support.js";
 
 class ManualTimer implements HookTimer {
@@ -49,9 +50,11 @@ describe("stage deadline and timer boundary", () => {
 
   it("gives every stage its own deadline", async () => {
     const timer = new ManualTimer();
-    const stages = stageMap(allow);
-    for (const name of ["context", "intake", "resolve"] as const) stages[name] = () => { timer.time += 1500; return { kind: "continue", data: {} }; };
-    expect((await createPipeline(stages, { timer, hookTimeoutMs: 2000 }).run(input())).outcome).toBe("ALLOWED");
+    const real = chain();
+    const stages = { ...real.built.stages, ...real.standIns };
+    for (const name of ["context", "intake", "resolve"] as const) { const stage = stages[name]!; stages[name] = request => { timer.time += 1500; return stage(request); }; }
+    expect((await createPipeline(stages, { timer, hookTimeoutMs: 2000 }).run({ ...input(), readProposal: () => ({ callId: "timing", raw: real.text({ projectId: "p1" }) }) })).outcome).toBe("ALLOWED");
+    expect(real.executorCalls).toHaveLength(1);
   });
 
   it("checks elapsed time even if synchronous stage code blocks timer dispatch", async () => {

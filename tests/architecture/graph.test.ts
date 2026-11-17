@@ -3,7 +3,7 @@
  * mint and deep-import edges in every import form) and module-loaders.test.ts / static-scan.test.ts (eval, Function, module loaders).
  *
  * 1. The real repository's graph has no violation, and the rule set has not lost a rule.
- * 2. Every workspace manifest declares exactly the @dap edges plan.md allows.
+ * 2. Every workspace manifest declares exactly the @dap edges plan.md allows (the reference host, a production composition root, does not declare the testkit).
  * 3. In a disposable workspace, each forbidden edge is a violation of the rule that names it, each allowed edge is none, and a cycle is one.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const cruiseBin = path.join(ROOT, "node_modules/dependency-cruiser/bin/dependency-cruiser.mjs");
 
-interface Graph { modules: { source: string; dependencies: { couldNotResolve: boolean; resolved: string }[] }[]; summary: { violations: { from: string; to: string; rule: { name: string } }[] } }
+interface Graph { modules: { source: string; dependencies: { couldNotResolve: boolean; resolved: string; module?: string }[] }[]; summary: { violations: { from: string; to: string; rule: { name: string } }[] } }
 function cruise(cwd: string): Graph {
   const result = spawnSync(process.execPath, [cruiseBin, "--config", "dependency-cruiser.config.cjs", "--output-type", "json", "packages", "apps"], { cwd, encoding: "utf8", timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
   expect(result.error).toBeUndefined();
@@ -63,9 +63,12 @@ const ALLOWED_MANIFEST_EDGES: Readonly<Record<string, readonly string[]>> = {
   "packages/actions": ["@dap/contracts"],
   "packages/security": ["@dap/contracts"],
   "packages/testkit": ["@dap/contracts", "@dap/security", "@dap/ai"],
-  "apps/reference-host": ["@dap/contracts", "@dap/ai", "@dap/actions", "@dap/security", "@dap/testkit"],
+  "apps/reference-host": ["@dap/contracts", "@dap/ai", "@dap/actions", "@dap/security"],
+  // Feature 002: a leaf package and its demo app. The detailed rules are in tests/architecture/walkthrough-boundary.test.ts.
+  "packages/walkthrough": [],
+  "apps/reference-web": ["@dap/walkthrough"],
 };
-const RULES = ["ai-not-to-security-or-actions", "actions-not-to-ai-or-security", "security-not-to-ai-or-actions", "contracts-leaf", "testkit-allowed-edges", "production-not-to-testkit", "nothing-imports-apps", "no-deep-imports-into-contracts", "mint-entry-restricted", "no-runtime-module-loaders", "no-circular"];
+const RULES = ["ai-not-to-security-or-actions", "actions-not-to-ai-or-security", "security-not-to-ai-or-actions", "contracts-leaf", "testkit-allowed-edges", "production-not-to-testkit", "nothing-imports-apps", "no-deep-imports-into-contracts", "mint-entry-restricted", "no-runtime-module-loaders", "no-circular", "walkthrough-leaf", "walkthrough-not-imported-by-trusted-packages", "reference-web-only-walkthrough"];
 
 describe("the real repository", () => {
   const graph = cruise(ROOT);
@@ -123,6 +126,91 @@ describe("the AI layer has no path to executors, the mint entry or the Gateway's
   });
 });
 
+/** The reference host (T131, T136): a production composition root. */
+const APP = "apps/reference-host/";
+/** Edges the host must never have, from the resolved graph: test infrastructure and the mint entry. (The graph leaves out external libraries, so `pg` is checked on the specifiers below.) */
+function forbiddenAppEdges(graph: Graph): string[] {
+  return graph.modules.filter((module) => module.source.startsWith(APP)).flatMap((module) => module.dependencies
+    .filter((dependency) => dependency.resolved.startsWith("packages/testkit/") || dependency.module === "@dap/testkit" || dependency.resolved === MINT_ENTRY)
+    .map((dependency) => `${module.source} -> ${dependency.module ?? dependency.resolved}`));
+}
+/** Every module specifier the TypeScript scanner finds in a source text: static, type-only, re-export, dynamic import() and require(). */
+const specifiersOf = (text: string): string[] => ts.preProcessFile(text, true, true).importedFiles.map((imported) => imported.fileName);
+/** The database driver is reachable only through @dap/security (pools come from createPostgresPool): the host's sources must not name it. */
+const driverImports = (files: Readonly<Record<string, string>>): string[] => Object.entries(files).flatMap(([file, text]) => specifiersOf(text).filter((name) => name === "pg" || name.startsWith("pg/") || name === "node:pg").map((name) => `${file} -> ${name}`));
+const appSources = (): Record<string, string> => {
+  const found: Record<string, string> = {};
+  const walk = (dir: string): void => { for (const entry of fs.readdirSync(dir, { withFileTypes: true })) { const full = path.join(dir, entry.name); if (entry.isDirectory()) walk(full); else if (entry.name.endsWith(".ts")) found[path.relative(ROOT, full)] = fs.readFileSync(full, "utf8"); } };
+  walk(path.join(ROOT, APP, "src"));
+  return found;
+};
+/** The app's production modules (its own unit tests are not wiring) that import a package, by their resolved edge into it. */
+const appImportersOf = (graph: Graph, prefix: string): string[] => graph.modules.filter((module) => module.source.startsWith(APP) && !module.source.endsWith(".test.ts") && module.dependencies.some((dependency) => dependency.resolved.startsWith(prefix))).map((module) => module.source).sort();
+
+/** The exported names of a module, and the property names of an exported type, as the TypeScript checker sees them. */
+function surface(file: string): { exports: string[]; members: (name: string) => string[] } {
+  const program = ts.createProgram([file], { module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, target: ts.ScriptTarget.ES2022, skipLibCheck: true, types: [], customConditions: ["@dap/source"] });
+  const checker = program.getTypeChecker();
+  const source = program.getSourceFile(file);
+  const module = source && checker.getSymbolAtLocation(source);
+  if (!module) throw new Error("The surface of the reference host was not resolved");
+  const exported = checker.getExportsOfModule(module);
+  return {
+    exports: exported.map((symbol) => symbol.name).sort(),
+    members: (name) => {
+      const symbol = exported.find((candidate) => candidate.name === name);
+      if (!symbol) throw new Error(`${name} is not exported`);
+      const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+      return checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(target)).map((property) => property.name).sort();
+    },
+  };
+}
+
+describe("the reference host (T131, T136): its AI-facing handle is a submit function and nothing else", () => {
+  const graph = cruise(ROOT);
+  it("has modules in the graph, and no edge into the testkit or the mint entry, and no import of the database driver", () => {
+    expect(graph.modules.filter((module) => module.source.startsWith(APP)).length, "the check is not vacuous").toBeGreaterThan(5);
+    expect(forbiddenAppEdges(graph)).toEqual([]);
+    expect(Object.keys(appSources()).length, "the scan sees the host's sources").toBeGreaterThan(5);
+    expect(driverImports(appSources())).toEqual([]);
+  });
+  it("is proven able to fail: a planted host -> testkit and host -> mint edge, and a pg import in every form, are each reported", () => {
+    const planted: Graph = { summary: { violations: [] }, modules: [{ source: `${APP}src/a.ts`, dependencies: [
+      { couldNotResolve: false, resolved: "packages/testkit/src/world.ts", module: "@dap/testkit" }, { couldNotResolve: false, resolved: MINT_ENTRY, module: "@dap/contracts/mint" },
+      { couldNotResolve: false, resolved: "packages/security/src/index.ts", module: "@dap/security" } ] }] };
+    expect(forbiddenAppEdges(planted)).toHaveLength(2);
+    expect(driverImports({ "a.ts": 'import { Pool } from "pg";', "b.ts": 'import type { Pool } from "pg";', "c.ts": 'export * from "pg";', "d.ts": 'const p = import("pg");', "e.ts": 'const p = require("pg/lib");', "f.ts": 'import { ok } from "./pg-like.js"; import "@dap/security";' })).toHaveLength(5);
+  });
+  it("wires the trusted pieces in the composition root alone: the two composition roots (and config.ts for limits) import security, guidance modules import pure AI helpers, nothing imports the actions package", () => {
+    expect(appImportersOf(graph, "packages/security/")).toEqual([`${APP}src/compose.ts`, `${APP}src/config.ts`, `${APP}src/guidance/compose-guidance.ts`]);
+    // Feature 003: the trusted guidance modules (src/guidance/) use the AI package's pure parsing, chunking, validation and result helpers; they import no other trusted package
+    // (compose-guidance injects the scrubber; the capability and its executor use the contracts only).
+    expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`, `${APP}src/guidance/anthropic-model.ts`, `${APP}src/guidance/capability.ts`, `${APP}src/guidance/compose-guidance.ts`, `${APP}src/guidance/demo-model.ts`, `${APP}src/guidance/demo-render.ts`, `${APP}src/guidance/knowledge-loader.ts`, `${APP}src/guidance/start-bridge.ts`, `${APP}src/guidance/walkthrough-summaries.ts`]);
+    expect(appImportersOf(graph, "packages/actions/")).toEqual([]);
+  });
+  it("Feature 003 Slice 3: no production module of the host imports the walkthrough runtime or the testkit (the starter is a structural interface the composition root fills)", () => {
+    expect(appImportersOf(graph, "packages/walkthrough/")).toEqual([]);
+    expect(appImportersOf(graph, "packages/testkit/")).toEqual([]);
+  });
+  it("nothing reaches the host from the AI layer (the transitive walk above already excludes apps/): the AI layer is handed the submit function and cannot name the host", () => {
+    expect([...reachableFrom(graph, "packages/ai/")].filter((source) => source.startsWith("apps/"))).toEqual([]);
+  });
+  const host = surface(path.join(ROOT, "apps/reference-host/src/index.ts"));
+  it("the host's public exports are exactly the composition function, the configuration and dev-auth entry points and the demo's trusted-view types: no registry, executor table, store, pool, audit reader, mint API or confirmation service", () => {
+    expect(host.exports).toEqual(["AiSession", "ComposeOptions", "ComposedHost", "ConfigError", "DEMO_ACTION_IDS", "DevAuthError", "DevSession", "Effect", "Environment", "HostConfig", "HostExtension", "ReceivedCall", "ReferenceHost", "TrustedHandle", "composeReferenceHost", "loadConfig"]);
+  });
+  it("the type the AI layer receives has exactly one member, `submit`; the host side has exactly openSession and close; the trusted view and the composition result are separate objects", () => {
+    expect(host.members("AiSession")).toEqual(["submit"]);
+    expect(host.members("ReferenceHost")).toEqual(["close", "openSession"]);
+    expect(host.members("TrustedHandle")).toEqual(["effects", "executorCalls", "receivedCalls"]);
+    expect(host.members("ComposedHost")).toEqual(["host", "trusted"]);
+  });
+  it("Feature 003 Slice 3: a host extension is exactly { definitions, executors } and the options carry only extensions: no hook, no pool, store or registry access", () => {
+    expect(host.members("HostExtension")).toEqual(["definitions", "executors"]);
+    expect(host.members("ComposeOptions")).toEqual(["extensions"]);
+  });
+});
+
 describe("workspace manifests", () => {
   const manifest = (dir: string) => JSON.parse(fs.readFileSync(path.join(ROOT, dir, "package.json"), "utf8")) as Record<string, Record<string, string> | undefined>;
   it.each(Object.entries(ALLOWED_MANIFEST_EDGES))("%s declares only the @dap packages it may use", (dir, allowed) => {
@@ -135,7 +223,8 @@ describe("workspace manifests", () => {
     expect(dirs.sort()).toEqual(Object.keys(ALLOWED_MANIFEST_EDGES).sort());
   });
   it("keeps the AI layer's reach to contracts only, and nothing production-side on testkit", () => {
-    expect(Object.keys(manifest("packages/ai").dependencies ?? {})).toEqual(["@dap/contracts"]);
+    // Feature 003 added `zod` (validation of untrusted model output); the workspace reach stays contracts only.
+    expect(Object.keys(manifest("packages/ai").dependencies ?? {}).filter((name) => name.startsWith("@dap/"))).toEqual(["@dap/contracts"]);
     for (const dir of ["packages/contracts", "packages/ai", "packages/actions", "packages/security"]) {
       for (const field of ["dependencies", "devDependencies", "peerDependencies"]) expect(Object.keys(manifest(dir)[field] ?? {}), `${dir} ${field}`).not.toContain("@dap/testkit");
     }
@@ -148,6 +237,7 @@ describe("planted edges in a disposable workspace", () => {
   const dirOf = (name: string) => (name === "reference-host" ? "apps/reference-host" : `packages/${name}`);
   /** [from, to, rule that must name it, or null when the edge is allowed] */
   const EDGES: [string, string, string | null][] = [
+    ["reference-host", "testkit", "production-not-to-testkit"],
     ["ai", "security", "ai-not-to-security-or-actions"], ["ai", "actions", "ai-not-to-security-or-actions"],
     ["actions", "ai", "actions-not-to-ai-or-security"], ["actions", "security", "actions-not-to-ai-or-security"],
     ["security", "ai", "security-not-to-ai-or-actions"], ["security", "actions", "security-not-to-ai-or-actions"],

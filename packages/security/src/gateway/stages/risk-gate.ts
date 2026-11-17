@@ -5,7 +5,7 @@ import type { PolicyStage } from "../pipeline.js";
 import { readNoConfirmationNeeded, readPreRiskFacts } from "./allow-facts.js";
 import { provenDefinition } from "./registered.js";
 
-/** Longest justification a MEDIUM opt-out may carry; registration does not bound it, the decision does. */
+/** Longest justification a MEDIUM opt-out may carry; registration and runtime use the same bound. */
 const MAX_JUSTIFICATION = 1000;
 
 const validJustification = (value: unknown): boolean => typeof value === "string" && value.trim().length > 0 && value.length <= MAX_JUSTIFICATION;

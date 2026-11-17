@@ -7,22 +7,34 @@ import type { PipelineStage, PolicyDecision } from "@dap/contracts";
 import { createPipeline } from "./pipeline.js";
 import type { DecisionAuditor, PipelineRecord, PolicyStage } from "./pipeline.js";
 import { allowedDecision, confirmationDecision, denyDecision } from "./decision.js";
-import { input, stageMap } from "./fixtures.test-support.js";
+import { chain } from "./chain.test-support.js";
+import { input as rawInput, stageMap } from "./fixtures.test-support.js";
 
+const input = () => ({ ...rawInput(), readProposal: () => ({ callId: "evaluate", raw: { action: "openProject", params: { projectId: "p1" } } }) });
+const realStages = (status: "success" | "failure" = "success") => { const real = chain({ execute: () => status === "success" ? { status } : { status, code: "test_failure" } }); return { ...real.built.stages, ...real.standIns }; };
+async function afterAllow(stage: PolicyStage) {
+  const real = chain();
+  let entered = 0;
+  const result = await createPipeline({ ...real.built.stages, ...real.standIns, execute: request => { entered++; return stage(request); } }).evaluate(input());
+  expect(entered).toBe(1);
+  expect(result).toMatchObject({ decision: { outcome: "ALLOWED" }, executionStatus: "failure" });
+  expect(real.executorCalls).toHaveLength(0);
+}
 const allow = (request: PipelineRecord) => allowedDecision({ decisionId: request.decisionId, requestId: request.requestId, actionId: "viewProject" as never, risk: "SAFE", paramsDigest: "a".repeat(64) as never });
 const executeWith = (status: unknown, decide: (request: PipelineRecord) => PolicyDecision = allow): PolicyStage => (request) => ({ kind: "stop", decision: decide(request), ...(status === undefined ? {} : { executionStatus: status }) }) as never;
 
-describe("evaluate returns the decision, and the status only when execute reported one", () => {
+describe("evaluate returns execution status only from the real execute checkpoint", () => {
   it.each(["success", "failure"] as const)("execute's `%s` reaches the caller beside the decision", async (status) => {
-    const evaluation = await createPipeline(stageMap(executeWith(status))).evaluate(input());
+    const evaluation = await createPipeline(realStages(status)).evaluate(input());
     expect(evaluation.decision).toMatchObject({ outcome: "ALLOWED" });
     expect(evaluation.executionStatus).toBe(status);
     expect(Object.isFrozen(evaluation)).toBe(true);
   });
 
-  it("has no status key at all when none was reported, for an allow and for a denial", async () => {
+  it("an unconfirmed fixture and an earlier denial have no execution status", async () => {
     const allowed = await createPipeline(stageMap(executeWith(undefined))).evaluate(input());
     expect(Object.keys(allowed)).toEqual(["decision"]);
+    expect(allowed.decision).toMatchObject({ outcome: "DENIED", stage: "execute", reason: "dependency_failure" });
     const stages = stageMap(executeWith(undefined));
     delete stages.authorize;
     const denied = await createPipeline(stages).evaluate(input());
@@ -31,19 +43,18 @@ describe("evaluate returns the decision, and the status only when execute report
   });
 
   it("run() is the decision alone", async () => {
-    const pipeline = createPipeline(stageMap(executeWith("failure")));
+    const pipeline = createPipeline(realStages("failure"));
     expect(await pipeline.run(input())).toMatchObject({ outcome: "ALLOWED" });
     expect(Object.keys(await pipeline.run(input())).includes("executionStatus")).toBe(false);
   });
 
-  it.each(["maybe", "SUCCESS", 1, null, true, {}, ["success"]])("refuses an execution status of %j", async (status) => {
-    const decision = await createPipeline(stageMap(executeWith(status))).run(input());
-    expect(decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
+  it.each(["maybe", "SUCCESS", 1, null, true, {}, ["success"]])("a post-ALLOW execution fixture cannot attest status %j", async (status) => {
+    await afterAllow(executeWith(status));
   });
 
-  it("refuses a status that is present but undefined", async () => {
+  it("a present undefined status after ALLOW is execution failure", async () => {
     const stage: PolicyStage = (request) => ({ kind: "stop", decision: allow(request), executionStatus: undefined }) as never;
-    expect(await createPipeline(stageMap(stage)).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
+    await afterAllow(stage);
   });
 
   it.each(["context", "intake", "rate_limit", "replay", "resolve", "validate", "authorize", "risk", "confirmation", "audit"] as PipelineStage[])("%s cannot claim an executor ran, whatever it decides", async (stage) => {
@@ -52,14 +63,14 @@ describe("evaluate returns the decision, and the status only when execute report
     expect(await createPipeline(stages).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage });
   });
 
-  it("execute cannot attach a status to a denial", async () => {
+  it("a post-ALLOW execute denial cannot attest execution success", async () => {
     const stage = executeWith("success", (request) => denyDecision({ decisionId: request.decisionId, requestId: request.requestId, outcome: "DENIED", reason: "permission_missing", stage: "execute" }));
-    expect(await createPipeline(stageMap(stage)).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
+    await afterAllow(stage);
   });
 
-  it("execute cannot attach a status to a confirmation request", async () => {
+  it("a post-ALLOW execute confirmation cannot attest execution success", async () => {
     const stage = executeWith("success", (request) => confirmationDecision({ decisionId: request.decisionId, requestId: request.requestId, actionId: "viewProject" as never, risk: "HIGH", confirmationId: "00000000-0000-4000-8000-000000000009" as never }));
-    expect(await createPipeline(stageMap(stage)).run(input())).toMatchObject({ outcome: "DENIED", reason: "dependency_failure", stage: "execute" });
+    await afterAllow(stage);
   });
 
   it("a continue result cannot carry a status", async () => {
@@ -86,17 +97,13 @@ describe("the runner's audit calls", () => {
     };
     return { log, audit };
   }
-  const stagesWith = (overrides: Partial<Record<PipelineStage, PolicyStage>> = {}) => {
-    const stages = stageMap(executeWith("success"));
-    stages.intake = () => ({ kind: "continue", data: { callId: "c", action: "viewProject", params: {} } });
-    return { ...stages, ...overrides };
-  };
+  const stagesWith = (overrides: Partial<Record<PipelineStage, PolicyStage>> = {}, status: "success" | "failure" = "success") => ({ ...realStages(status), ...overrides });
 
   it("records the proposal once, with the intake action name, before the one decision call", async () => {
     const { log, audit } = recorder();
     await createPipeline(stagesWith(), { audit }).evaluate(input());
     expect(log.map((entry) => entry.call)).toEqual(["proposed", "decided"]);
-    expect(log[0]!.attempted).toBe("viewProject");
+    expect(log[0]!.attempted).toBe("openProject");
     expect(log[1]!.decision).toMatchObject({ outcome: "ALLOWED" });
   });
 
@@ -125,7 +132,7 @@ describe("the runner's audit calls", () => {
   it("an unminted context is still reported to the auditor (which cannot attribute it): proposed, then decided", async () => {
     const { log, audit } = recorder();
     const evaluation = await createPipeline(stagesWith(), { audit }).evaluate({ ...input(), context: { plain: true } });
-    expect(evaluation.decision).toMatchObject({ outcome: "DENIED", reason: "dependency_failure" });
+    expect(evaluation.decision).toMatchObject({ outcome: "UNAUTHORIZED", reason: "unauthenticated" });
     expect(log.map((entry) => entry.call)).toEqual(["proposed", "decided"]);
     expect(log[0]!.context).toBeNull();
   });
@@ -178,16 +185,16 @@ describe("the runner's audit calls", () => {
     expect((await createPipeline(stages, { audit: recorder({ throwOn }).audit }).evaluate(input())).decision).toMatchObject({ outcome: "UNAUTHORIZED", reason: "permission_missing" });
   });
 
-  it("without an auditor nothing is recorded and nothing breaks", async () => {
+  it("without a runner auditor the real stages still publish the execution checkpoint", async () => {
     expect((await createPipeline(stagesWith()).evaluate(input())).executionStatus).toBe("success");
   });
 
   it("the proposal door passes the status to the planner feedback: success is ok, failure is try_later", async () => {
     for (const [status, category] of [["success", "ok"], ["failure", "try_later"]] as const) {
       const { createProposalGateway } = await import("./submitter.js");
-      const gateway = createProposalGateway({ pipeline: createPipeline(stagesWith({ execute: executeWith(status) })), ids: { newDecisionId: () => "decision" } });
+      const gateway = createProposalGateway({ pipeline: createPipeline(stagesWith({}, status)), ids: { newDecisionId: () => "decision" } });
       const { context, run } = await import("./fixtures.test-support.js");
-      expect(await gateway.forSession(context(), run).submit({ callId: "c", raw: "{}" })).toEqual({ outcome: "ALLOWED", category });
+      expect(await gateway.forSession(context(), run).submit({ callId: "c", raw: { action: "openProject", params: { projectId: "p1" } } })).toEqual({ outcome: "ALLOWED", category });
     }
   });
 });

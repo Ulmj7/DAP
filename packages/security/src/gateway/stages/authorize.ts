@@ -57,7 +57,7 @@ export function createAuthorizeStage({ registry, permissions, resources, pages, 
     const definition = provenDefinition(get, resolved);
     const permission: unknown = definition ? Reflect.get(definition, "requiredPermission") : undefined;
     const allowedPages: unknown = definition ? Reflect.get(definition, "allowedPages") : undefined;
-    if (!definition || !text(permission)) return fault();
+    if (!definition || !text(permission) || typeof definition.changesState !== "boolean") return fault();
     const restricted = allowedPages === "any" ? null : Array.isArray(allowedPages) && allowedPages.every(text) ? new Set<string>(allowedPages) : undefined;
     const target = validated.resource === null ? null : record(validated.resource);
     if (restricted === undefined || target === undefined || (target !== null && (!text(target.type) || !text(target.id)))) return fault();
@@ -85,6 +85,8 @@ export function createAuthorizeStage({ registry, permissions, resources, pages, 
       if (!page.ok) return page.reason === "denied" ? stop("DENIED", "context_not_allowed") : fault();
       if (!restricted.has(page.value as PageId)) return stop("DENIED", "context_not_allowed");
     }
+
+    if (definition.changesState && target === null) return stop("DENIED", "resource_not_available");
 
     // (d) the resource the action targets, if any.
     let resource: { readonly type: string; readonly id: string; readonly displayName: string } | null = null;
