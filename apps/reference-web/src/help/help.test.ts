@@ -280,12 +280,15 @@ describe("C01 rendering", () => {
   });
 
   it("a host that never answers times out into the safe unavailable state", async () => {
-    const { app } = mountWith("dashboard", "hang");
+    const { app, host } = mountWith("dashboard", "hang");
     await ask(app, "Where are the security settings?");
     expect(app.help.state()).toBe("submitting");
+    expect(host.calls[0]?.init.signal?.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(15_000);
     expect(app.help.state()).toBe("error");
     expect(result().textContent).toBe(copy.help.unavailable + copy.help.retry);
+    expect(host.calls[0]?.init.signal?.aborted).toBe(true);
+    expect(askButton().disabled).toBe(false);
   });
 });
 
@@ -374,6 +377,19 @@ describe("C01 guide handoff", () => {
     escape(dialog()!);
     // The original launcher was on Dashboard and was replaced during navigation.
     expect(document.activeElement).toBe(root.querySelector("h1"));
+  });
+
+  it("a refused second start leaves the active guide’s queued DOM input intact", async () => {
+    const { app, root } = mount("profile");
+    expect(app.guides.startWalkthrough("profileUpdate")).toEqual({ ok: true });
+    await turn();
+    expect(app.runtime.getState()).toMatchObject({ stepId: "name", status: "WAITING" });
+    const field = root.querySelector<HTMLInputElement>("#name")!;
+    field.value = "Ada";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(app.guides.startWalkthrough("findSecuritySettings")).toEqual({ ok: false, reason: "busy" });
+    await turn();
+    expect(app.runtime.getState()).toMatchObject({ walkthroughId: "profileUpdate", stepId: "save", status: "WAITING" });
   });
 
   it("closing and reopening during a start keeps one request in flight and drops the abandoned approval", async () => {

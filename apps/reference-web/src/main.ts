@@ -119,10 +119,10 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
     onLayoutChange:()=>overlay.reposition(),
     startGuide: (id, source) => {
       // A refusal must leave the current run, its dialog, and its focus target alone.
-      if (runActive() || catalog.get(id) === undefined) return begin(id);
+      if (runActive() || catalog.get(id) === undefined) return guides.startWalkthrough(id);
       returnTo = source;
       dialog.close(false);
-      return begin(id);
+      return guides.startWalkthrough(id);
     },
   });
   const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!dialog.isOpen()){event.preventDefault();runtime.cancel();}};

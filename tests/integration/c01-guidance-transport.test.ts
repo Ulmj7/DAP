@@ -49,8 +49,10 @@ async function start(who: "alice" | "bob") {
     const res = await transport.inject({ method: "POST", url, headers: { "content-type": "application/json" }, payload: JSON.stringify(payload) });
     return { status: res.statusCode, body: JSON.parse(res.body) as Record<string, unknown>, raw: res.body };
   };
-  const kinds = async () => (await withTenant(owner, tenant, (client) => client.query("SELECT event_type FROM public.sec_audit_events ORDER BY seq"))).rows.map((row: Record<string, unknown>) => row.event_type);
-  return { post, kinds };
+  const rows = async () => (await withTenant(owner, tenant, (client) => client.query(
+    "SELECT event_type, action_id, outcome, risk, params_view, execution_result FROM public.sec_audit_events ORDER BY seq",
+  ))).rows;
+  return { post, rows, receivedParams: guidance.trusted.receivedParams };
 }
 
 describe("C01 transport through the real Gateway (PostgreSQL)", () => {
@@ -59,11 +61,19 @@ describe("C01 transport through the real Gateway (PostgreSQL)", () => {
     const proposed = await t.post("/api/guidance", { query: "How do I change my profile name?", semanticContext: context });
     expect(proposed.body.kind).toBe("walkthrough");
     expect(proposed.raw).not.toContain("profileUpdate");
-    expect(await t.kinds()).toEqual([]);
+    expect(await t.rows()).toEqual([]);
+    expect(t.receivedParams()).toEqual([]);
     const proposalId = proposed.body.proposalId as string;
     expect((await t.post("/api/guidance/start", { proposalId })).body).toEqual({ kind: "start", walkthroughId: "profileUpdate" });
-    expect((await t.kinds()).length).toBeGreaterThan(0);
+    const trail = await t.rows();
+    expect(trail.map(row => row.event_type)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_ALLOWED", "AI_ACTION_EXECUTED"]);
+    expect(trail.map(row => row.action_id)).toEqual(["startWalkthrough", "startWalkthrough", "startWalkthrough"]);
+    expect(trail[1]).toMatchObject({ outcome: "ALLOWED", risk: "LOW", params_view: { "/walkthroughId": "profileUpdate" } });
+    expect(trail[2]).toMatchObject({ execution_result: "success" });
+    expect(t.receivedParams()).toEqual([{ walkthroughId: "profileUpdate" }]);
     expect((await t.post("/api/guidance/start", { proposalId })).body).toEqual({ kind: "unsupported", message: TRANSPORT_MESSAGES.proposalGone });
+    expect(await t.rows()).toEqual(trail);
+    expect(t.receivedParams()).toEqual([{ walkthroughId: "profileUpdate" }]);
   });
 
   it("a session without perm.guidance.start is refused with a safe message", async () => {
@@ -71,6 +81,10 @@ describe("C01 transport through the real Gateway (PostgreSQL)", () => {
     const proposed = await t.post("/api/guidance", { query: "How do I change my profile name?", semanticContext: context });
     const res = await t.post("/api/guidance/start", { proposalId: proposed.body.proposalId });
     expect(res.body).toEqual({ kind: "unsupported", message: TRANSPORT_MESSAGES.startRefused });
+    const trail = await t.rows();
+    expect(trail.map(row => row.event_type)).toEqual(["AI_ACTION_PROPOSED", "AI_ACTION_DENIED"]);
+    expect(trail[1]).toMatchObject({ outcome: "UNAUTHORIZED" });
+    expect(t.receivedParams()).toEqual([]);
     for (const word of ["perm.", "DENIED", "risk", "reason", "startWalkthrough"]) expect(res.raw).not.toContain(word);
   });
 });

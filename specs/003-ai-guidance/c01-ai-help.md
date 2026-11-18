@@ -43,7 +43,7 @@ transport binds `127.0.0.1` only and rejects requests whose `Host` is not loopba
 3. **Approve.** The host redeems the token (deleted on every attempt, so replay fails), then sends the walkthrough id through
    the existing path: `submitWalkthroughStart` → `AiSession.submit` → Policy Gateway → the trusted `startWalkthrough`
    executor. The executor calls a host-side **recording starter**; the host answers `start` only if the Gateway allowed it
-   *and* the recorder holds the id the executor actually received, and it returns that recorded id.
+   *and* the recorder holds the id the executor actually received for that same submission, and it returns that recorded id.
 4. **Browser start.** The browser calls `GuideApi.startWalkthrough(walkthroughId)` **only** with the id from a `kind:"start"`
    reply, closes the panel, and the existing Feature 002 overlay takes over. Raw model output never reaches `GuideApi`; a
    refusal or error never starts anything. A guide already running is handled by the existing `GuideApi` contract (a safe
@@ -85,7 +85,8 @@ a test scans the web source and build output for the variable name and the key p
 - **Start approvals are serialised and bounded.** At most 8 starts wait or run at once (a 9th is answered `503 unavailable`
   immediately). Each start has a 10 s budget that begins when it gets the slot, so the worst-case wait is about 80 s; the widget's
   own request timeout means the user never sees a hang. A timed-out start fails closed (its late result is discarded and can never
-  become an approval), but the abandoned Gateway call keeps running in the background.
+  become an approval), but the abandoned Gateway call may continue in the background. Its recording scope is closed on timeout,
+  so a late executor cannot provide or consume a newer submission’s approval.
 - **Cross-site callers.** A request whose `Sec-Fetch-Site` is present and not `same-origin`/`none` gets a fixed `403`
   (`same-site` is rejected on purpose: on loopback it means another localhost origin). Requests without the header (curl, tests)
   are allowed; this is a cost/CSRF guard for a dev demo, not authentication.

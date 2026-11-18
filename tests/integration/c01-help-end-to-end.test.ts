@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGuidanceClient, mountApp } from "../../apps/reference-web/src/main.js";
 import type { FetchLike, GuidanceClient, MountedApp } from "../../apps/reference-web/src/main.js";
+import { HELP_LIMITS } from "../../apps/reference-web/src/help/client.js";
+import { MAX_ANSWER_CHARS, MAX_ID_CHARS, MAX_MESSAGE_CHARS, MAX_QUERY_CHARS, MAX_SOURCES, MAX_TITLE_CHARS } from "../../packages/ai/src/guidance/limits.js";
 import { copy } from "../../apps/reference-web/src/copy.js";
 import type { AiSession } from "../../apps/reference-host/src/compose.js";
 import { createGuidanceHost } from "../../apps/reference-host/src/guidance/compose-guidance.js";
@@ -112,6 +114,13 @@ function expectNothingStarted(app: MountedApp, host: { starterCalls: string[] })
 }
 
 describe("C01 end to end: reference-web Help -> reference-host transport (fake model, fake Gateway, no PostgreSQL)", () => {
+  it("pins the browser’s restated wire limits to Feature 003", () => {
+    expect(HELP_LIMITS).toMatchObject({
+      queryChars: MAX_QUERY_CHARS, answerChars: MAX_ANSWER_CHARS, messageChars: MAX_MESSAGE_CHARS,
+      titleChars: MAX_TITLE_CHARS, sources: MAX_SOURCES, idChars: MAX_ID_CHARS,
+    });
+  });
+
   it("'How do I change my profile name?' proposes, starts nothing, then Start guide -> /start -> the real overlay", async () => {
     const host = setup();
     const app = mount(host.client);
