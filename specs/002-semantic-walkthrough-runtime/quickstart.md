@@ -125,7 +125,7 @@ Test honesty: jsdom cannot create trusted (`isTrusted`) clicks or typing, so the
 
 ## 7. Deferred (not built, not promised by this feature)
 
-The full AI Help widget (C01, Feature 004), Records, a full Guide Library page, administrator authoring of walkthroughs, analytics UI, localisation beyond English, and any guide that changes data. The OPTIONAL and FUTURE
+The AI Help widget (C01; built on branch `003-c01-ai-help`, see `specs/003-ai-guidance/c01-ai-help.md`, not yet merged), Records, a full Guide Library page, administrator authoring of walkthroughs, analytics UI, localisation beyond English, and any guide that changes data. The OPTIONAL and FUTURE
 tasks in `tasks.md` stay open on purpose.
 
 ## 8. Manual real-browser smoke (T223) - recorded 2026-11-18

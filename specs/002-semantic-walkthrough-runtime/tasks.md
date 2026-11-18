@@ -82,7 +82,7 @@ description: "Task list for the Semantic Walkthrough Runtime feature (002)"
 - [ ] T236 [FUTURE] Server-to-browser transport and the Gateway capability `startWalkthrough` (Feature 003 owns it; initial risk class LOW, see plan section 6).
 - [ ] T237 [FUTURE] Autonomous or high-risk runtime-initiated operations (must go through the Feature 001 Gateway and confirmation when pulled in).
 
-- [ ] T244 [FUTURE] C01 AI help widget in the browser: needs a host endpoint that carries `askAndStart` and an approved start to the browser (Feature 003 has no transport); its own slice, planned separately.
+- [ ] T244 [FUTURE] C01 AI help widget in the browser: needs a host endpoint that carries `askAndStart` and an approved start to the browser (Feature 003 has no transport); its own slice, planned separately. **Status 2026-11-18:** built and reviewed on branch `003-c01-ai-help` (not merged into `dev`); it adds the narrow host endpoint, a browser Help widget and a proposal-then-click start handoff, and is described in `specs/003-ai-guidance/c01-ai-help.md`. Left unchecked here until that branch is merged and passes final QA.
 - [ ] T245 [FUTURE] Admin screens S05-S07 (guide list, editor, analytics and audit summaries): Feature 004.
 
 ## Dependencies and order
