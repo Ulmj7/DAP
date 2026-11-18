@@ -19,6 +19,9 @@
     },
     {
       "path": "../../packages/security"
+    },
+    {
+      "path": "../../packages/walkthrough"
     }
   ]
 }

@@ -63,7 +63,7 @@ const ALLOWED_MANIFEST_EDGES: Readonly<Record<string, readonly string[]>> = {
   "packages/actions": ["@dap/contracts"],
   "packages/security": ["@dap/contracts"],
   "packages/testkit": ["@dap/contracts", "@dap/security", "@dap/ai"],
-  "apps/reference-host": ["@dap/contracts", "@dap/ai", "@dap/actions", "@dap/security"],
+  "apps/reference-host": ["@dap/contracts", "@dap/ai", "@dap/actions", "@dap/security", "@dap/walkthrough"], // Feature 004: @dap/walkthrough only through the pure `/authoring` subpath (tests/architecture/authoring-boundary.test.ts)
   // Feature 002: a leaf package and its demo app. The detailed rules are in tests/architecture/walkthrough-boundary.test.ts.
   "packages/walkthrough": [],
   "apps/reference-web": ["@dap/walkthrough"],
@@ -189,8 +189,11 @@ describe("the reference host (T131, T136): its AI-facing handle is a submit func
     expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`, `${APP}src/guidance/anthropic-model.ts`, `${APP}src/guidance/capability.ts`, `${APP}src/guidance/compose-guidance.ts`, `${APP}src/guidance/demo-model.ts`, `${APP}src/guidance/demo-render.ts`, `${APP}src/guidance/knowledge-loader.ts`, `${APP}src/guidance/start-bridge.ts`, `${APP}src/guidance/walkthrough-summaries.ts`, `${APP}src/http/transport.ts`]);
     expect(appImportersOf(graph, "packages/actions/")).toEqual([]);
   });
-  it("Feature 003 Slice 3: no production module of the host imports the walkthrough runtime or the testkit (the starter is a structural interface the composition root fills)", () => {
-    expect(appImportersOf(graph, "packages/walkthrough/")).toEqual([]);
+  it("Feature 003 Slice 3 / Feature 004: no production module of the host imports the walkthrough runtime or the testkit; the ONLY walkthrough edge is the pure validator subpath, from src/authoring/ alone (the starter is a structural interface the composition root fills)", () => {
+    const walkthroughImporters = appImportersOf(graph, "packages/walkthrough/");
+    expect(walkthroughImporters.filter((source) => !source.startsWith(`${APP}src/authoring/`))).toEqual([]);
+    const targets = new Set(graph.modules.filter((module) => walkthroughImporters.includes(module.source)).flatMap((module) => module.dependencies.map((dependency) => dependency.resolved).filter((resolved) => resolved.startsWith("packages/walkthrough/"))));
+    expect([...targets]).toEqual(["packages/walkthrough/src/authoring/index.ts"]);
     expect(appImportersOf(graph, "packages/testkit/")).toEqual([]);
   });
   it("nothing reaches the host from the AI layer (the transitive walk above already excludes apps/): the AI layer is handed the submit function and cannot name the host", () => {
