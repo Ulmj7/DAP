@@ -53,8 +53,8 @@ describe("valid definitions", () => {
     const before = JSON.stringify(input);
     const r = validateDefinition(input);
     expect(JSON.stringify(input)).toBe(before);
-    (input.steps[1] as Step).text = "Changed afterwards.";
-    expect(r.ok && (r.definition.steps[1] as Step).text).toBe("Do the step s1.");
+    (input.steps[1] as unknown as Step).text = "Changed afterwards.";
+    expect(r.ok && (r.definition.steps[1] as unknown as Step).text).toBe("Do the step s1.");
   });
   it("the three real built-in step shapes the app ships (navigate, input, click + verify, ack) are all within the bounds", () => {
     ok(def({ steps: [nav("n1", "profile", "s1"), guide("s1", "profile.nameInput", "s2", { wait: "input" }), guide("s2", "profile.saveButton", "done", { verify: "profile.saved", recover: "s3" }), guide("s3", "profile.nameInput", "s2", { wait: "input" }), done()] }));
