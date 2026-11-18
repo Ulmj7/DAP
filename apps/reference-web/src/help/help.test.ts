@@ -158,6 +158,8 @@ describe("C01 request", () => {
     expect(Object.keys(body).sort()).toEqual(["query", "semanticContext"]);
     expect(body.query).toBe("What is two-factor authentication?");
     expect(body.semanticContext).toEqual(expected);
+    expect(JSON.stringify(body.semanticContext)).not.toContain(body.query as string);
+    expect(panel().hasAttribute("data-ai-ignore")).toBe(true);
     const raw = String(call!.init.body);
     for (const leak of ["SecretDisplayName", "PasswordNeverShared", "private@example.test", copy.profile.name, "<", "data-ai"]) expect(raw).not.toContain(leak);
   });
@@ -557,6 +559,22 @@ describe("C01 client guards", () => {
     expect(parseGuidance({ kind: "unsupported" }, true).kind).toBe("unavailable");
     expect(parseStart({ kind: "unsupported", message: 7 }, true).kind).toBe("unavailable");
     expect(parseGuidance({ kind: "clarify", message: "Which guide?" }, false).kind).toBe("unavailable");
+  });
+
+  it("refuses oversized streamed replies before EOF and cancels the reader", async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode("x".repeat(16_001))); },
+      cancel,
+    });
+    const client = createGuidanceClient({ fetch: async () => new Response(stream) });
+    const settled = vi.fn();
+    const pending = client.ask("q", { route: "", elements: [] }).then(settled);
+    await turn();
+    expect(settled).toHaveBeenCalledWith({ kind: "unavailable" });
+    expect(cancel).toHaveBeenCalledOnce();
+    await pending;
   });
 
   it("without a fetch the client is unavailable rather than throwing", async () => {

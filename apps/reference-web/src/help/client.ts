@@ -69,6 +69,36 @@ export function parseStart(body: unknown, ok: boolean): StartOutcome {
   return UNAVAILABLE;
 }
 
+async function readReply(response: Response, signal: AbortSignal): Promise<string | null> {
+  if (response.body === null || signal.aborted) return null;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const cancel = () => { void reader.cancel().catch(() => undefined); };
+  signal.addEventListener("abort", cancel, { once: true });
+  let raw = "";
+  let bytes = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (signal.aborted) return null;
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      // UTF-8 needs at most three bytes per UTF-16 unit. Bound decoding as well as the retained text.
+      if (bytes > 3 * HELP_LIMITS.responseChars) { cancel(); return null; }
+      raw += decoder.decode(chunk.value, { stream: true });
+      if (raw.length > HELP_LIMITS.responseChars) { cancel(); return null; }
+    }
+    raw += decoder.decode();
+    return raw.length <= HELP_LIMITS.responseChars ? raw : null;
+  } catch {
+    cancel();
+    return null;
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    reader.releaseLock();
+  }
+}
+
 export function createGuidanceClient(options: { readonly fetch?: FetchLike | undefined; readonly timeoutMs?: number } = {}): GuidanceClient {
   const timeoutMs = options.timeoutMs ?? HELP_LIMITS.timeoutMs;
   /** One bounded JSON POST. Resolves to the parsed body and status, or null for any failure (network, abort, timeout, oversize, bad JSON). */
@@ -83,8 +113,8 @@ export function createGuidanceClient(options: { readonly fetch?: FetchLike | und
         method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
         headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(payload),
       });
-      const raw = await response.text();
-      if (raw.length > HELP_LIMITS.responseChars) return null;
+      const raw = await readReply(response, controller.signal);
+      if (raw === null) return null;
       return { body: JSON.parse(raw) as unknown, ok: response.ok };
     })().catch(() => null);
     try { return await Promise.race([exchange, expired]); } finally { clearTimeout(timer); }
