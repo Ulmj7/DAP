@@ -21,6 +21,7 @@
     "test:conformance": "vitest run --project conformance",
     "test:integration": "vitest run --project integration",
     "test:walkthrough": "vitest run --project unit --project dom --project arch packages/walkthrough apps/reference-web tests/architecture/walkthrough-boundary.test.ts",
+    "test:walkthrough:proof": "vitest run --project dom --project integration apps/reference-web/src/e2e.test.ts tests/integration/walkthrough-summary-parity.test.ts",
     "dev:web": "vite apps/reference-web",
     "build:web": "vite build apps/reference-web",
     "test:m1-gate": "node scripts/m1-gate.mjs",

@@ -2,6 +2,8 @@ name: ci
 
 # Feature 001 (AI Security Foundation), Milestone M1: enforces only what the M1 scope requires (lint, types, dependency boundaries,
 # PostgreSQL migrations, the security, conformance and integration suites, the reference-host vertical path, and the single M1 gate).
+# Feature 002 (semantic walkthrough runtime, UI P0) adds three steps before the M1 gate: its focused suite, its two closure proofs and the web build.
+# None of them needs PostgreSQL, a browser download, a model provider or the network beyond `npm ci`.
 # Optional and future checks (mutation, determinism, coverage report, container build, scanners) are deliberately not here.
 on:
   push:
@@ -85,5 +87,12 @@ jobs:
         run: npm test
       - name: Guidance (offline provider, PostgreSQL)
         run: npm run test:guidance
+      - name: Walkthrough runtime, reference web UI and boundaries (Feature 002)
+        run: npm run test:walkthrough
+      - name: Feature 002 closure proofs (T221 end-to-end in a real DOM, T240 host summaries equal the real catalog)
+        # Explicit file paths: vitest fails if either file is missing, so neither proof can be dropped silently.
+        run: npm run test:walkthrough:proof
+      - name: Reference web build
+        run: npm run build:web
       - name: M1 gate (authoritative)
         run: npm run test:m1-gate
