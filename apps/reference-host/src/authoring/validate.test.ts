@@ -273,7 +273,7 @@ describe("issues are safe and bounded", () => {
     expect(found.length).toBeLessThanOrEqual(MAX_ISSUES);
     expect(capIssues(Array.from({ length: 50 }, () => "x"))).toHaveLength(MAX_ISSUES);
     expect(capIssues(["a".repeat(500)])[0]).toHaveLength(MAX_ISSUE_CHARS);
-    expect(capIssues(["line1\nline2\u0000‮"])[0]).toBe("line1 line2  ");
+    expect(capIssues(["line1\nline2" + String.fromCharCode(0) + String.fromCharCode(0x202e)])[0]).toBe("line1 line2  ");
   });
   it("an unknown key's own name (typed by the maintainer) cannot smuggle a line break or a long text", () => {
     const found = issues(def({ ["bad\nkey" + "x".repeat(300)]: 1 }));

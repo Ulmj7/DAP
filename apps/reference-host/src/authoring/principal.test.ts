@@ -26,7 +26,7 @@ describe("demoRoleFromHeaders", () => {
 });
 
 describe("createDemoPrincipalResolver", () => {
-  const open = vi.fn(async (_token: string): Promise<AiSession | null> => ({ submit: async () => ({ outcome: "ALLOWED", category: "ok" }) }));
+  const open = vi.fn<(token: string) => Promise<AiSession | null>>(async () => ({ submit: async () => ({ outcome: "ALLOWED", category: "ok" }) }));
   const resolver = (over: Partial<Parameters<typeof createDemoPrincipalResolver>[0]> = {}) => createDemoPrincipalResolver({ sessions: SESSIONS, userToken: USER_TOKEN, maintainerToken: MAINT_TOKEN, openSession: open, ...over });
 
   it("no header or an unknown one is the ordinary user; the maintainer header selects the maintainer session", async () => {

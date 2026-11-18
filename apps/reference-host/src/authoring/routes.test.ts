@@ -68,7 +68,8 @@ function build(over: { registryData?: TrustedRegistryData; feedback?: (action: s
   const store = new FakeStore();
   const submitted: Submitted[] = [];
   const principals = new Map<Who, AuthoringPrincipal>();
-  for (const [who, tenant, permissions] of [["maintainer", TENANT_A, [MAINTAIN_PERMISSION]], ["user", TENANT_A, []], ["maintainerB", TENANT_B, [MAINTAIN_PERMISSION]]] as const) {
+  const table: [Who, string, string[]][] = [["maintainer", TENANT_A, [MAINTAIN_PERMISSION]], ["user", TENANT_A, []], ["maintainerB", TENANT_B, [MAINTAIN_PERMISSION]]];
+  for (const [who, tenant, permissions] of table) {
     principals.set(who, {
       key: `fake-${who}`, tenantId: tenant, actor: who, permissions: new Set(permissions),
       // The FAKE Gateway: refuses without the permission, otherwise applies the executors' rules to the fake store.

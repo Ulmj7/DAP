@@ -50,7 +50,7 @@ async function start(options: Options = {}) {
   pools.push(pool);
   const store = options.sharedStore ?? createPostgresWalkthroughStore(pool);
   const authoring = createAuthoringExtension({ store, ...(options.registryData === undefined ? {} : { registryData: options.registryData }) });
-  const { host, trusted } = await composeReferenceHost(
+  const { host } = await composeReferenceHost(
     { NODE_ENV: "test", DAP_ALLOW_DEV_AUTH: "1", DAP_DATABASE_URL: process.env.DAP_DATABASE_URL, DAP_ENABLED_ACTIONS: options.enabled ?? "demoLookup,saveWalkthroughDraft,setWalkthroughStatus", DEV_SESSIONS: JSON.stringify(sessions) },
     { extensions: [authoring.extension] },
   );
