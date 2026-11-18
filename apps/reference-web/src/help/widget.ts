@@ -52,6 +52,7 @@ export function createHelp(options: HelpOptions): HelpWidget {
   /** Bumped on close and on every new request, so a late reply for an exchange the user has left is dropped. */
   let generation = 0;
   let lastQuery = "";
+  let inFlight = false;
 
   const launcher = h("button", { type: "button", class: "help-launcher", "aria-label": copy.help.title, "aria-expanded": "false", "aria-controls": "dap-help-panel", "data-ai-ignore": true }) as HTMLButtonElement;
   launcher.append(helpIcon(doc), h("span", { class: "help-launcher-text" }, copy.help.launcher));
@@ -98,7 +99,7 @@ export function createHelp(options: HelpOptions): HelpWidget {
         const block = h("div", { class: "help-recommendation" }, paragraph(copy.help.recommendation, "help-lead"), h("h3", { class: "help-guide-title" }, outcome.title));
         if (outcome.message !== null) block.append(paragraph(outcome.message));
         block.append(startButton);
-        startButton.addEventListener("click", () => { void startGuide(outcome.proposalId, startButton); }, { once: true });
+        startButton.addEventListener("click", () => { void startGuide(outcome.proposalId); }, { once: true });
         show("walkthroughRecommendation", block); return;
       }
       case "clarify": show("clarify", paragraph(outcome.message)); input.focus(); return;
@@ -107,24 +108,38 @@ export function createHelp(options: HelpOptions): HelpWidget {
     }
   };
 
+  function finishRequest(mine: number): boolean {
+    inFlight = false;
+    if (mine === generation) return true;
+    // Closing abandons the result, but reopening still waits for the one in-flight request.
+    if (state === "submitting") show("idle");
+    return false;
+  }
+
   async function ask(query: string): Promise<void> {
     const trimmed = query.trim();
-    if (state === "closed" || state === "submitting" || trimmed.length === 0 || trimmed.length > HELP_LIMITS.queryChars) return;
+    if (state === "closed" || inFlight || trimmed.length === 0 || trimmed.length > HELP_LIMITS.queryChars) return;
+    inFlight = true;
     lastQuery = trimmed;
     const mine = ++generation;
     show("submitting");
     // The only context is the walkthrough runtime's own semantic snapshot, read at submit time; nothing is read from the page.
-    const outcome = await client.ask(trimmed, guides.context());
-    if (mine === generation) render(outcome);
+    let outcome: GuidanceOutcome;
+    try { outcome = await client.ask(trimmed, guides.context()); }
+    catch { outcome = { kind: "unavailable" }; }
+    if (finishRequest(mine)) render(outcome);
   }
 
-  async function startGuide(proposalId: string, source: HTMLButtonElement): Promise<void> {
-    if (state !== "walkthroughRecommendation") return;
+  async function startGuide(proposalId: string): Promise<void> {
+    if (state !== "walkthroughRecommendation" || inFlight) return;
+    inFlight = true;
     const mine = ++generation;
-    source.disabled = true; show("submitting");
+    show("submitting");
     status.textContent = copy.help.starting; // announced once, by the status region
-    const outcome = await client.start(proposalId);
-    if (mine !== generation) return;
+    let outcome: Awaited<ReturnType<GuidanceClient["start"]>>;
+    try { outcome = await client.start(proposalId); }
+    catch { outcome = { kind: "unavailable" }; }
+    if (!finishRequest(mine)) return;
     if (outcome.kind === "refused") { show("unsupported", paragraph(copy.help.refused)); return; }
     if (outcome.kind === "unavailable") { show("error", retryBlock()); return; }
     // Only the id the host approved reaches the runtime, through the app's normal start path; the runtime's own answer decides what happens.
@@ -145,7 +160,7 @@ export function createHelp(options: HelpOptions): HelpWidget {
     panel.hidden = false; launcher.setAttribute("aria-expanded", "true"); doc.body.classList.add("dap-help-open"); options.onLayoutChange?.();
     // The phone sheet covers the page, so it is announced as a (non-modal) dialog; nothing is trapped and the page stays reachable.
     if (mobile()) panel.setAttribute("role", "dialog"); else panel.removeAttribute("role");
-    show("idle"); doc.addEventListener("keydown", escape);
+    show(inFlight ? "submitting" : "idle"); doc.addEventListener("keydown", escape);
     input.focus();
   }
   function close(restoreFocus = true): void {

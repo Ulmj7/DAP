@@ -364,6 +364,32 @@ describe("C01 guide handoff", () => {
     expect(document.activeElement).toBe(root.querySelector("h1"));
   });
 
+  it("closing and reopening during a start keeps one request in flight and drops the abandoned approval", async () => {
+    let finish: (response: Response) => void = () => undefined;
+    const fetch = vi.fn<FetchLike>(url => url.endsWith("/start")
+      ? new Promise<Response>(resolve => { finish = resolve; })
+      : Promise.resolve(new Response(JSON.stringify(PROPOSAL))));
+    const { app } = mount("dashboard", createGuidanceClient({ fetch }));
+    await ask(app, "How do I change my profile name?");
+    const start = buttonByText(result(), copy.guide.start)!;
+    start.focus();
+    start.click();
+    expect(document.activeElement).toBe(input());
+    expect(app.help.state()).toBe("submitting");
+    buttonByText(panel(), copy.help.close)!.click();
+    launcherButton().click();
+    input().form!.requestSubmit();
+    panel().querySelector<HTMLButtonElement>(".help-suggestion")!.click();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    finish(new Response(JSON.stringify(APPROVED)));
+    await turn();
+    expect(app.help.state()).toBe("idle");
+    expect(app.runtime.getState().status).toBe("IDLE");
+    expect(overlayParts()).toHaveLength(0);
+    await ask(app, "How do I change my profile name?");
+    expect(app.help.state()).toBe("walkthroughRecommendation");
+  });
+
   // jsdom has no layout, so the page reflow the docked panel causes (body padding while Help is open) is modelled: the display name field sits 200px
   // further left while `dap-help-open` is on the body. The ring must always follow the layout that is actually on screen.
   function withHelpReflow(run: () => Promise<void>): Promise<void> {
