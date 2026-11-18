@@ -87,18 +87,38 @@ npm run test:m1-gate
 CI (`.github/workflows/ci.yml`) runs, in order: install, lint, typecheck, dependency boundaries, architecture tests, migrations, security, conformance and integration tests, the reference-host vertical path, the full suite,
 the guidance suite, then the Feature 002 steps (`test:walkthrough`, `test:walkthrough:proof`, `build:web`), then the M1 gate. No step needs a model provider, a browser download or the network beyond `npm ci`.
 
-Local gate results, recorded 2026-11-18 on a fresh PostgreSQL 16 from `deploy/compose.yaml` (Linux, 16 CPUs, Docker default settings), CI order replayed step by step:
+Local gate results, recorded 2026-11-18 at head `fcdd271` on a fresh PostgreSQL 16 from `deploy/compose.yaml` (Linux, 16 CPUs, Docker default settings), run in this order; every step exited 0:
 
 | Step | Result |
 | --- | --- |
-| lint, typecheck, dependency boundaries, architecture (9 files / 640 tests), migrations, security, integration (incl. reference-host vertical path), guidance, `test:walkthrough` (25 files / 711 tests; was 23 / 688 at the start of U3), `test:walkthrough:proof` (2 / 20), `build:web` | pass |
-| `npm test`, conformance, `npm run test:m1-gate` | **fail on one test**, see below |
+| `npm ci`, `npm run db:migrate`, lint, typecheck | pass |
+| `npm run check:deps` | pass (358 modules, 1440 dependencies, no violations) |
+| `npm run test:arch` | 9 files / 640 tests |
+| `npm run test:security` | 26 files / 969 passed, 76 todo |
+| `npm run test:conformance` | 13 files / 209 tests |
+| `npm run test:integration` | 7 files / 134 tests |
+| `npm run test:guidance` | 31 files / 921 tests |
+| `npm run test:walkthrough` | 25 files / 713 tests (was 23 / 688 before U3) |
+| `npm run test:walkthrough:proof` | 2 files / 20 tests |
+| `npm run build:web` | pass |
+| `npm test` | 195 files / 6857 passed, 76 todo (6933) |
+| `npm run test:m1-gate` | 57 files / 2038 passed, 76 todo (2114) |
 
-The one failure is `packages/security/src/state/conformance/state-postgres.test.ts` > RateLimiter conformance > "never loses concurrent hits: exactly the limit wins in each of 100 trials": `Test timed out in 5000ms`.
-It is not caused by this feature: the same test fails the same way on the untouched baseline `e8257e6` (the M1 gate there: 1 failed, 2027 passed, 56 files; with Feature 002 U3: 1 failed, 2037 passed, 57 files, +1 file and +10 tests from the parity test).
-It is a speed limit, not a wrong answer: with `--testTimeout=60000` it passes in about 10 s (64 concurrent hits x 100 trials, each a transaction under an advisory lock, about 1.5 ms per hit here). Turning off `synchronous_commit` did not help, and round trips to the database are 0.065 ms, so neither disk sync nor the network is the cause.
-With only that timeout raised on the command line, `npm test` passes completely: 195 files / 6855 tests / 76 todo (baseline `e8257e6`: 192 / 6822 / 76, so +3 files and +33 tests). The gate runs its own vitest configuration and takes no timeout option, so it was not re-run green; nothing in it other than this test reported a problem.
-No repository file was changed to work around this. Whether CI hardware is fast enough is not known from this machine.
+Against the Feature 001 baseline `e8257e6`: the M1 gate there has 56 files and 2028 tests once the slow test below passes, so Feature 002 adds 1 file and 10 tests to it (the parity test). `npm test` there has 192 files / 6822 tests; this branch has 195 / 6857.
+
+GitHub Actions, workflow `.github/workflows/ci.yml` (all 21 steps, no step skipped, no `continue-on-error`, nothing relaxed):
+
+| Run | Head | Result |
+| --- | --- | --- |
+| #6 (id 44098450660, 2026-11-17) | `e8257e6` (dev) | passed |
+| id 44233471964, throwaway probe branch with no changes | `e8257e6` | **failed** at "PostgreSQL conformance tests" (the RateLimiter test below) |
+| #7 (id 44227906596) | `93afc9a` | **failed** at the same step; the later steps, including the three Feature 002 steps and the M1 gate, were skipped |
+| #9 (id 44235056198) | `fcdd271` | **passed**: install, lint, typecheck, dependency boundaries, architecture, migrations, security, conformance, integration, host vertical path, full suite, guidance, `test:walkthrough`, `test:walkthrough:proof`, `build:web`, M1 gate |
+
+The failure in runs 44233471964 and #7 is one test, `packages/security/src/state/conformance/state-postgres.test.ts` > RateLimiter conformance > "never loses concurrent hits: exactly the limit wins in each of 100 trials": `Test timed out in 5000ms`.
+It is a Feature 001 speed limit that this feature did not cause: the untouched baseline fails the same way, locally and in CI, and run #6 shows the baseline passing once, so on GitHub's runners the test sits right at the 5 s default. It runs 100 trials of 64 concurrent hits, each a transaction under an advisory lock, about 10 s on the machine used here.
+Commit `fcdd271` (`test(security): allow postgres rate-limiter conformance test enough time`) gives only that case a 30 s time budget through an optional `timeoutMs` on the shared conformance case. The implementation, trial count, hit count, concurrency, expected values and assertions are unchanged. Against `e8257e6`, the only changes under `packages/security`, `packages/ai`, `packages/contracts`, `packages/actions`, `db` and `apps/reference-host` are that conformance file and a comment-only edit in `apps/reference-host/src/guidance/walkthrough-summaries.ts` (it now points to the parity test); no production code changed there. With it the test passes in about 8.6 s locally and the whole suite passes in CI.
+Until `fcdd271`, the full suite, the conformance suite and the M1 gate did not pass at the default 5 s timeout on the machine used here.
 
 Test honesty: jsdom cannot create trusted (`isTrusted`) clicks or typing, so the jsdom tests mount the app with `trustedEventsOnly: false` and dispatch real DOM events through the real bridge
 (one test keeps the production default and proves scripted events are ignored). That the trusted-event path works is shown by the manual smoke below, where the app runs with its default.
