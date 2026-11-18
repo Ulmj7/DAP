@@ -31,13 +31,17 @@ export function createOverlay(doc:Document):Overlay {
    if(target){const el=target.element;let visible=el.isConnected;for(let n:Element|null=el;n;n=n.parentElement){if(n.hasAttribute("hidden")||n.hasAttribute("inert")||n.getAttribute("aria-hidden")==="true"||view.getComputedStyle(n).display==="none")visible=false;}if(view.getComputedStyle(el).visibility==="hidden")visible=false;if(!visible){hide();return;}}
    const rect=target?.rect()??{left:view.innerWidth/2,top:0,width:0,height:0};
    if(ring)Object.assign(ring.style,{left:`${rect.left-4}px`,top:`${rect.top-4}px`,width:`${rect.width+8}px`,height:`${rect.height+8}px`});
+   const scrolled=card.scrollTop; // measuring needs the card uncapped, which makes a browser clamp its scroll offset to 0
    card.style.maxHeight="";const measured=card.getBoundingClientRect();const position=placeCard({target:rect,card:{width:measured.width||320,height:measured.height||240},viewport:{width:view.innerWidth,height:view.innerHeight}});
    Object.assign(card.style,{left:`${position.left}px`,top:`${position.top}px`});card.setAttribute("data-placement",position.placement);
-   if(position.maxHeight!==undefined)card.style.maxHeight=`${position.maxHeight}px`;
+   if(position.maxHeight!==undefined){card.style.maxHeight=`${position.maxHeight}px`;if(scrolled)card.scrollTop=scrolled;}
    // Phones: the card must not hide the control. Instant (not smooth) so the scroll event it causes re-places once and settles.
    if(position.scrollBy&&typeof view.scrollBy==="function")view.scrollBy({top:position.scrollBy,behavior:"instant"});
-  };place();view.addEventListener("scroll",place,true);view.addEventListener("resize",place);
-  const reposition=place;cleanup=()=>{view.removeEventListener("scroll",reposition,true);view.removeEventListener("resize",reposition);};
+  };
+  // The scroll listener is capturing, so it also hears the card scrolling itself; that is not a reason to re-place it.
+  const onScroll=(event:Event)=>{if(card&&event.target instanceof Node&&card.contains(event.target))return;place();};
+  place();view.addEventListener("scroll",onScroll,true);view.addEventListener("resize",place);
+  cleanup=()=>{view.removeEventListener("scroll",onScroll,true);view.removeEventListener("resize",place);};
  }
  });
 }

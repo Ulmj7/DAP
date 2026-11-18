@@ -58,3 +58,34 @@ it("the overlay applies the scroll and caps the card height it was told to",()=>
   expect(scrollBy).toHaveBeenCalled();const arg=scrollBy.mock.calls[0]![0] as {top:number};expect(arg.top).not.toBe(0);
  }finally{HTMLElement.prototype.getBoundingClientRect=proto;Object.defineProperty(window,"innerWidth",{configurable:true,value:saved.w});Object.defineProperty(window,"innerHeight",{configurable:true,value:saved.h});view.scrollBy=saved.s;}
 });
+// jsdom has no layout, so model the one browser rule this depends on: a capped card scrolls, and an uncapped one cannot (scrollTop clamps to 0).
+function shortPhone(run:(card:HTMLElement,scrollTopOf:()=>number,measures:()=>number)=>void){
+ let top=0,measured=0; // the card's scroll offset; a browser clamps it to 0 the moment layout runs with the card uncapped
+ const view=window as unknown as {innerWidth:number;innerHeight:number};const saved={w:view.innerWidth,h:view.innerHeight};
+ Object.defineProperty(window,"innerWidth",{configurable:true,value:568});Object.defineProperty(window,"innerHeight",{configurable:true,value:320});
+ const proto=HTMLElement.prototype.getBoundingClientRect;
+ HTMLElement.prototype.getBoundingClientRect=function(this:HTMLElement){if(this.getAttribute("data-ai-overlay")==="tooltip"){measured++;if(this.style.maxHeight==="")top=0;}return (this.getAttribute("data-ai-overlay")==="tooltip"?{left:8,top:0,width:552,height:parseInt(this.style.maxHeight||"290",10),right:560,bottom:290}:{left:41,top:8,width:238,height:44,right:279,bottom:52}) as DOMRect;};
+ try{
+  const root=document.createElement("div");root.replaceChildren(input());document.body.append(root);const target=createTargets(root,registry).find("profile.name")!;
+  const overlay=createOverlay(document);cleanup.push(overlay.hide);overlay.show(target,{title:"Name",text:"Type here.",ack:true});
+  const card=document.querySelector<HTMLElement>("[data-ai-overlay=tooltip]")!;
+  Object.defineProperty(card,"scrollTop",{configurable:true,get:()=>top,set:(n:number)=>{top=card.style.maxHeight===""?0:Math.max(0,Math.min(n,50));}});
+  run(card,()=>top,()=>measured);
+ }finally{HTMLElement.prototype.getBoundingClientRect=proto;Object.defineProperty(window,"innerWidth",{configurable:true,value:saved.w});Object.defineProperty(window,"innerHeight",{configurable:true,value:saved.h});}
+}
+it("a capped card stays scrollable: scrolling inside it does not re-place it and reset its position",()=>{
+ shortPhone((card,scrollTopOf,measures)=>{
+  expect(card.style.maxHeight).toBe("240px");card.scrollTop=50;expect(scrollTopOf()).toBe(50);
+  const before=measures();card.dispatchEvent(new Event("scroll"));
+  expect(measures()).toBe(before); // the card's own scroll is not a reason to re-place it (and would loop: restoring the offset scrolls the card again)
+  expect(scrollTopOf()).toBe(50);expect(card.style.maxHeight).toBe("240px");
+ });
+});
+it("re-placing a capped card (page scroll, resize, status update) keeps how far the card was scrolled",()=>{
+ shortPhone((card,scrollTopOf)=>{
+  card.scrollTop=50;
+  window.dispatchEvent(new Event("resize"));expect(scrollTopOf()).toBe(50);
+  window.dispatchEvent(new Event("scroll"));expect(scrollTopOf()).toBe(50);
+  expect(card.style.maxHeight).toBe("240px");
+ });
+});
