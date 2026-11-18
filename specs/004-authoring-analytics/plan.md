@@ -176,6 +176,18 @@ A terminal event without a matching start is ignored, so completed + cancelled <
 
 QA cadence: one review after Slice 1 (the security-relevant part), one final review after Slice 3.
 
+## 14a. Slice 1 implementation notes (2026-11-18)
+
+Only real deviations and decisions; everything else is as planned.
+- **`withTenant` is NOT exported from `@dap/security`.** The public API gives the host a pool (`createPostgresPool`) but no tenant-scoped transaction, so `apps/reference-host/src/authoring/tenant-tx.ts` reproduces the same semantics (BEGIN; transaction-local `set_config('app.tenant_id')`; COMMIT whose command is checked; ROLLBACK on error; discard the connection if ROLLBACK fails). It is typed from `createPostgresPool` through `authoring/pool.ts` (the authoring code's only import of `@dap/security`, pinned in `graph.test.ts`), so the host declares no driver dependency. T404's wording "additive export `withTenant`" is therefore superseded; Feature 001 packages are unchanged.
+- **071 is deferred to T412.** Slice 1 adds only `070_walkthrough_definitions.sql`; no event table, reporter, events or analytics route.
+- **Store contract.** `setStatus(scope, id, status, isValid)` locks the row, runs the validator on the STORED definition inside the transaction, enforces the cap of 50 under a per-tenant advisory lock, then updates. So "re-validate on publish" cannot race a concurrent edit. `saveDraft` is one `INSERT ... ON CONFLICT DO UPDATE ... WHERE status = 'draft'`.
+- **One authoring schema** (`authoring/schema.ts`) is both the `validateDefinition` first step and the capability `inputSchema`. It states shape and size only (the step is the union of the three kinds' field names; `kind`, `wait`, `target` are bounded strings), so every rule about targets, waits, routes, postconditions, transitions and reachability comes from the ONE Feature 002 validator, in its own wording. The status enum is `string(max 9) -> enum` because Feature 001 requires `maxLength` on every string.
+- **List response shape** `GET /api/admin/walkthroughs` is `{ authored: [{ id, title, description, status, stepCount, updatedAt }], builtIn: [{ id, title, description }] }`; `GET /api/walkthroughs/published` is `{ walkthroughs: [definition, ...] }` (each re-validated, invalid ones left out). Errors are `{ kind, message }` (`unauthenticated` 401, `forbidden` 403, `not_found` 404, `malformed` 400, `conflict` 409, `unavailable` 503) and `{ kind: "invalid", message, issues }` on 422; the transport's own `{ kind: "unsupported", message }` still answers framework-level errors (bad Host, cross-site, 413, 415).
+- **Gateway limits recorded.** The default `maxPayloadBytes` (16 KiB) is enough for a maximum authoring-size definition (24 steps measured in `authoring-gateway.test.ts`), and the dev server opens a fresh Gateway session per write, so the per-turn limits do not bite; the per-user-per-capability limit (20 per minute) applies to editing and needs no configuration for the demo.
+- **Dev role switch** lives only in `authoring/principal.ts` (`X-Demo-Role`, two server-held sessions, unknown = user, maintainer without a configured token = user). Permissions come from the host's session table; the header is a demo convenience, not the authority.
+- `http/transport.ts` gained one additive `export` (`exactBody`); `approved-start.ts` and all guidance code are untouched.
+
 ## 15. Largest scope-creep risks
 
 1. **Editor gold-plating**: drag and drop, centre preview pane, branching, recovery UI, rich text. Held off by the REQUIRED/OPTIONAL split and the three-step-kind rule.
