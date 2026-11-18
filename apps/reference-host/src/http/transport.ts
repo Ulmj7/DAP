@@ -79,8 +79,8 @@ const LOOPBACK_HOST = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/;
 const unsupported = (message: string) => ({ kind: "unsupported" as const, message });
 const unavailable = () => ({ kind: "unavailable" as const, message: TRANSPORT_MESSAGES.unavailable });
 
-/** The body as an own-keys record with EXACTLY `keys`, or `null`. */
-function exactBody(body: unknown, keys: readonly string[]): Record<string, unknown> | null {
+/** The body as an own-keys record with EXACTLY `keys`, or `null`. (Exported for the authoring routes, which share the transport's strictness.) */
+export function exactBody(body: unknown, keys: readonly string[]): Record<string, unknown> | null {
   if (body === null || typeof body !== "object" || Array.isArray(body)) return null;
   const own = Object.keys(body);
   if (own.length !== keys.length || !keys.every((key) => Object.hasOwn(body, key))) return null;

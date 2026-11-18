@@ -9,12 +9,12 @@
  *   command that came back must really be COMMIT (a transaction the server already rolled back "commits" as ROLLBACK, which is an error here, never a success);
  *   on any error ROLLBACK; if even the ROLLBACK fails the connection is DISCARDED instead of returned to the pool; always release.
  *
- * It is typed from `createPostgresPool`'s own return type, so the host declares no database-driver dependency. The tenant id is taken from the trusted context
+ * It is typed from `createPostgresPool`'s own return type (through `pool.ts`), so the host declares no database-driver dependency. The tenant id is taken from the trusted context
  * of the caller and never from a request: this function checks it is a UUID (the policy compares `tenant_id` as a uuid) before it touches the connection.
  */
-import type { createPostgresPool } from "@dap/security";
+import type { TenantPool } from "./pool.js";
 
-export type TenantPool = ReturnType<typeof createPostgresPool>;
+export type { TenantPool };
 /** What a transaction body may do: run parameterised statements. Nothing else of the connection is reachable. */
 export interface TenantClient {
   query(sql: string, params?: readonly unknown[]): Promise<{ readonly rows: readonly Record<string, unknown>[]; readonly rowCount: number | null }>;
