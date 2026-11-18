@@ -16,7 +16,6 @@ describe("createGatewayStart", () => {
     const start = createGatewayStart({ openSession: async () => session, recorder, submit });
     expect(await start("profileUpdate")).toEqual({ ok: true, walkthroughId: "profileUpdate" });
     expect(submit).toHaveBeenCalledWith(session, "profileUpdate");
-    expect(recorder.take("profileUpdate")).toBeNull();
   });
 
   it("policy refuse: the executor never ran, so nothing is recorded and the start fails", async () => {
@@ -36,7 +35,6 @@ describe("createGatewayStart", () => {
     let allow = false;
     const start = createGatewayStart({ openSession: async () => session, recorder, submit: async (_s, id) => { recorder.starter.start(id); return allow ? approved(id) : refused; } });
     expect(await start("profileUpdate")).toEqual({ ok: false });
-    expect(recorder.take("profileUpdate")).toBeNull();
     allow = true;
     expect(await start("profileUpdate")).toEqual({ ok: true, walkthroughId: "profileUpdate" });
   });
@@ -47,7 +45,6 @@ describe("createGatewayStart", () => {
     expect(await createGatewayStart({ openSession: async () => { throw new Error("db down"); }, recorder })("profileUpdate")).toEqual({ ok: false });
     const throwing = createGatewayStart({ openSession: async () => session, recorder, submit: async (_s, id) => { recorder.starter.start(id); throw new Error("boom"); } });
     expect(await throwing("profileUpdate")).toEqual({ ok: false });
-    expect(recorder.take("profileUpdate")).toBeNull();
   });
 
   it("overlapping starts of the same id are serialized, so a refused one cannot claim an approved one's record", async () => {
@@ -68,13 +65,17 @@ describe("createGatewayStart", () => {
     expect(await second).toEqual({ ok: false });
   });
 
-  it("the recorder is bounded: past its limit the starter refuses", () => {
-    const recorder = createApprovalRecorder(2);
-    expect(recorder.starter.start("a")).toEqual({ ok: true });
-    expect(recorder.starter.start("b")).toEqual({ ok: true });
-    expect(recorder.starter.start("c")).toMatchObject({ ok: false });
-    expect(recorder.take("a")).toBe("a");
-    expect(recorder.starter.start("c")).toEqual({ ok: true });
+  it("the recorder only accepts one matching id while a submission is open", () => {
+    const recorder = createApprovalRecorder();
+    expect(recorder.starter.start("a")).toMatchObject({ ok: false });
+    recorder.withSubmission("a", take => {
+      expect(recorder.starter.start("b")).toMatchObject({ ok: false });
+      expect(recorder.starter.start("a")).toEqual({ ok: true });
+      expect(recorder.starter.start("a")).toMatchObject({ ok: false });
+      expect(take()).toBe("a");
+      expect(take()).toBeNull();
+      expect(recorder.starter.start("a")).toMatchObject({ ok: false });
+    });
   });
 });
 
@@ -143,7 +144,6 @@ describe("createGatewayStart: a stalled Gateway cannot wedge /start (timeout and
     await flush();
     clock.fire();
     expect(await first).toEqual({ ok: false, unavailable: true });
-    expect(recorder.take("profileUpdate")).toBeNull();
     expect(await start("findSecuritySettings")).toEqual({ ok: true, walkthroughId: "findSecuritySettings" });
     expect(clock.size()).toBe(0);
   });
@@ -151,19 +151,55 @@ describe("createGatewayStart: a stalled Gateway cannot wedge /start (timeout and
   it("a late completion after the timeout is ignored: never reported as approved, and it leaves no stale record", async () => {
     const recorder = createApprovalRecorder();
     const clock = manualTimers();
-    const hung = deferred<GuidanceResult>();
+    const hung = deferred<void>();
     const outcomes: unknown[] = [];
-    const start = createGatewayStart({ openSession: async () => session, recorder, submit: async () => hung.promise, timers: clock.timers });
+    const lateRecords: unknown[] = [];
+    const start = createGatewayStart({ openSession: async () => session, recorder, submit: async (_session, id) => {
+      await hung.promise;
+      lateRecords.push(recorder.starter.start(id));
+      return approved(id);
+    }, timers: clock.timers });
     void start("profileUpdate").then((outcome) => outcomes.push(outcome));
     await flush();
     clock.fire();
     await flush();
-    recorder.starter.start("profileUpdate"); // the executor runs late, after the transport gave up
-    hung.resolve(approved("profileUpdate"));
+    hung.resolve(); // the executor tries to record after the transport gave up
     await flush();
     await flush();
     expect(outcomes).toEqual([{ ok: false, unavailable: true }]);
-    expect(recorder.take("profileUpdate")).toBeNull();
+    expect(lateRecords).toEqual([expect.objectContaining({ ok: false })]);
+  });
+
+  it("an expired submission cannot lend a late approval to a newer submission of the same id", async () => {
+    const recorder = createApprovalRecorder();
+    const clock = manualTimers();
+    const oldGate = deferred<void>();
+    const oldFinish = deferred<void>();
+    const newGate = deferred<void>();
+    let calls = 0;
+    const start = createGatewayStart({ openSession: async () => session, recorder, timers: clock.timers, submit: async (_session, id) => {
+      if (++calls === 1) {
+        await oldGate.promise;
+        recorder.starter.start(id);
+        await oldFinish.promise;
+        return refused;
+      }
+      await newGate.promise;
+      return approved(id); // The new submission did not itself record anything.
+    } });
+    const first = start("profileUpdate");
+    await flush();
+    clock.fire();
+    expect(await first).toEqual({ ok: false, unavailable: true });
+    const second = start("profileUpdate");
+    await flush();
+    expect(calls).toBe(2);
+    oldGate.resolve();
+    await flush();
+    newGate.resolve();
+    expect(await second).toEqual({ ok: false });
+    oldFinish.resolve();
+    await flush();
   });
 
   it("queue cap: beyond maxQueue pending starts, a start fails closed at once without reaching the Gateway", async () => {
