@@ -23,6 +23,12 @@ import { createRouter } from "./router.js";
 import type { Router } from "./router.js";
 import { createDemoRegistry } from "./semantic-ui.js";
 import { createStore } from "./store.js";
+import { createGuidanceClient } from "./help/client.js";
+import type { GuidanceClient } from "./help/client.js";
+import { createHelp } from "./help/widget.js";
+import type { HelpWidget } from "./help/widget.js";
+export { createGuidanceClient } from "./help/client.js";
+export type { FetchLike, GuidanceClient } from "./help/client.js";
 import type { Store } from "./store.js";
 
 export interface MountedApp {
@@ -34,11 +40,15 @@ export interface MountedApp {
   readonly overlay: Overlay;
   readonly router: Router;
   readonly store: Store<AppState>;
+  /** C01: the AI Help launcher and panel (appended to the document body, like the status dialog). */
+  readonly help: HelpWidget;
   destroy(): void;
 }
 
 
-export function mountApp(root: HTMLElement, options: { readonly window?: Window; readonly profileService?: ProfileService; readonly trustedEventsOnly?: boolean; readonly walkthroughs?: readonly WalkthroughDef[] } = {}): MountedApp {
+export function mountApp(root: HTMLElement, options: { readonly window?: Window; readonly profileService?: ProfileService; readonly trustedEventsOnly?: boolean; readonly walkthroughs?: readonly WalkthroughDef[];
+  /** C01: the AI Help transport. Defaults to same-origin `/api/guidance` through the window's `fetch`; tests inject a fake host. */
+  readonly guidance?: GuidanceClient } = {}): MountedApp {
   const doc = root.ownerDocument;
   const win = options.window ?? doc.defaultView;
   if (win === null || win === undefined) throw new Error("mountApp needs a window");
@@ -101,6 +111,11 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   const unsubscribeRouter = router.subscribe(route => { store.set({ route }); availability.refresh();runtime.dispatch({ type: "routeChanged", route }); });
   const stopPlacement=targets.observe(()=>overlay.reposition());
   let terminal="";let escBound=false;
+  const runActive=()=>["RESOLVING","PRESENTING","WAITING","VERIFYING"].includes(runtime.getState().status);
+  // C01: Help closes on Escape only when no higher-priority owner (an active run, whose handler cancels it, or the open status dialog) has it.
+  const help=createHelp({doc,guides,client:options.guidance??createGuidanceClient({fetch:typeof win.fetch==="function"?(url,init)=>win.fetch(url,init):undefined}),
+    escapeOwnedElsewhere:()=>runActive()||dialog.isOpen(),
+    startGuide:(id,source)=>{returnTo=source;dialog.close(false);return begin(id);}});
   const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!dialog.isOpen()){event.preventDefault();runtime.cancel();}};
   const unsubscribeRuntime=runtime.subscribe(snapshot=>{
     presenter.update(snapshot);launcher?.update();
@@ -114,7 +129,7 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   });
   let destroyed = false;
   return Object.freeze({
-    registry, targets, overlay, router, store, runtime, profile, guides,
-    destroy() { if (destroyed) return; destroyed = true; bridge.destroy(); availability.destroy(); stopPlacement();unsubscribeRuntime();doc.removeEventListener("keydown",escape);dialog.destroy();unsubscribeRouter(); unsubscribeStore(); profile.destroy(); postconditions.destroy(); runtime.cancel(); overlay.hide(); root.replaceChildren(); },
+    registry, targets, overlay, router, store, runtime, profile, guides, help,
+    destroy() { if (destroyed) return; destroyed = true; bridge.destroy(); availability.destroy(); stopPlacement();unsubscribeRuntime();doc.removeEventListener("keydown",escape);dialog.destroy();help.destroy();unsubscribeRouter(); unsubscribeStore(); profile.destroy(); postconditions.destroy(); runtime.cancel(); overlay.hide(); root.replaceChildren(); },
   });
 }
