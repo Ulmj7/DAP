@@ -54,6 +54,17 @@ describe("createDemoPrincipalResolver", () => {
     expect(await resolver({ userToken: "tok-unknown-0123456789abcdef" })(headers())).toBeNull();
     expect(await resolver({ maintainerToken: "tok-unknown-0123456789abcdef" })(headers("maintainer"))).toMatchObject({ key: "dev-demo-user" });
   });
+  it("a selected principal is refused at expiry even if it was valid at startup", async () => {
+    vi.useFakeTimers();
+    try {
+      const expiry = Date.now() + 1000;
+      const r = resolver({ sessions: [SESSIONS[0]!, { ...SESSIONS[1]!, validUntil: new Date(expiry).toISOString() }] });
+      expect(await r(headers("maintainer"))).toMatchObject({ actor: "maya" });
+      vi.setSystemTime(expiry);
+      expect(await r(headers("maintainer"))).toBeNull();
+      expect(await r(headers())).toMatchObject({ actor: "ula" });
+    } finally { vi.useRealTimers(); }
+  });
   it("submit opens a FRESH Gateway session for every call (each write is its own turn) and never exposes the token", async () => {
     open.mockClear();
     const principal = (await resolver()(headers("maintainer")))!;

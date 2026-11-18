@@ -7,7 +7,9 @@
  * come from the host's own session table (`DEV_SESSIONS`, the same table the Gateway's permission checker uses), so the security boundary is the per-request permission
  * check and the Gateway, exactly as for a real session. A real deployment replaces this file with real authentication. Tokens are never logged or returned.
  */
+import type { IsoInstant } from "@dap/contracts";
 import type { AiSession } from "../compose.js";
+import { createDevAuthentication } from "../dev-auth/index.js";
 import type { DevSession } from "../dev-auth/index.js";
 import type { AuthoringPrincipal, RequestHeaders } from "./routes.js";
 
@@ -29,6 +31,7 @@ export interface DemoPrincipalDeps {
 }
 
 export function createDemoPrincipalResolver(deps: DemoPrincipalDeps): (headers: RequestHeaders) => Promise<AuthoringPrincipal | null> {
+  const authentication = createDevAuthentication(deps.sessions, { now: () => new Date().toISOString() as IsoInstant });
   const byToken = new Map<string, DevSession>(deps.sessions.map((session) => [session.token, session]));
   const principalFor = (token: string, key: string): AuthoringPrincipal | null => {
     const session = byToken.get(token);
@@ -40,5 +43,11 @@ export function createDemoPrincipalResolver(deps: DemoPrincipalDeps): (headers: 
   };
   const user = principalFor(deps.userToken, "dev-demo-user");
   const maintainer = deps.maintainerToken === undefined || deps.maintainerToken === "" ? null : principalFor(deps.maintainerToken, "dev-demo-maintainer");
-  return async (headers) => (demoRoleFromHeaders(headers) === "maintainer" && maintainer !== null ? maintainer : user);
+  return async (headers) => {
+    const useMaintainer = demoRoleFromHeaders(headers) === "maintainer" && maintainer !== null;
+    const principal = useMaintainer ? maintainer : user;
+    const token = useMaintainer ? deps.maintainerToken : deps.userToken;
+    if (principal === null || await authentication.authenticate(token) === null) return null;
+    return principal;
+  };
 }
