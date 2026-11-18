@@ -95,3 +95,12 @@ Everything the brief lists as not MVP, plus: C01 and its transport, admin and an
 - Profile allows three failed Save attempts by bounding fixName to two recovery entries; only the engine declares completion/failure.
 - Result dialogs use native dialog when available, a semantic fallback in jsdom, and expose no request-denied state.
 - U1+U2 QA fixes: the bridge drops accepted-but-undelivered events when a run ends or begins (`clearPending`, called by `mountApp`); busy Save and name field use `aria-disabled`/`readOnly`, never `disabled`, so keyboard focus survives a save; live-region text (card, profile status) is written only when it changes. D5's "Back to guides" action was not built (see T239).
+
+## U3 decisions
+
+- The jsdom end-to-end (T221, `apps/reference-web/src/e2e.test.ts`) mounts the real app with `trustedEventsOnly: false`, because jsdom cannot create trusted clicks or typing; it never calls `runtime.dispatch`, `store.set` or `profile.*` and never moves fake timers on its own except to let the real 250 ms save and the 400 ms target wait elapse. One test keeps the production default and shows scripted events are ignored. The trusted path is covered by the manual browser smoke (`quickstart.md` section 8).
+- Feature 003 summaries stay one static, frozen host list; `packages/ai` and the host may not import `@dap/walkthrough`, so a root test (T240) is the single guard that the list equals the real `catalog.list()`. No third list was added and no production code changed.
+- CI gained three steps before the M1 gate (`test:walkthrough`, `test:walkthrough:proof` with explicit file paths, `build:web`); the Feature 001 steps and the M1 gate are untouched.
+- Found while proving recovery: Advanced opened and closed again before verification correctly fails the guide ("blocked"), it does not pretend success. Kept as a test.
+- Manual smoke (2026-11-18, Chromium 157 headless over CDP, 1440 and 390 px): all three guides, cancel, Esc and keyboard passed. Not tested: screen readers, real phones, other browsers.
+- QA U1+U2 review (2026-11-18) found two real defects, fixed in U3 on the owner's instruction, each with a failing test first: on phones the tooltip could cover the highlighted field (placement now caps the card height and scrolls the control into the free band; `scrollBy`/`maxHeight` on `placeCard`), and the header **Guides** link did not reach the catalog (it now scrolls to and focuses the Guides card; `launcher.reveal()`). T218 wording corrected to the shipped navigate step. The D6 popover/sheet stays an accepted deviation.
