@@ -184,8 +184,9 @@ describe("the reference host (T131, T136): its AI-facing handle is a submit func
   it("wires the trusted pieces in the composition root alone: the two composition roots (and config.ts for limits) import security, guidance modules import pure AI helpers, nothing imports the actions package", () => {
     expect(appImportersOf(graph, "packages/security/")).toEqual([`${APP}src/compose.ts`, `${APP}src/config.ts`, `${APP}src/guidance/compose-guidance.ts`]);
     // Feature 003: the trusted guidance modules (src/guidance/) use the AI package's pure parsing, chunking, validation and result helpers; they import no other trusted package
-    // (compose-guidance injects the scrubber; the capability and its executor use the contracts only).
-    expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`, `${APP}src/guidance/anthropic-model.ts`, `${APP}src/guidance/capability.ts`, `${APP}src/guidance/compose-guidance.ts`, `${APP}src/guidance/demo-model.ts`, `${APP}src/guidance/demo-render.ts`, `${APP}src/guidance/knowledge-loader.ts`, `${APP}src/guidance/start-bridge.ts`, `${APP}src/guidance/walkthrough-summaries.ts`]);
+    // (compose-guidance injects the scrubber; the capability and its executor use the contracts only). C01: the browser transport (src/http/transport.ts) reuses the same pure
+    // Feature 003 helpers (query cap, context parser, fixed unsupported messages) so the wire layer re-defines no schema; nothing else under src/http imports the AI package.
+    expect(appImportersOf(graph, "packages/ai/")).toEqual([`${APP}src/compose.ts`, `${APP}src/guidance/anthropic-model.ts`, `${APP}src/guidance/capability.ts`, `${APP}src/guidance/compose-guidance.ts`, `${APP}src/guidance/demo-model.ts`, `${APP}src/guidance/demo-render.ts`, `${APP}src/guidance/knowledge-loader.ts`, `${APP}src/guidance/start-bridge.ts`, `${APP}src/guidance/walkthrough-summaries.ts`, `${APP}src/http/transport.ts`]);
     expect(appImportersOf(graph, "packages/actions/")).toEqual([]);
   });
   it("Feature 003 Slice 3: no production module of the host imports the walkthrough runtime or the testkit (the starter is a structural interface the composition root fills)", () => {

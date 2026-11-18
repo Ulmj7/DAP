@@ -23,7 +23,10 @@ export function createGuidanceHost({ env, starter, knowledgeDir = fileURLToPath(
   const knowledge = loadKnowledge({ dir: knowledgeDir, scrub: scrubText });
   const service = createGuidanceService({ model, catalog: demoCatalogView, retriever: createRetriever(knowledge.chunks), timers, sanitizeQuery: raw => typeof raw === "string" && raw.trim() ? scrubText(raw) : null });
   const { extension, trusted } = createGuidanceExtension({ catalog: demoCatalogView, starter });
-  return { extension, trusted, async askAndStart(session: AiSession, input: { query: unknown; semanticContext: unknown }) {
+  return { extension, trusted,
+    /** The proposal step alone (C01's browser transport): validates and decides, but submits nothing to the Gateway and starts nothing. */
+    askGuidance: (input: { query: unknown; semanticContext: unknown }) => service.askGuidance(input),
+    async askAndStart(session: AiSession, input: { query: unknown; semanticContext: unknown }) {
     const result = await service.askGuidance(input);
     return result.kind === "walkthrough" ? submitWalkthroughStart(session, result.walkthroughId) : result;
   } };
