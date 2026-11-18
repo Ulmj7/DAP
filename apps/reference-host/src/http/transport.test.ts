@@ -369,3 +369,37 @@ describe("DAP_HTTP_PORT", () => {
     for (const bad of ["0", "65536", "80a", " 80", "-1", "1e3", "0x50", "123456"]) expect(parseHttpPort(bad), bad).toBeNull();
   });
 });
+
+describe("Sec-Fetch-Site (cross-site browser requests are refused; same-origin, none and absent pass)", () => {
+  it.each(["cross-site", "same-site", "CROSS-SITE", "bogus"])("%s: 403 on both routes, nothing runs", async (site) => {
+    const t = setup();
+    const ask = await t.post("/api/guidance", askBody(PROFILE), { "sec-fetch-site": site });
+    expect(ask.status).toBe(403);
+    expect(ask.body).toEqual({ kind: "unsupported", message: TRANSPORT_MESSAGES.forbiddenHost });
+    const start = await t.post("/api/guidance/start", { proposalId: "proposal-00000001-opaque" }, { "sec-fetch-site": site });
+    expect(start.status).toBe(403);
+    expect(t.ask).not.toHaveBeenCalled();
+    expect(t.start).not.toHaveBeenCalled();
+  });
+
+  it.each([["same-origin"], ["none"], [undefined]])("%s: allowed (the Vite proxy forwards the browser's same-origin unchanged)", async (site) => {
+    const t = setup();
+    const res = await t.post("/api/guidance", askBody(PROFILE), site === undefined ? {} : { "sec-fetch-site": site });
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("walkthrough");
+    const started = await t.post("/api/guidance/start", { proposalId: res.body.proposalId }, site === undefined ? {} : { "sec-fetch-site": site });
+    expect(started.body.kind).toBe("start");
+  });
+});
+
+describe("/start when the Gateway is stalled or the start queue is full", () => {
+  it("an unavailable start outcome is a 503 unavailable reply, and the proposal is used up", async () => {
+    const t = setup({ startOutcome: async () => ({ ok: false, unavailable: true }) });
+    const proposed = await t.post("/api/guidance", askBody(PROFILE));
+    const res = await t.post("/api/guidance/start", { proposalId: proposed.body.proposalId });
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ kind: "unavailable", message: TRANSPORT_MESSAGES.unavailable });
+    expect((await t.post("/api/guidance/start", { proposalId: proposed.body.proposalId })).body).toEqual({ kind: "unsupported", message: TRANSPORT_MESSAGES.proposalGone });
+  });
+});
+

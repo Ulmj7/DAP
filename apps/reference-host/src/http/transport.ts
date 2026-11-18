@@ -105,6 +105,10 @@ export function createGuidanceTransport(deps: GuidanceTransportDeps): FastifyIns
 
   app.addHook("onRequest", async (request, reply) => {
     if (!LOOPBACK_HOST.test(request.headers.host ?? "")) return send(reply, 403, unsupported(TRANSPORT_MESSAGES.forbiddenHost));
+    // A browser names where the request came from: only the page's own origin (via the Vite proxy) or a direct navigation may call in. No header
+    // (curl, tests) passes; a browser that sends it can't be talked out of it by page script.
+    const site = request.headers["sec-fetch-site"];
+    if (site !== undefined && site !== "same-origin" && site !== "none") return send(reply, 403, unsupported(TRANSPORT_MESSAGES.forbiddenHost));
   });
   app.addHook("onSend", async (_request, reply, payload) => {
     reply.header("cache-control", "no-store");
@@ -161,6 +165,7 @@ export function createGuidanceTransport(deps: GuidanceTransportDeps): FastifyIns
     let outcome: StartOutcome;
     try { outcome = await owner.start(walkthroughId); } catch { outcome = { ok: false }; }
     if (outcome.ok && typeof outcome.walkthroughId === "string") return send(reply, 200, { kind: "start", walkthroughId: outcome.walkthroughId });
+    if (!outcome.ok && outcome.unavailable === true) return send(reply, 503, unavailable());
     return send(reply, 200, unsupported(TRANSPORT_MESSAGES.startRefused));
   });
 

@@ -117,3 +117,87 @@ describe("createProposalStore", () => {
     expect(() => store.mint("s", "b")).toThrow();
   });
 });
+
+describe("createGatewayStart: a stalled Gateway cannot wedge /start (timeout and queue cap)", () => {
+  /** A manual timer: `fire()` runs every pending callback, as if the timeout elapsed. */
+  const manualTimers = () => {
+    const pending = new Map<number, () => void>();
+    let next = 0;
+    return {
+      timers: { setTimeout: (fn: () => void) => { next += 1; pending.set(next, fn); return next; }, clearTimeout: (handle: unknown) => { pending.delete(handle as number); } },
+      fire: () => { const fns = [...pending.values()]; pending.clear(); for (const fn of fns) fn(); },
+      size: () => pending.size,
+    };
+  };
+  const deferred = <T>() => { let resolve: (value: T) => void = () => undefined; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  it("hang -> timeout: the stalled start fails closed as unavailable, its record is cleared, and the next start still works", async () => {
+    const recorder = createApprovalRecorder();
+    const clock = manualTimers();
+    const hung = deferred<GuidanceResult>();
+    let call = 0;
+    const submit = async (_s: AiSession, id: string) => { call += 1; recorder.starter.start(id); return call === 1 ? hung.promise : approved(id); };
+    const start = createGatewayStart({ openSession: async () => session, recorder, submit, timers: clock.timers, timeoutMs: 10_000 });
+    const first = start("profileUpdate");
+    await flush();
+    clock.fire();
+    expect(await first).toEqual({ ok: false, unavailable: true });
+    expect(recorder.take("profileUpdate")).toBeNull();
+    expect(await start("findSecuritySettings")).toEqual({ ok: true, walkthroughId: "findSecuritySettings" });
+    expect(clock.size()).toBe(0);
+  });
+
+  it("a late completion after the timeout is ignored: never reported as approved, and it leaves no stale record", async () => {
+    const recorder = createApprovalRecorder();
+    const clock = manualTimers();
+    const hung = deferred<GuidanceResult>();
+    const outcomes: unknown[] = [];
+    const start = createGatewayStart({ openSession: async () => session, recorder, submit: async () => hung.promise, timers: clock.timers });
+    void start("profileUpdate").then((outcome) => outcomes.push(outcome));
+    await flush();
+    clock.fire();
+    await flush();
+    recorder.starter.start("profileUpdate"); // the executor runs late, after the transport gave up
+    hung.resolve(approved("profileUpdate"));
+    await flush();
+    await flush();
+    expect(outcomes).toEqual([{ ok: false, unavailable: true }]);
+    expect(recorder.take("profileUpdate")).toBeNull();
+  });
+
+  it("queue cap: beyond maxQueue pending starts, a start fails closed at once without reaching the Gateway", async () => {
+    const recorder = createApprovalRecorder();
+    const clock = manualTimers();
+    const hung = deferred<GuidanceResult>();
+    const submit = vi.fn(async () => hung.promise);
+    const start = createGatewayStart({ openSession: async () => session, recorder, submit, timers: clock.timers, maxQueue: 2 });
+    const a = start("profileUpdate");
+    const b = start("profileUpdate");
+    expect(await start("profileUpdate")).toEqual({ ok: false, unavailable: true });
+    await flush();
+    expect(submit).toHaveBeenCalledTimes(1);
+    clock.fire(); // a times out, b takes the slot
+    expect(await a).toEqual({ ok: false, unavailable: true });
+    await flush();
+    clock.fire();
+    expect(await b).toEqual({ ok: false, unavailable: true });
+    const c = start("profileUpdate"); // the queue drained, so starts are accepted again
+    await flush();
+    clock.fire();
+    expect(await c).toEqual({ ok: false, unavailable: true });
+    expect(submit).toHaveBeenCalledTimes(3);
+  });
+
+  it("defaults: a 10 s timeout and a queue of 8", async () => {
+    const recorder = createApprovalRecorder();
+    const delays: number[] = [];
+    const timers = { setTimeout: (_fn: () => void, ms: number) => { delays.push(ms); return 0; }, clearTimeout: () => undefined };
+    const never = new Promise<GuidanceResult>(() => undefined);
+    const start = createGatewayStart({ openSession: async () => session, recorder, submit: async () => never, timers });
+    for (let i = 0; i < 8; i += 1) void start("profileUpdate");
+    expect(await start("profileUpdate")).toEqual({ ok: false, unavailable: true });
+    await flush();
+    expect(delays).toEqual([10_000]);
+  });
+});
