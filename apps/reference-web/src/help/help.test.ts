@@ -347,6 +347,23 @@ describe("C01 guide handoff", () => {
     expect(result().textContent).toBe(copy.guide.refused);
   });
 
+  it("a refused Help start preserves the active guide’s original focus return target", async () => {
+    const { app, root } = mountWith("dashboard", { body: PROPOSAL }, { body: APPROVED });
+    const original = root.querySelector<HTMLButtonElement>('.guide-list button[aria-label="Start guide: Find the security settings"]')!;
+    original.click();
+    await turn();
+    await ask(app, "How do I change my profile name?");
+    buttonByText(result(), copy.guide.start)!.click();
+    await turn();
+    expect(app.help.state()).toBe("unsupported");
+    expect(app.runtime.getState()).toMatchObject({ status: "WAITING", walkthroughId: "findSecuritySettings" });
+    escape(input());
+    expect(dialog()?.open).toBe(true);
+    escape(dialog()!);
+    // The original launcher was on Dashboard and was replaced during navigation.
+    expect(document.activeElement).toBe(root.querySelector("h1"));
+  });
+
   // jsdom has no layout, so the page reflow the docked panel causes (body padding while Help is open) is modelled: the display name field sits 200px
   // further left while `dap-help-open` is on the body. The ring must always follow the layout that is actually on screen.
   function withHelpReflow(run: () => Promise<void>): Promise<void> {

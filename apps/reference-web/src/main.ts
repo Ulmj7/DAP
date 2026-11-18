@@ -69,8 +69,9 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   });
   // The bridge listens on the page; its queue is cleared at every run boundary (see begin and the runtime subscription below).
   const bridge = createSemanticBridge({ root, registry, targets, dispatch: event => runtime.dispatch(event), trustedEventsOnly: options.trustedEventsOnly ?? true });
+  const runActive=()=>["RESOLVING","PRESENTING","WAITING","VERIFYING"].includes(runtime.getState().status);
   // Events accepted before a run began (or after it ended) are not evidence about the next run: drop them as a run begins.
-  const begin = (id: string) => { bridge.clearPending(); return runtime.startWalkthrough(id); };
+  const begin = (id: string) => { if (!runActive()) bridge.clearPending(); return runtime.startWalkthrough(id); };
   const guides = guideApi({ ...runtime, startWalkthrough: begin });
   let launcher: ReturnType<typeof createLauncher> | undefined;
   const start = (id:string, source:HTMLElement) => {returnTo=source;dialog.close(false);const result=begin(id);if(!result.ok)launcher?.refused();};
@@ -111,13 +112,19 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   const unsubscribeRouter = router.subscribe(route => { store.set({ route }); availability.refresh();runtime.dispatch({ type: "routeChanged", route }); });
   const stopPlacement=targets.observe(()=>overlay.reposition());
   let terminal="";let escBound=false;
-  const runActive=()=>["RESOLVING","PRESENTING","WAITING","VERIFYING"].includes(runtime.getState().status);
   // C01: Help closes on Escape only when no higher-priority owner (an active run, whose handler cancels it, or the open status dialog) has it.
   const help=createHelp({doc,guides,client:options.guidance??createGuidanceClient({fetch:typeof win.fetch==="function"?(url,init)=>win.fetch(url,init):undefined}),
     escapeOwnedElsewhere:()=>runActive()||dialog.isOpen(),
     // The docked panel reflows the page (body padding) outside root, which the target observer does not see, so the overlay re-places explicitly.
     onLayoutChange:()=>overlay.reposition(),
-    startGuide:(id,source)=>{returnTo=source;dialog.close(false);return begin(id);}});
+    startGuide: (id, source) => {
+      // A refusal must leave the current run, its dialog, and its focus target alone.
+      if (runActive() || catalog.get(id) === undefined) return begin(id);
+      returnTo = source;
+      dialog.close(false);
+      return begin(id);
+    },
+  });
   const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!dialog.isOpen()){event.preventDefault();runtime.cancel();}};
   const unsubscribeRuntime=runtime.subscribe(snapshot=>{
     presenter.update(snapshot);launcher?.update();
