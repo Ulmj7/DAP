@@ -216,7 +216,17 @@ describe("C01 rendering", () => {
     for (const expected of ["answer", "walkthroughRecommendation", "clarify"] as const) {
       await ask(app, "anything");
       expect(app.help.state()).toBe(expected);
-      expect(result().textContent).toContain(payload);
+      if (expected === "answer") {
+        expect(result().querySelector(".help-answer > p")?.textContent).toBe(payload);
+        expect(result().querySelector(".help-sources li")?.textContent).toBe(payload);
+        expect(result().querySelector(".help-sources a")).toBeNull();
+      } else if (expected === "walkthroughRecommendation") {
+        expect(result().querySelector(".help-guide-title")?.textContent).toBe(payload);
+        expect(result().querySelector(".help-text")?.textContent).toBe(payload);
+        expect(buttonByText(result(), copy.guide.start)?.getAttribute("aria-label")).toBe(`${copy.guide.start}: ${payload}`);
+      } else {
+        expect(result().querySelector(".help-text")?.textContent).toBe(payload);
+      }
       expect(document.querySelectorAll("img, script")).toHaveLength(before);
       expect(panel().querySelectorAll("[onerror], [onload], [src]")).toHaveLength(0);
     }
@@ -497,6 +507,23 @@ describe("C01 Escape ownership", () => {
     expect(app.help.state()).toBe("closed");
   });
 
+  it("when Help binds Escape first, Escape from its input still cancels the guide first", async () => {
+    const { app, root } = mount("dashboard");
+    launcherButton().click();
+    root.querySelector<HTMLButtonElement>('.guide-list button[aria-label="Start guide: Find the security settings"]')!.click();
+    await turn();
+    expect(app.runtime.getState().status).toBe("WAITING");
+    input().focus();
+    escape(input());
+    expect(app.runtime.getState().status).toBe("CANCELLED");
+    expect(app.help.state()).toBe("idle");
+    expect(dialog()?.open).toBe(true);
+    escape(dialog()!);
+    expect(app.help.state()).toBe("idle");
+    escape();
+    expect(app.help.state()).toBe("closed");
+  });
+
   it("with the status dialog open, Escape on the document does not close Help", async () => {
     const { app, root } = mount("dashboard");
     root.querySelector<HTMLButtonElement>('.guide-list button[aria-label="Start guide: Find the security settings"]')!.click();
@@ -524,6 +551,12 @@ describe("C01 client guards", () => {
     expect(parseStart(APPROVED, false).kind).toBe("unavailable");
     expect(parseStart({ ...APPROVED, steps: [] }, true).kind).toBe("unavailable");
     expect(parseStart({ kind: "unsupported", message: "x" }, true).kind).toBe("refused");
+  });
+
+  it("rejects incomplete refusals and a clarification on HTTP failure", () => {
+    expect(parseGuidance({ kind: "unsupported" }, true).kind).toBe("unavailable");
+    expect(parseStart({ kind: "unsupported", message: 7 }, true).kind).toBe("unavailable");
+    expect(parseGuidance({ kind: "clarify", message: "Which guide?" }, false).kind).toBe("unavailable");
   });
 
   it("without a fetch the client is unavailable rather than throwing", async () => {

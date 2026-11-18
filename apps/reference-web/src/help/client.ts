@@ -47,9 +47,9 @@ function parseSources(value: unknown): readonly HelpSource[] | null {
 export function parseGuidance(body: unknown, ok: boolean): GuidanceOutcome {
   if (!isRecord(body)) return UNAVAILABLE;
   const kind = body.kind;
-  if (kind === "unsupported" && hasOnly(body, ["kind", "message"])) return Object.freeze({ kind });
-  if (kind === "clarify" && hasOnly(body, ["kind", "message"]) && text(body.message, HELP_LIMITS.messageChars)) return Object.freeze({ kind, message: body.message });
+  if (kind === "unsupported" && hasOnly(body, ["kind", "message"]) && text(body.message, HELP_LIMITS.messageChars)) return Object.freeze({ kind });
   if (!ok) return UNAVAILABLE; // only a refusal-style reply is meaningful with an error status
+  if (kind === "clarify" && hasOnly(body, ["kind", "message"]) && text(body.message, HELP_LIMITS.messageChars)) return Object.freeze({ kind, message: body.message });
   if (kind === "answer" && hasOnly(body, ["kind", "answer", "sources"]) && text(body.answer, HELP_LIMITS.answerChars)) {
     const sources = parseSources(body.sources);
     return sources === null ? UNAVAILABLE : Object.freeze({ kind, answer: body.answer, sources });
@@ -64,7 +64,7 @@ export function parseGuidance(body: unknown, ok: boolean): GuidanceOutcome {
 /** Exported for tests: the strict guard for a `/api/guidance/start` reply. */
 export function parseStart(body: unknown, ok: boolean): StartOutcome {
   if (!isRecord(body)) return UNAVAILABLE;
-  if (body.kind === "unsupported" && hasOnly(body, ["kind", "message"])) return Object.freeze({ kind: "refused" });
+  if (body.kind === "unsupported" && hasOnly(body, ["kind", "message"]) && text(body.message, HELP_LIMITS.messageChars)) return Object.freeze({ kind: "refused" });
   if (ok && body.kind === "start" && hasOnly(body, ["kind", "walkthroughId"]) && text(body.walkthroughId, HELP_LIMITS.idChars)) return Object.freeze({ kind: "start", walkthroughId: body.walkthroughId });
   return UNAVAILABLE;
 }
