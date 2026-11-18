@@ -115,6 +115,8 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   // C01: Help closes on Escape only when no higher-priority owner (an active run, whose handler cancels it, or the open status dialog) has it.
   const help=createHelp({doc,guides,client:options.guidance??createGuidanceClient({fetch:typeof win.fetch==="function"?(url,init)=>win.fetch(url,init):undefined}),
     escapeOwnedElsewhere:()=>runActive()||dialog.isOpen(),
+    // The docked panel reflows the page (body padding) outside root, which the target observer does not see, so the overlay re-places explicitly.
+    onLayoutChange:()=>overlay.reposition(),
     startGuide:(id,source)=>{returnTo=source;dialog.close(false);return begin(id);}});
   const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!dialog.isOpen()){event.preventDefault();runtime.cancel();}};
   const unsubscribeRuntime=runtime.subscribe(snapshot=>{

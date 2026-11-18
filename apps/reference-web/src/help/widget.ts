@@ -21,6 +21,8 @@ export interface HelpOptions {
   readonly escapeOwnedElsewhere: () => boolean;
   /** Starts an approved walkthrough through the app's start path; returns the existing GuideApi result unchanged. */
   readonly startGuide: (walkthroughId: string, source: HTMLElement) => StartResult;
+  /** Called after the docked panel opens or closes and the page has reflowed, so anything placed over the page (the walkthrough overlay) can re-place. */
+  readonly onLayoutChange?: () => void;
 }
 
 export interface HelpWidget {
@@ -119,14 +121,15 @@ export function createHelp(options: HelpOptions): HelpWidget {
   async function startGuide(proposalId: string, source: HTMLButtonElement): Promise<void> {
     if (state !== "walkthroughRecommendation") return;
     const mine = ++generation;
-    source.disabled = true; show("submitting", paragraph(copy.help.starting));
-    status.textContent = copy.help.starting;
+    source.disabled = true; show("submitting");
+    status.textContent = copy.help.starting; // announced once, by the status region
     const outcome = await client.start(proposalId);
     if (mine !== generation) return;
     if (outcome.kind === "refused") { show("unsupported", paragraph(copy.help.refused)); return; }
     if (outcome.kind === "unavailable") { show("error", retryBlock()); return; }
     // Only the id the host approved reaches the runtime, through the app's normal start path; the runtime's own answer decides what happens.
-    const started = options.startGuide(outcome.walkthroughId, launcher);
+    let started: StartResult;
+    try { started = options.startGuide(outcome.walkthroughId, launcher); } catch { show("error", retryBlock()); return; }
     // The overlay never takes focus, so it returns to the launcher (Tab then reaches the guide card, which follows it in the document).
     if (started.ok) close(true); else show("unsupported", paragraph(copy.guide.refused));
   }
@@ -139,7 +142,7 @@ export function createHelp(options: HelpOptions): HelpWidget {
 
   function open(): void {
     if (state !== "closed") return;
-    panel.hidden = false; launcher.setAttribute("aria-expanded", "true"); doc.body.classList.add("dap-help-open");
+    panel.hidden = false; launcher.setAttribute("aria-expanded", "true"); doc.body.classList.add("dap-help-open"); options.onLayoutChange?.();
     // The phone sheet covers the page, so it is announced as a (non-modal) dialog; nothing is trapped and the page stays reachable.
     if (mobile()) panel.setAttribute("role", "dialog"); else panel.removeAttribute("role");
     show("idle"); doc.addEventListener("keydown", escape);
@@ -149,7 +152,7 @@ export function createHelp(options: HelpOptions): HelpWidget {
     if (state === "closed") return;
     generation++;
     show("closed"); input.value = ""; panel.hidden = true; panel.removeAttribute("role");
-    launcher.setAttribute("aria-expanded", "false"); doc.body.classList.remove("dap-help-open"); doc.removeEventListener("keydown", escape);
+    launcher.setAttribute("aria-expanded", "false"); doc.body.classList.remove("dap-help-open"); options.onLayoutChange?.(); doc.removeEventListener("keydown", escape);
     if (restoreFocus) launcher.focus();
   }
 
@@ -159,6 +162,9 @@ export function createHelp(options: HelpOptions): HelpWidget {
 
   return Object.freeze({
     launcher, panel, state: () => state, open, close,
-    destroy() { generation++; doc.removeEventListener("keydown", escape); doc.body.classList.remove("dap-help-open"); panel.remove(); launcher.remove(); },
+    destroy() {
+      generation++; doc.removeEventListener("keydown", escape); panel.remove(); launcher.remove();
+      if (doc.body.classList.contains("dap-help-open")) { doc.body.classList.remove("dap-help-open"); options.onLayoutChange?.(); }
+    },
   });
 }

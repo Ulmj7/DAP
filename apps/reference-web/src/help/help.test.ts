@@ -346,6 +346,84 @@ describe("C01 guide handoff", () => {
     expect(app.help.state()).toBe("unsupported");
     expect(result().textContent).toBe(copy.guide.refused);
   });
+
+  // jsdom has no layout, so the page reflow the docked panel causes (body padding while Help is open) is modelled: the display name field sits 200px
+  // further left while `dap-help-open` is on the body. The ring must always follow the layout that is actually on screen.
+  function withHelpReflow(run: () => Promise<void>): Promise<void> {
+    const proto = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      if (this.id !== "name") return proto.call(this);
+      const left = document.body.classList.contains("dap-help-open") ? 332 : 532;
+      return { left, top: 300, width: 480, height: 44, right: left + 480, bottom: 344, x: left, y: 300, toJSON: () => ({}) } as DOMRect;
+    };
+    return run().finally(() => { HTMLElement.prototype.getBoundingClientRect = proto; });
+  }
+  const ringLeft = () => document.querySelector<HTMLElement>('[data-ai-overlay="ring"]')?.style.left;
+
+  it("after Start guide closes the docked panel, the overlay is placed for the reflowed page, not the layout the panel had", () => withHelpReflow(async () => {
+    const { app } = mountWith("dashboard", { body: PROPOSAL }, { body: APPROVED });
+    await ask(app, "How do I change my profile name?");
+    buttonByText(result(), copy.guide.start)!.click();
+    await turn(); await vi.advanceTimersByTimeAsync(50);
+    expect(app.runtime.getState()).toMatchObject({ walkthroughId: "profileUpdate", stepId: "name", status: "WAITING" });
+    expect(document.body.classList.contains("dap-help-open")).toBe(false);
+    expect(ringLeft()).toBe("528px");
+  }));
+
+  it("opening and closing Help while a guide runs re-places the overlay each time", () => withHelpReflow(async () => {
+    const { app } = mount("profile");
+    expect(app.guides.startWalkthrough("profileUpdate").ok).toBe(true);
+    await turn();
+    expect(ringLeft()).toBe("528px");
+    launcherButton().click();
+    expect(app.help.state()).toBe("idle");
+    expect(ringLeft()).toBe("328px");
+    buttonByText(panel(), copy.help.close)!.click();
+    expect(ringLeft()).toBe("528px");
+    launcherButton().click(); app.help.destroy();
+    expect(ringLeft()).toBe("528px");
+  }));
+
+  it("announces 'Starting the guide' once, in the status region only", async () => {
+    let approve: (value: Response) => void = () => {};
+    const fetch: FetchLike = url => url.endsWith("/start") ? new Promise<Response>(resolve => { approve = resolve; }) : Promise.resolve(new Response(JSON.stringify(PROPOSAL), { status: 200 }));
+    const { app } = mount("dashboard", createGuidanceClient({ fetch }));
+    await ask(app, "How do I change my profile name?");
+    buttonByText(result(), copy.guide.start)!.click();
+    await turn();
+    expect(app.help.state()).toBe("submitting");
+    const announced = Array.from(panel().querySelectorAll("[aria-live]")).filter(region => region.textContent?.includes(copy.help.starting));
+    expect(announced).toHaveLength(1);
+    expect(announced[0]!.getAttribute("role")).toBe("status");
+    approve(new Response(JSON.stringify(APPROVED), { status: 200 }));
+    await turn();
+    expect(app.help.state()).toBe("closed");
+  });
+
+  it("if the app's start path throws, Help shows the safe unavailable state with Try again instead of hanging in 'submitting'", async () => {
+    vi.useFakeTimers();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const host = fakeHost({ body: PROPOSAL }, { body: APPROVED });
+      const startGuide = vi.fn((): never => { throw new Error("internal start failure detail"); });
+      const help = createHelp({ doc: document, guides: { context: () => ({ route: "dashboard", elements: [] }) }, client: createGuidanceClient({ fetch: host.fetch }), escapeOwnedElsewhere: () => false, startGuide });
+      help.open(); input().value = "q"; askButton().click(); await turn();
+      buttonByText(result(), copy.guide.start)!.click(); await turn();
+      expect(startGuide).toHaveBeenCalledTimes(1);
+      expect(help.state()).toBe("error");
+      expect(result().textContent).toBe(copy.help.unavailable + copy.help.retry);
+      expect(panel().textContent).not.toContain("internal start failure detail");
+      expect(askButton().disabled).toBe(false);
+      vi.useRealTimers();
+      await new Promise(resolve => { setTimeout(resolve, 0); });
+      expect(unhandled).toEqual([]);
+      help.destroy();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });
 
 describe("C01 Escape ownership", () => {
