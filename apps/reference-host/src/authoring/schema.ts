@@ -55,11 +55,13 @@ export const definitionSchema = z.strictObject({
 export const walkthroughIdSchema = z.string().max(15).regex(AUTHORED_ID);
 export const STATUSES = ["draft", "published"] as const;
 export type WalkthroughStatus = (typeof STATUSES)[number];
+/** A closed enum that also states a `maxLength` (Feature 001 requires every string in an input schema to be bounded; a plain enum would not say so). */
+const statusSchema = z.string().max(9).pipe(z.enum(STATUSES));
 
 /** `saveWalkthroughDraft` input. */
 export const saveInputSchema = z.strictObject({ walkthroughId: walkthroughIdSchema, definition: definitionSchema });
 /** `setWalkthroughStatus` input. */
-export const statusInputSchema = z.strictObject({ walkthroughId: walkthroughIdSchema, status: z.enum(STATUSES) });
+export const statusInputSchema = z.strictObject({ walkthroughId: walkthroughIdSchema, status: statusSchema });
 
 export type SaveInput = z.infer<typeof saveInputSchema>;
 export type StatusInput = z.infer<typeof statusInputSchema>;
