@@ -44,8 +44,11 @@ Transport failures produce a fixed unsupported message, never provider diagnosti
 Add knowledge: place one validated public Markdown/front-matter document in
 `apps/reference-host/knowledge/` (copy an existing article's format; secrets/tenantId reject startup).
 Add a summary: edit the one `walkthrough-summaries.ts` list; real-catalog parity waits for T217-T219.
-Final UI connection: pass safe runtime context and query into askAndStart, then transport the
-trusted executor's start to the browser. That transport and UI are not built here.
+Final UI connection: the browser Help widget and its narrow host transport are the C01 slice, described in
+`c01-ai-help.md` (wire contract, how a proposal becomes a user-confirmed start, how to run `dev:host` and
+`dev:web`). The transport uses `askGuidance` and a recording starter, not `askAndStart`, because the browser overlay
+start must follow the user's click. The only change to this feature's host code is that `createGuidanceHost`
+also exposes `askGuidance` (the proposal step alone); `packages/*` and `askAndStart` are untouched.
 
 Limits: lexical selection is heuristic; ALLOWED alone is not proof of a start; citation
 membership is not entailment. Knowledge is shared public material. Tenant-owned retrieval
