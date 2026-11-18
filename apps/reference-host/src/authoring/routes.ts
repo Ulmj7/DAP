@@ -17,7 +17,7 @@
  * actor are never read from a request.
  *
  * Writes are fire-then-read: the Gateway answers only `{ outcome, category }`, so after `ALLOWED/ok` the route reads the stored record back. Every reply is a closed shape
- * with a fixed message: no stack, SQL, Zod text, permission id, Gateway stage, capability id or token ever leaves; `issues` (validator wording: ids and field names) are
+ * with a fixed message: no stack, SQL, Zod text, permission id, Gateway stage, capability id or token ever leaves; `issues` (validator wording with positional labels) are
  * returned only on 422, capped at 20 of 200 characters with control characters removed.
  */
 import { randomUUID } from "node:crypto";

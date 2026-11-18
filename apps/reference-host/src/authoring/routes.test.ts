@@ -334,6 +334,24 @@ describe("POST /api/admin/walkthroughs (create)", () => {
     expect(t.submitted).toEqual([]);
     expect(t.store.rows).toEqual([]);
   });
+  it("422 diagnostics identify the problem without reflecting arbitrary field names or step ids", async () => {
+    const t = build();
+    const extra = await t.call("POST", "/api/admin/walkthroughs", { who: "maintainer", body: { definition: defOf({ [SECRET]: "ignored" }) } });
+    expect(extra.status).toBe(422);
+    expect(extra.body.issues).toEqual([expect.stringContaining("unknown field")]);
+    expect(extra.raw).not.toContain(SECRET);
+    const sensitiveId = "SecretTokenCanary123";
+    const bad = defOf({ start: sensitiveId, steps: [
+      { id: sensitiveId, kind: "guide", target: "unknown", text: "x", wait: "click", next: "done" },
+      { id: "done", kind: "complete", text: "Done." },
+    ] });
+    const semantic = await t.call("POST", "/api/admin/walkthroughs", { who: "maintainer", body: { definition: bad } });
+    expect(semantic.status).toBe(422);
+    expect(semantic.body.issues).toEqual([expect.stringContaining("unknown target")]);
+    expect(semantic.raw).not.toContain(sensitiveId);
+    expect(t.submitted).toEqual([]);
+  });
+
   it("issues are capped at 20 of at most 200 characters, with control characters removed", async () => {
     const t = build();
     const many = Array.from({ length: 8 }, (_v, i) => ({ id: `s${i}`, kind: "guide", target: `bad.target${i}`, text: "x", wait: "click", next: i === 7 ? "done" : `s${i + 1}`, ["k\n" + "y".repeat(300)]: 1 }));
