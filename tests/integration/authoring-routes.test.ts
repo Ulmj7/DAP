@@ -181,11 +181,12 @@ describe("the full authoring flow over the real Gateway and PostgreSQL", () => {
     expect((await a.call("GET", "/api/walkthroughs/published", "user")).body).toMatchObject({ walkthroughs: [expect.objectContaining({ id })] });
   });
 
-  it("the host generates the id: a hand-typed or built-in id in the body is overwritten, and a built-in guide can never be replaced", async () => {
+  it("a supplied built-in id is refused before submission, and a built-in guide can never be replaced", async () => {
     const t = await start();
     const res = await t.call("POST", "/api/admin/walkthroughs", "maintainer", { definition: defOf({ id: "profileUpdate" }) });
-    expect(res.status).toBe(201);
-    expect(res.body.id).not.toBe("profileUpdate");
+    expect(res.status).toBe(422);
+    expect(t.trusted.executorCalls()).toBe(0);
+    expect(await t.rows()).toEqual([]);
     expect((await t.call("PUT", "/api/admin/walkthroughs/profileUpdate", "maintainer", { definition: defOf() })).status).toBe(404);
     expect((await t.call("POST", "/api/admin/walkthroughs/profileUpdate/status", "maintainer", { status: "published" })).status).toBe(404);
     expect((await t.call("GET", "/api/admin/walkthroughs/profileUpdate", "maintainer")).status).toBe(404);

@@ -111,11 +111,8 @@ export function registerAuthoringRoutes(app: FastifyInstance, deps: AuthoringRou
     return typeof outcome === "string" ? "refused" : "broken";
   };
 
-  /** The candidate definition: the body's definition with `id` set by the HOST (a maintainer never chooses it). Anything that is not an object is `null`. */
-  const withHostId = (definition: unknown, id: string): Record<string, unknown> | null => {
-    if (definition === null || typeof definition !== "object" || Array.isArray(definition)) return null;
-    return { ...(definition as Record<string, unknown>), id };
-  };
+  const isDefinition = (definition: unknown): definition is Record<string, unknown> =>
+    definition !== null && typeof definition === "object" && !Array.isArray(definition);
   const tooLarge = (id: string, definition: unknown): boolean => Buffer.byteLength(JSON.stringify({ action: SAVE_ACTION_ID, params: { walkthroughId: id, definition } })) > MAX_PROPOSAL_BYTES;
 
   // --- reads --------------------------------------------------------------------------------------------------------------------------------------
@@ -156,9 +153,10 @@ export function registerAuthoringRoutes(app: FastifyInstance, deps: AuthoringRou
     if (principal === null) return;
     const body = exactBody(request.body, ["definition"]);
     if (body === null) return send(reply, 400, failure("malformed", AUTHORING_MESSAGES.malformed));
+    if (!isDefinition(body.definition)) return send(reply, 400, failure("malformed", AUTHORING_MESSAGES.malformed));
+    if (Object.hasOwn(body.definition, "id")) return invalid(reply, ["definition.id: omit the id when creating a draft"]);
     const id = newId();
-    const candidate = withHostId(body.definition, id);
-    if (candidate === null) return send(reply, 400, failure("malformed", AUTHORING_MESSAGES.malformed));
+    const candidate = { ...body.definition, id };
     const checked = validateAuthoredDefinition(id, candidate, registryData);
     if (!checked.ok) return invalid(reply, checked.issues);
     if (tooLarge(id, candidate)) return invalid(reply, ["definition: too large to save"]);
@@ -178,8 +176,9 @@ export function registerAuthoringRoutes(app: FastifyInstance, deps: AuthoringRou
     if (id === null) return notFound(reply);
     const body = exactBody(request.body, ["definition"]);
     if (body === null) return send(reply, 400, failure("malformed", AUTHORING_MESSAGES.malformed));
-    const candidate = withHostId(body.definition, id);
-    if (candidate === null) return send(reply, 400, failure("malformed", AUTHORING_MESSAGES.malformed));
+    if (!isDefinition(body.definition)) return send(reply, 400, failure("malformed", AUTHORING_MESSAGES.malformed));
+    if (Object.hasOwn(body.definition, "id") && body.definition.id !== id) return invalid(reply, ["definition.id: must match the requested draft"]);
+    const candidate = { ...body.definition, id };
     let existing;
     try { existing = await store.get(principal.tenantId, id); } catch { return unavailable(reply); }
     if (existing === null) return notFound(reply);

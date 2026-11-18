@@ -288,14 +288,16 @@ describe("POST /api/admin/walkthroughs (create)", () => {
     expect(Object.keys(t.submitted[0]!.params).sort()).toEqual(["definition", "walkthroughId"]);
     expect(t.submitted[0]!.params.walkthroughId).toBe(ID1);
   });
-  it("the host overwrites definition.id: a missing id, a hand-typed id, a built-in id and another guide's id all end up as the generated id", async () => {
-    for (const typed of [undefined, "wt-ffffffffffff", "profileUpdate", "wt-preview", "x".repeat(100), 5, null]) {
-      const t = build({ newIds: [ID2] });
-      const res = await t.call("POST", "/api/admin/walkthroughs", { who: "maintainer", body: { definition: defOf(typed === undefined ? {} : { id: typed }) } });
-      expect(res.status, String(typed)).toBe(201);
-      expect((res.body.definition as { id: string }).id).toBe(ID2);
-      expect(t.store.rows.map((r) => r.id)).toEqual([ID2]);
+  it("refuses every supplied create id and leaves server-generated ids to the host", async () => {
+    const t = build({ newIds: [ID2] });
+    for (const id of ["someGuide", "profileUpdate", "findSecuritySettings", "findTwoFactorSettings", "wt-preview", ID1, 7, null]) {
+      expect((await t.call("POST", "/api/admin/walkthroughs", { who: "maintainer", body: { definition: defOf({ id }) } })).status).toBe(422);
     }
+    expect(t.submitted).toEqual([]);
+    expect(t.store.rows).toEqual([]);
+    const res = await t.call("POST", "/api/admin/walkthroughs", { who: "maintainer", body: { definition: defOf() } });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: ID2, definition: { id: ID2 } });
   });
   it("a collision of the generated id with an existing guide is NOT a silent overwrite of a published guide (the draft-only rule holds)", async () => {
     const t = build({ newIds: [ID1, ID1] });
@@ -353,10 +355,14 @@ describe("POST /api/admin/walkthroughs (create)", () => {
 });
 
 describe("PUT /api/admin/walkthroughs/:id (edit a draft)", () => {
-  it("updates a draft in place, overwriting any id in the body with the URL's id, and replies 200 with the stored record", async () => {
+  it("rejects mismatched edit ids without writing and accepts a matching id", async () => {
     const t = build({ newIds: [ID1] });
     await t.call("POST", "/api/admin/walkthroughs", { who: "maintainer", body: { definition: defOf({ title: "First" }) } });
-    const res = await t.call("PUT", `/api/admin/walkthroughs/${ID1}`, { who: "maintainer", body: { definition: defOf({ title: "Second", id: ID2 }) } });
+    const rejected = await t.call("PUT", `/api/admin/walkthroughs/${ID1}`, { who: "maintainer", body: { definition: defOf({ title: "Wrong", id: ID2 }) } });
+    expect(rejected.status).toBe(422);
+    expect(t.submitted).toHaveLength(1);
+    expect(t.store.rows[0]?.definition).toMatchObject({ title: "First" });
+    const res = await t.call("PUT", `/api/admin/walkthroughs/${ID1}`, { who: "maintainer", body: { definition: defOf({ title: "Second", id: ID1 }) } });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ id: ID1, status: "draft", definition: { id: ID1, title: "Second" } });
     expect(t.store.rows).toHaveLength(1);
