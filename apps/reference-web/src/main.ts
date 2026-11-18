@@ -67,6 +67,13 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   const nav = h("nav", { class: "nav-group", "aria-label": copy.navigation });
   for (const route of ["dashboard", "profile", "settings"] as const) nav.append(h("a", { href: `#/${route}`, class: "nav-chip", ...(route === "dashboard" ? {} : { "data-ai-id": `nav.${route}` }) }, copy.nav[route]));
   const guidesLink = h("a", {href:"#/dashboard",class:"button"},copy.guide.link);
+  // The Guides link opens the catalog: on the Dashboard it scrolls to the card; from another page it goes to the Dashboard first (revealed once rendered).
+  let revealGuides=false;
+  guidesLink.addEventListener("click",event=>{
+    if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+    event.preventDefault();
+    if(store.get().route==="dashboard")launcher?.reveal();else{revealGuides=true;router.navigate("dashboard");}
+  });
   const main = h("main", { class: "page-container", tabindex: "-1" });
   root.replaceChildren(h("header", { class: "app-header" }, h("span", { class: "brand" }, copy.brand), nav, guidesLink), main);
   let renderedRoute: AppState["route"] | undefined;
@@ -83,7 +90,7 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
         main.replaceChildren(page.element); updatePage = s => page.update(s.profile);
       } else if (state.route === "settings") {
         const page = settingsPage(() => store.set({ advancedOpen: !store.get().advancedOpen })); main.replaceChildren(page.element); updatePage = s => page.update(s.advancedOpen);
-      } else { launcher=createLauncher(guides,start);launcher.update();main.replaceChildren(dashboardPage(launcher.element)); updatePage = () => {launcher?.update();}; }
+      } else { launcher=createLauncher(guides,start);launcher.update();main.replaceChildren(dashboardPage(launcher.element)); updatePage = () => {launcher?.update();}; if(revealGuides){revealGuides=false;launcher.reveal();} }
     }
     root.querySelector("h1")?.setAttribute("tabindex","-1");
     updatePage(state);
