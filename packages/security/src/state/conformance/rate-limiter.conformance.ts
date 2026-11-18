@@ -12,6 +12,8 @@ export interface RateLimiterTestContext {
 export interface RateLimiterConformanceCase {
   readonly name: string;
   readonly run: (ctx: RateLimiterTestContext) => Promise<void>;
+  /** Time budget in ms for slow-by-design cases; omitted means the project default. It never changes what the case asserts. */
+  readonly timeoutMs?: number;
 }
 const scope = (): TenantScope => ({ tenantId: randomUUID() as TenantId });
 const rule = { limit: 20, windowSeconds: 60 };
@@ -21,6 +23,8 @@ const BYTES_1024 = "k".repeat(1024);
 export const rateLimiterConformanceCases: readonly RateLimiterConformanceCase[] = [
   {
     name: "never loses concurrent hits: exactly the limit wins in each of 100 trials",
+    // About 6,500 transactional hits under advisory locks: roughly 10 s on a slow local machine, near the 5 s default on CI runners.
+    timeoutMs: 30_000,
     async run(ctx) {
       const tenant = scope();
       for (let trial = 0; trial < 100; trial++) {
@@ -252,6 +256,6 @@ export function runRateLimiterConformance(makeStore: () => Promise<RateLimiterTe
     let ctx: RateLimiterTestContext;
     beforeEach(async () => { ctx = await makeStore(); });
     afterEach(async () => { await ctx?.dispose?.(); });
-    for (const conformanceCase of rateLimiterConformanceCases) it(conformanceCase.name, () => conformanceCase.run(ctx));
+    for (const conformanceCase of rateLimiterConformanceCases) it(conformanceCase.name, () => conformanceCase.run(ctx), conformanceCase.timeoutMs);
   });
 }
