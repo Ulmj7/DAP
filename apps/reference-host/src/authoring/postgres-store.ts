@@ -15,11 +15,51 @@ const ACTOR = (actor: unknown): actor is string => typeof actor === "string" && 
 
 export function createPostgresWalkthroughStore(pool: TenantPool): WalkthroughStore {
   const store: WalkthroughStore = {
+    async recordEvent(tenantId, { walkthroughId, runId, event }) {
+      return withTenant(pool, tenantId, async client => {
+        if (isAuthoredId(walkthroughId)) {
+          // Hold a share lock through INSERT so an Unpublish cannot race the eligibility check.
+          const { rows } = await client.query(
+            "SELECT 1 FROM public.walkthrough_definitions WHERE tenant_id = $1::uuid AND walkthrough_id = $2 AND status = 'published' FOR SHARE",
+            [tenantId, walkthroughId]);
+          if (rows.length === 0) return false;
+        }
+        if (event !== "started") {
+          // A missing or mismatched start does not consume the run's single terminal slot.
+          const { rows } = await client.query(
+            "SELECT 1 FROM public.walkthrough_events WHERE tenant_id = $1::uuid AND walkthrough_id = $2 AND run_id = $3::uuid AND event_type = 'started'",
+            [tenantId, walkthroughId, runId]);
+          if (rows.length === 0) return true;
+        }
+        await client.query(
+          `INSERT INTO public.walkthrough_events (tenant_id, walkthrough_id, run_id, event_type)
+           VALUES ($1::uuid, $2, $3::uuid, $4) ON CONFLICT DO NOTHING`, [tenantId, walkthroughId, runId, event]);
+        return true;
+      });
+    },
+
+    async summary(tenantId) {
+      return withTenant(pool, tenantId, async client => {
+        const { rows } = await client.query(
+          `SELECT s.walkthrough_id, d.definition->>'title' AS title, count(*) AS started,
+                  count(*) FILTER (WHERE c.event_type = 'completed') AS completed,
+                  count(*) FILTER (WHERE c.event_type = 'cancelled') AS cancelled
+             FROM public.walkthrough_events s
+             LEFT JOIN public.walkthrough_events c ON c.tenant_id = s.tenant_id AND c.run_id = s.run_id
+               AND c.walkthrough_id = s.walkthrough_id AND c.event_type <> 'started'
+             LEFT JOIN public.walkthrough_definitions d ON d.tenant_id = s.tenant_id AND d.walkthrough_id = s.walkthrough_id
+            WHERE s.tenant_id = $1::uuid AND s.event_type = 'started'
+            GROUP BY s.walkthrough_id, d.definition->>'title'`, [tenantId]);
+        return rows.map(row => ({ id: String(row.walkthrough_id), title: typeof row.title === "string" ? row.title : null,
+          started: Number(row.started), completed: Number(row.completed), cancelled: Number(row.cancelled) }));
+      });
+    },
+
     async list(tenantId: string): Promise<readonly StoredSummary[]> {
       return withTenant(pool, tenantId, async (client) => {
         const { rows } = await client.query(
           `SELECT walkthrough_id, status, definition->>'title' AS title, definition->>'description' AS description,
-                  COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(definition->'steps') = 'array' THEN definition->'steps' ELSE '[]'::jsonb END), 0) AS step_count, updated_at
+                  (SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(definition->'steps') = 'array' THEN definition->'steps' ELSE '[]'::jsonb END) AS step WHERE step->>'kind' = 'guide') AS step_count, updated_at
              FROM public.walkthrough_definitions WHERE tenant_id = $1::uuid ORDER BY updated_at DESC, walkthrough_id LIMIT ${MAX_LISTED}`, [tenantId]);
         return Object.freeze(rows.map((row) => Object.freeze({
           id: String(row.walkthrough_id), status: statusOf(row.status), title: String(row.title ?? ""), description: String(row.description ?? ""),

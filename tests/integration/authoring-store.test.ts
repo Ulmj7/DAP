@@ -89,8 +89,21 @@ describe("the store", () => {
     expect(await s.saveDraft(scope(tenant), id, def(id))).toBe("created");
     const stored = await s.get(tenant, id);
     expect(stored).toMatchObject({ id, status: "draft", definition: def(id) });
-    expect(await s.list(tenant)).toEqual([expect.objectContaining({ id, title: "Save your name", description: "Change your display name and save it.", status: "draft", stepCount: 3 })]);
+    expect(await s.list(tenant)).toEqual([expect.objectContaining({ id, title: "Save your name", description: "Change your display name and save it.", status: "draft", stepCount: 1 })]);
     expect(await s.listPublished(tenant)).toEqual([]);
+  });
+  it("counts only guide steps in a multi-page walkthrough summary", async () => {
+    const s = store(); const tenant = randomUUID(); const id = generateWalkthroughId();
+    const result = validateDefinition({ ...def(id), steps: [
+      { id: "n1", kind: "navigate", route: "profile", next: "s1" },
+      { id: "s1", kind: "guide", target: "profile.nameInput", text: "Read the name field.", wait: "ack", next: "n2" },
+      { id: "n2", kind: "navigate", route: "settings", next: "s2" },
+      { id: "s2", kind: "guide", target: "settings.securityPanel", text: "Read security settings.", wait: "ack", next: "done" },
+      { id: "done", kind: "complete", text: "Done." },
+    ] });
+    if (!result.ok) throw new Error("fixture");
+    expect(await s.saveDraft(scope(tenant), id, result.definition)).toBe("created");
+    expect(await s.list(tenant)).toEqual([expect.objectContaining({ stepCount: 2 })]);
   });
   it("updates a draft in place (same id), recording who updated it, and keeps who created it", async () => {
     const s = store(); const tenant = randomUUID(); const id = generateWalkthroughId();

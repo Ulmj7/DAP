@@ -10,7 +10,7 @@ import {
 } from "./capabilities.js";
 import type { WalkthroughStore } from "./store.js";
 
-const NO_STORE: WalkthroughStore = { list: async () => [], get: async () => null, saveDraft: async () => "created", setStatus: async () => "changed", listPublished: async () => [] };
+const NO_STORE: WalkthroughStore = { recordEvent: async () => true, summary: async () => [], list: async () => [], get: async () => null, saveDraft: async () => "created", setStatus: async () => "changed", listPublished: async () => [] };
 const ID = "wt-0123456789ab";
 const definition = { id: ID, title: "T", description: "D", start: "s1", steps: [{ id: "s1", kind: "guide", target: "profile.saveButton", text: "x", wait: "click", next: "done" }, { id: "done", kind: "complete", text: "x" }] };
 

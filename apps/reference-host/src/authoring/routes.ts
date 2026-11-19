@@ -2,6 +2,8 @@
  * The authoring routes (Feature 004, T406), registered on the EXISTING C01 Fastify instance (`createGuidanceTransport`) before `listen`:
  *
  *   GET  /api/walkthroughs/published        any valid session   the tenant's published definitions, each re-validated, at most 50 (never a draft)
+ *   POST /api/walkthrough-events           any valid session   idempotent client-reported usage for built-in and published guides (204)
+ *   GET  /api/admin/analytics               Maintainer          aggregated client-reported usage
  *   GET  /api/admin/walkthroughs            Maintainer          { authored: [...], builtIn: [...] }  (built-in guides are a SEPARATE read-only array, never persisted)
  *   GET  /api/admin/walkthroughs/:id        Maintainer          { id, status, definition }  (a built-in or unknown id is 404)
  *   POST /api/admin/walkthroughs            Maintainer          body EXACTLY { definition }: validate (422), generate the id, Gateway save, read back (201)
@@ -9,7 +11,8 @@
  *   POST /api/admin/walkthroughs/:id/status Maintainer          body EXACTLY { status }: publish pre-validates against the current registry (422)
  *
  * It inherits everything the transport already enforces (loopback Host guard, Sec-Fetch-Site guard, JSON-only content type, 64 KiB limit, no-store/nosniff and the
- * fixed error handler) because it adds routes to that instance and nothing else: no second server. There is no analytics, event or audit route, and no DELETE.
+ * fixed error handler) because it adds routes to that instance and nothing else: no second server. There is no audit route or DELETE.
+ * Usage is advisory, client-reported product telemetry. It does not use the Gateway and does not provide security audit evidence.
  *
  * Authority. The PRINCIPAL is resolved by the host from its own session configuration (`resolvePrincipal`), never from the body or a header the browser could forge
  * for authority: `{ key, tenantId, actor, permissions, submit }`. Reads authorise on `permissions.has("perm.walkthrough.maintain")`. Writes pass the same check and
@@ -30,7 +33,9 @@ import { generateWalkthroughId, isAuthoredId } from "./ids.js";
 import { STATUSES } from "./schema.js";
 import type { WalkthroughStatus } from "./schema.js";
 import { MAX_PUBLISHED_PER_TENANT } from "./store.js";
-import type { WalkthroughStore } from "./store.js";
+import { USAGE_EVENTS } from "./store.js";
+import { usageReport } from "./analytics.js";
+import type { UsageEvent, WalkthroughStore } from "./store.js";
 import { TRUSTED_REGISTRY } from "./trusted-registry.js";
 import type { TrustedRegistryData } from "./trusted-registry.js";
 import { capIssues, validateAuthoredDefinition } from "./validate.js";
@@ -68,6 +73,7 @@ export const AUTHORING_MESSAGES = Object.freeze({
   limit: "The limit of published walkthroughs has been reached. Unpublish one first.",
   refused: "That change was not allowed.",
   unavailable: "Authoring is temporarily unavailable. Please try again.",
+  invalidEvent: "That walkthrough event could not be accepted.",
 });
 /** Everything a reply can be: a closed set of shapes. */
 type Fail = { kind: "unauthenticated" | "forbidden" | "not_found" | "malformed" | "conflict" | "unavailable"; message: string };
@@ -144,6 +150,30 @@ export function registerAuthoringRoutes(app: FastifyInstance, deps: AuthoringRou
     try {
       const row = await store.get(principal.tenantId, id);
       return row === null ? notFound(reply) : send(reply, 200, record(row));
+    } catch { return unavailable(reply); }
+  });
+
+  app.get("/api/admin/analytics", async (request, reply) => {
+    const principal = await gate(request, reply, true);
+    if (principal === null) return;
+    try { return send(reply, 200, usageReport(await store.summary(principal.tenantId), builtIn)); }
+    catch { return unavailable(reply); }
+  });
+
+  app.post("/api/walkthrough-events", async (request, reply) => {
+    const principal = await gate(request, reply, false);
+    if (principal === null) return;
+    const body = exactBody(request.body, ["walkthroughId", "runId", "event"]);
+    const refused = () => send(reply, 400, failure("malformed", AUTHORING_MESSAGES.invalidEvent));
+    if (body === null) return refused();
+    const { walkthroughId, runId, event } = body;
+    if (typeof walkthroughId !== "string" || typeof runId !== "string"
+      || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(runId)
+      || !(USAGE_EVENTS as readonly unknown[]).includes(event)) return refused();
+    try {
+      if (walkthroughId === "wt-preview" || (!builtIn.some(guide => guide.id === walkthroughId) && !isAuthoredId(walkthroughId))) return refused();
+      const accepted = await store.recordEvent(principal.tenantId, { walkthroughId, runId, event: event as UsageEvent["event"] });
+      return accepted ? reply.code(204).send() : refused();
     } catch { return unavailable(reply); }
   });
 

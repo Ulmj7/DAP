@@ -12,7 +12,8 @@ import { MAINTAIN_PERMISSION, SAVE_ACTION_ID, STATUS_ACTION_ID } from "./capabil
 import { AUTHORING_MESSAGES, registerAuthoringRoutes } from "./routes.js";
 import type { AuthoringPrincipal } from "./routes.js";
 import { MAX_PUBLISHED_PER_TENANT } from "./store.js";
-import type { SaveOutcome, StatusOutcome, StoredSummary, StoredWalkthrough, WalkthroughStore } from "./store.js";
+import type { SaveOutcome, StatusOutcome, StoredSummary, StoredWalkthrough, UsageEvent, WalkthroughStore } from "./store.js";
+import { isAuthoredId } from "./ids.js";
 import { TRUSTED_REGISTRY } from "./trusted-registry.js";
 import type { TrustedRegistryData } from "./trusted-registry.js";
 import { validateAuthoredDefinition } from "./validate.js";
@@ -25,11 +26,25 @@ const SECRET = "SECRET-SQL-select-from-walkthrough_definitions";
 interface Row { tenantId: string; id: string; status: "draft" | "published"; definition: unknown; updatedAt: string }
 class FakeStore implements WalkthroughStore {
   readonly rows: Row[] = [];
+  readonly events: (UsageEvent & { tenantId: string })[] = [];
+  async recordEvent(tenantId: string, event: UsageEvent) {
+    this.check();
+    if (isAuthoredId(event.walkthroughId) && (await this.get(tenantId, event.walkthroughId))?.status !== "published") return false;
+    if (event.event !== "started" && !this.events.some(row => row.tenantId === tenantId && row.walkthroughId === event.walkthroughId
+      && row.runId === event.runId && row.event === "started")) return true;
+    if (!this.events.some(row => row.tenantId === tenantId && row.runId === event.runId
+      && (row.event === event.event || (row.event !== "started" && event.event !== "started")))) this.events.push({ ...event, tenantId });
+    return true;
+  }
+  async summary(tenantId: string) {
+    this.check();
+    return tenantId === TENANT_A ? [{ id: "profileUpdate", title: null, started: 3, completed: 2, cancelled: 1 }] : [];
+  }
   failWith: Error | null = null;
   private check(): void { if (this.failWith !== null) throw this.failWith; }
   async list(tenantId: string): Promise<readonly StoredSummary[]> {
     this.check();
-    return this.rows.filter((r) => r.tenantId === tenantId).map((r) => ({ id: r.id, title: String((r.definition as { title?: unknown }).title), description: String((r.definition as { description?: unknown }).description), status: r.status, stepCount: ((r.definition as { steps?: unknown[] }).steps ?? []).length, updatedAt: r.updatedAt }));
+    return this.rows.filter((r) => r.tenantId === tenantId).map((r) => ({ id: r.id, title: String((r.definition as { title?: unknown }).title), description: String((r.definition as { description?: unknown }).description), status: r.status, stepCount: ((r.definition as { steps?: { kind?: string }[] }).steps ?? []).filter(step => step.kind === "guide").length, updatedAt: r.updatedAt }));
   }
   async get(tenantId: string, id: string): Promise<StoredWalkthrough | null> {
     this.check();
@@ -180,10 +195,10 @@ describe("inherited transport guards (an authoring route is on the C01 instance)
       expect(String(res.headers["content-type"])).toContain("application/json");
     }
   });
-  it("no route offers DELETE, PATCH, analytics, events or audit: they are 404 with the fixed message", async () => {
+  it("no route offers DELETE, PATCH or audit: they are 404 with the fixed message", async () => {
     const t = build();
-    for (const [method, url] of [["DELETE", `/api/admin/walkthroughs/${ID1}`], ["PATCH", `/api/admin/walkthroughs/${ID1}`], ["GET", "/api/admin/analytics"], ["POST", "/api/walkthrough-events"], ["GET", "/api/admin/audit"], ["GET", "/api/admin"]] as const) {
-      const res = await t.call(method, url, { who: "maintainer", ...(method === "POST" ? { body: {} } : {}) });
+    for (const [method, url] of [["DELETE", `/api/admin/walkthroughs/${ID1}`], ["PATCH", `/api/admin/walkthroughs/${ID1}`], ["GET", "/api/admin/audit"], ["GET", "/api/admin"]] as const) {
+      const res = await t.call(method, url, { who: "maintainer" });
       expect(res.status, `${method} ${url}`).toBe(404);
     }
   });
@@ -243,7 +258,7 @@ describe("GET /api/admin/walkthroughs and /:id", () => {
     const authored = res.body.authored as Record<string, unknown>[];
     expect(authored).toHaveLength(1);
     expect(Object.keys(authored[0]!).sort()).toEqual(["description", "id", "status", "stepCount", "title", "updatedAt"]);
-    expect(authored[0]).toMatchObject({ id: ID1, title: "Save your name", status: "draft", stepCount: 3 });
+    expect(authored[0]).toMatchObject({ id: ID1, title: "Save your name", status: "draft", stepCount: 1 });
     const builtIn = res.body.builtIn as Record<string, unknown>[];
     expect(builtIn.map((b) => b.id)).toEqual(["profileUpdate", "findSecuritySettings", "findTwoFactorSettings"]);
     for (const guide of builtIn) expect(Object.keys(guide).sort()).toEqual(["description", "id", "title"]);
@@ -574,5 +589,66 @@ describe("closed replies: the Gateway's answers and failures never leak", () => 
     expect(res.status).toBe(201);
     expect(t.store.rows.map((r) => r.tenantId)).toEqual([TENANT_A]);
     expect(t.submitted[0]!.who).toBe("maintainer");
+  });
+});
+
+describe("product usage endpoints", () => {
+  const eventPath = "/api/walkthrough-events";
+  const summaryPath = "/api/admin/analytics";
+  const body = { walkthroughId: "profileUpdate", runId: "aaaaaaaa-0000-4000-8000-000000000000", event: "started" };
+
+  it("inherits transport guards and records valid sessions without submitting to the Gateway", async () => {
+    const t = build();
+    for (const [headers, expected] of [[{ host: "other.example" }, 403], [{ "sec-fetch-site": "cross-site" }, 403], [{ "content-type": "text/plain" }, 415]] as const) {
+      expect((await t.call("POST", eventPath, { who: "user", headers, body })).status).toBe(expected);
+    }
+    expect((await t.call("POST", eventPath, { body })).status).toBe(401);
+    const accepted = await t.call("POST", eventPath, { who: "user", body });
+    expect(accepted).toMatchObject({ status: 204, raw: "", headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+    expect((await t.call("POST", eventPath, { who: "maintainer", body })).status).toBe(204);
+    const mismatched = { ...body, walkthroughId: "findSecuritySettings", event: "completed" };
+    expect((await t.call("POST", eventPath, { who: "user", body: mismatched })).status).toBe(204);
+    for (const event of ["completed", "completed", "cancelled"]) {
+      expect((await t.call("POST", eventPath, { who: "user", body: { ...body, event } })).status).toBe(204);
+    }
+    expect(t.store.events).toEqual([{ tenantId: TENANT_A, ...body }, { tenantId: TENANT_A, ...body, event: "completed" }]);
+    expect(t.submitted).toEqual([]);
+  });
+
+  it("refuses draft, preview, unknown, other-tenant and invalid reports with identical copy", async () => {
+    const t = build({ newIds: [ID1] });
+    expect((await t.call("POST", "/api/admin/walkthroughs", { who: "maintainer", body: { definition: defOf() } })).status).toBe(201);
+    const invalid = [
+      { ...body, walkthroughId: ID1 }, { ...body, walkthroughId: ID2 }, { ...body, walkthroughId: "wt-preview" },
+      { ...body, runId: "bad" }, { ...body, runId: body.runId.toUpperCase() }, { ...body, event: "failed" }, { ...body, forbidden: SECRET },
+    ];
+    for (const bad of invalid) {
+      const response = await t.call("POST", eventPath, { who: "user", body: bad });
+      expect(response).toMatchObject({ status: 400, body: { kind: "malformed", message: AUTHORING_MESSAGES.invalidEvent } });
+      expectNoLeak(response.raw);
+    }
+    expect(t.store.events).toEqual([]);
+    expect((await t.call("POST", `/api/admin/walkthroughs/${ID1}/status`, { who: "maintainer", body: { status: "published" } })).status).toBe(200);
+    expect((await t.call("POST", eventPath, { who: "maintainerB", body: { ...body, walkthroughId: ID1 } })).status).toBe(400);
+    expect((await t.call("POST", eventPath, { who: "user", body: { ...body, walkthroughId: ID1 } })).status).toBe(204);
+  });
+
+  it("protects analytics with the maintainer gate and returns only the closed usage report", async () => {
+    const t = build();
+    for (const [who, status] of [["none", 401], ["user", 403]] as const) {
+      expect((await t.call("GET", summaryPath, { who })).status).toBe(status);
+    }
+    const sample = { started: 3, completed: 2, cancelled: 1, completionRate: 67 };
+    const allowed = await t.call("GET", summaryPath, { who: "maintainer" });
+    expect(allowed.status).toBe(200);
+    expect(allowed.body).toEqual({ totals: sample, guides: [{ id: "profileUpdate", title: "Update your profile name", ...sample }] });
+    expectNoLeak(allowed.raw);
+    expect((await t.call("GET", summaryPath, { who: "maintainerB" })).body).toEqual({
+      totals: { started: 0, completed: 0, cancelled: 0, completionRate: null }, guides: [],
+    });
+    t.store.failWith = new Error(SECRET);
+    const error = await t.call("GET", summaryPath, { who: "maintainer" });
+    expect(error.status).toBe(503);
+    expectNoLeak(error.raw);
   });
 });

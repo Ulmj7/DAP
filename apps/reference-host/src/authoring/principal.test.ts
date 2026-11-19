@@ -89,7 +89,7 @@ describe("the role header through the routes: a user session stays a user, whate
   const app = (maintainerToken: string | undefined) => {
     const instance = createGuidanceTransport({ ask: async () => ({ kind: "clarify", message: "x" }), catalog: demoCatalogView, resolveSession: async () => null, proposals: createProposalStore({ now: Date.now, newId: () => "proposal-id-0000000000000000" }) });
     registerAuthoringRoutes(instance, {
-      store: { list: async () => [], get: async () => null, saveDraft: async () => "created", setStatus: async () => "changed", listPublished: async () => [] },
+      store: { recordEvent: async () => true, summary: async () => [], list: async () => [], get: async () => null, saveDraft: async () => "created", setStatus: async () => "changed", listPublished: async () => [] },
       resolvePrincipal: createDemoPrincipalResolver({ sessions: SESSIONS, userToken: USER_TOKEN, maintainerToken, openSession: async () => null }),
     });
     return instance;

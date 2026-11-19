@@ -38,7 +38,24 @@ export interface StoredWalkthrough {
 export type SaveOutcome = "created" | "updated" | "not_a_draft" | "id_refused" | "too_large";
 export type StatusOutcome = "changed" | "unchanged" | "not_found" | "invalid_definition" | "limit_reached" | "id_refused";
 
+export const USAGE_EVENTS = ["started", "completed", "cancelled"] as const;
+export interface UsageEvent {
+  readonly walkthroughId: string;
+  readonly runId: string;
+  readonly event: (typeof USAGE_EVENTS)[number];
+}
+export interface StoredUsage {
+  readonly id: string;
+  readonly title: string | null;
+  readonly started: number;
+  readonly completed: number;
+  readonly cancelled: number;
+}
+
 export interface WalkthroughStore {
+  /** Returns false if the authored guide is no longer published. Replays and unmatched terminals return true without adding a row. */
+  recordEvent(tenantId: string, event: UsageEvent): Promise<boolean>;
+  summary(tenantId: string): Promise<readonly StoredUsage[]>;
   /** The tenant's authored guides (drafts and published), newest update first, at most 200. */
   list(tenantId: string): Promise<readonly StoredSummary[]>;
   get(tenantId: string, id: string): Promise<StoredWalkthrough | null>;
