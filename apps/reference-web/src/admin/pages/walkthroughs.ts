@@ -52,10 +52,11 @@ export function walkthroughsPage(options: AdminPageOptions) {
       async function setStatus(wanted: GuideStatus) {
         busy = true; notice.textContent = c.saving;
         const changed = await client.setStatus(row.id, wanted);
-        if (signal.aborted) return;
         busy = false;
-        if (changed.kind === "ok") { if (getEditSession()?.id === row.id) setEditSession(); refresh(); }
-        else notice.textContent = writeError(changed);
+        if (changed.kind === "ok") {
+          if (wanted === "published" && getEditSession()?.id === row.id) setEditSession();
+          refresh(!signal.aborted);
+        } else if (!signal.aborted) notice.textContent = writeError(changed);
       }
       if (row.status === "draft") action(c.edit, () => { requestEdit(row.id); navigate("editor"); });
       action(c.preview, () => {

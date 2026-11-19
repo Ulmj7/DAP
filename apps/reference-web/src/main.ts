@@ -38,10 +38,10 @@ import { adminPage } from "./admin/pages/shared.js";
 
 export interface AdminOptions {
   client: AdminClient;
-  role: DemoRole;
+  role: DemoRole | undefined;
   changeRole(role: DemoRole): void;
   preview(definition: WalkthroughDef): void;
-  refresh(): void;
+  refresh(focus?: boolean): void;
 }
 
 export interface MountedApp {
@@ -55,6 +55,7 @@ export interface MountedApp {
   readonly store: Store<AppState>;
   /** C01: the AI Help launcher and panel (appended to the document body, like the status dialog). */
   readonly help: HelpWidget;
+  whenGuideIdle(callback: () => void): void;
   destroy(): void;
 }
 
@@ -108,13 +109,15 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   const admin = options.admin;
   const mountScope = new AbortController();
   let pageScope = new AbortController();
-  if (admin) {
+  if (admin?.role !== undefined) {
     const role = h("select", { id: "demo-role" }, h("option", { value: "user" }, copy.admin.user), h("option", { value: "maintainer" }, copy.admin.maintainer)) as HTMLSelectElement;
     role.value = admin.role;
     role.addEventListener("change", () => admin.changeRole(role.value === "maintainer" ? "maintainer" : "user"));
     header.append(h("div", { class: "demo-role", "data-ai-ignore": true }, h("label", { for: role.id }, copy.admin.role), role));
+  }
+  if (admin?.role !== "user" && admin) {
     void admin.client.list().then(result => {
-      if (mountScope.signal.aborted || admin.role !== "maintainer" || result.kind !== "ok") return;
+      if (mountScope.signal.aborted || result.kind !== "ok") return;
       for (const route of ADMIN_ROUTES) nav.append(h("a", { href: `#/${route}`, class: "nav-chip", "data-ai-ignore": true,
         ...(router.current() === route ? { "aria-current": "page" } : {}) }, copy.admin[route]));
     });
@@ -167,6 +170,7 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   const unsubscribeRouter = router.subscribe(route => { store.set({ route }); availability.refresh();runtime.dispatch({ type: "routeChanged", route }); });
   const stopPlacement=targets.observe(()=>overlay.reposition());
   let terminal="";let escBound=false;
+  let afterGuide: (() => void) | undefined;
   const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!dialog.isOpen()){event.preventDefault();runtime.cancel();}};
   const unsubscribeRuntime=runtime.subscribe(snapshot=>{
     presenter.update(snapshot);launcher?.update();
@@ -175,7 +179,10 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
     const kind=resultKind(snapshot);const key=kind===null?"":`${snapshot.walkthroughId}|${snapshot.status}|${snapshot.failure}`;
     if(kind&&key!==terminal){const def=snapshot.walkthroughId===null?undefined:catalog.get(snapshot.walkthroughId);const step=def?.steps.find(s=>s.id===snapshot.stepId);const id=snapshot.walkthroughId;
       dialog.show(kind,step?.kind==="complete"?step.text:"",{returnTo,retry:()=>{if(id!==null)begin(id);},
-        ...(options.onPreviewEnd && id === options.autoStart ? {onDismiss:options.onPreviewEnd} : {})});
+        onDismiss: () => {
+          if (id === options.autoStart) options.onPreviewEnd?.();
+          const pending = afterGuide; afterGuide = undefined; pending?.();
+        }});
     }
     terminal=key;
   });
@@ -183,6 +190,7 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   let destroyed = false;
   return Object.freeze({
     registry, targets, overlay, router, store, runtime, profile, guides, help,
+    whenGuideIdle(callback: () => void) { if (runActive() || dialog.isOpen()) afterGuide = callback; else callback(); },
     destroy() { if (destroyed) return; destroyed = true; mountScope.abort(); pageScope.abort(); bridge.destroy(); availability.destroy(); stopPlacement();unsubscribeRuntime();doc.removeEventListener("keydown",escape);dialog.destroy();help.destroy();unsubscribeRouter(); unsubscribeStore(); profile.destroy(); postconditions.destroy(); runtime.cancel(); overlay.hide(); root.replaceChildren(); },
   });
 }

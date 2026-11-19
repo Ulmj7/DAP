@@ -222,9 +222,11 @@ function renderEditor(page: HTMLElement, notice: HTMLElement, session: EditSessi
       if (!canEdit() || session.dirty || !update().ok) return;
       setBusy(true); notice.textContent = c.saving;
       void client.setStatus(id, "published").then(result => {
-        if (signal.aborted) return;
-        if (result.kind === "ok") { setEditSession(); navigate("walkthroughs"); refresh(); }
-        else { setBusy(false); notice.textContent = writeError(result); publish.focus(); }
+        if (result.kind === "ok") {
+          if (getEditSession() === session) setEditSession();
+          if (!signal.aborted) navigate("walkthroughs");
+          refresh(!signal.aborted);
+        } else if (!signal.aborted) { setBusy(false); notice.textContent = writeError(result); publish.focus(); }
       });
     });
   });

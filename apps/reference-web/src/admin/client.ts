@@ -58,7 +58,7 @@ const published = (value: unknown): readonly WalkthroughDef[] | null => object(v
 
 const ADMIN = "/api/admin/walkthroughs";
 const FAILED = { kind: "failed" } as const;
-export function createAdminClient(options: { fetch?: FetchLike | undefined; role: DemoRole; timeoutMs?: number }): AdminClient {
+export function createAdminClient(options: { fetch?: FetchLike | undefined; role?: DemoRole | undefined; timeoutMs?: number }): AdminClient {
   async function request<T>(url: string, guard: (value: unknown) => T | null, method = "GET", payload?: Bag): Promise<AdminResult<T>> {
     const fetcher = options.fetch;
     if (!fetcher) return FAILED;
@@ -68,7 +68,7 @@ export function createAdminClient(options: { fetch?: FetchLike | undefined; role
     const exchange = (async (): Promise<AdminResult<T>> => {
       const response = await fetcher(url, {
         method, credentials: "same-origin", redirect: "error", cache: "no-store", signal: controller.signal,
-        headers: { accept: "application/json", "X-Demo-Role": options.role, ...(payload === undefined ? {} : { "content-type": "application/json" }) },
+        headers: { accept: "application/json", ...(options.role === undefined ? {} : { "X-Demo-Role": options.role }), ...(payload === undefined ? {} : { "content-type": "application/json" }) },
         ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
       });
       if (method === "GET" && (response.status === 401 || response.status === 403)) return { kind: "denied" };

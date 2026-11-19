@@ -190,7 +190,8 @@ Only real deviations and decisions; everything else is as planned.
 
 ## 14b. Slice 2 implementation notes (2026-11-20)
 
-- Preview remounts the reference app over the same runtime and overlay with a temporary `wt-preview` entry hidden from Guides. The result dialog has one optional dismissal callback. Closing an editor preview returns to the editor and restores its draft from memory. A list preview returns to the list. Help is hidden and inactive on admin pages and during Preview.
+- Preview remounts the reference app over the same runtime and overlay with a temporary `wt-preview` entry hidden from Guides. The result dialog has one optional dismissal callback. Closing an editor preview returns to the editor and restores its draft from memory. A list preview returns to the list. Preview has isolated profile and settings state. The normal app restores its own state on return. Help is hidden and inactive on admin pages and during Preview.
+- The demo role control and header are enabled by Vite in development. The host still determines access. A successful status write refreshes the catalog even if the maintainer has left that page. If a guide is running, the app replaces the catalog after the result dialog closes.
 - The client uses the six authoring and catalog routes shipped in Slice 1. Create removes the definition's top-level ID and adopts the host's ID after success. Step IDs remain because the runtime links steps with them. Read denials have their own state. Writes show fixed copy, with specific messages for oversized definitions and the published-edit conflict.
 - The list uses the host's authored step count, which includes navigation and completion. Built-in counts come from their guide steps. Analytics registers a placeholder route in this slice.
 

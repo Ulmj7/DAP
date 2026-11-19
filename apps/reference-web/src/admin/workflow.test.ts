@@ -26,7 +26,7 @@ const guide = (id: string, status: GuideStatus, definition: WalkthroughDef): Gui
 
 function fakeHost(seed: GuideRecord[] = []) {
   const rows = new Map(seed.map(row => [row.id, row]));
-  const requests: { path: string; method: string; role: string; body: unknown }[] = [];
+  const requests: { path: string; method: string; role: string | null; body: unknown }[] = [];
   const host = {
     rows, requests,
     overrides: new Map<string, () => Response | Promise<Response>>(),
@@ -34,7 +34,7 @@ function fakeHost(seed: GuideRecord[] = []) {
   };
   const fetch: FetchLike = async (path, init) => {
     const method = init.method!;
-    const role = new Headers(init.headers).get("x-demo-role")!;
+    const role = new Headers(init.headers).get("x-demo-role");
     const body: unknown = init.body ? JSON.parse(init.body as string) : null;
     requests.push({ path, method, role, body });
     const override = host.overrides.get(`${method} ${path}`);
@@ -67,12 +67,12 @@ afterEach(() => {
   document.body.replaceChildren(); window.history.replaceState(null, "", "#/dashboard"); vi.useRealTimers();
 });
 const turn = () => vi.advanceTimersByTimeAsync(10);
-async function setup(route: string, host = fakeHost(), role: "maintainer" | "user" = "maintainer") {
+async function setup(route: string, host = fakeHost(), role: "maintainer" | "user" = "maintainer", demoRoleEnabled = true) {
   vi.useFakeTimers();
   window.history.replaceState(null, "", `#/${route}`);
   writeRole(window, role);
   const root = document.createElement("div"); document.body.append(root);
-  mounted = await boot(root, { fetch: host.fetch, trustedEventsOnly: false });
+  mounted = await boot(root, { fetch: host.fetch, trustedEventsOnly: false, demoRoleEnabled });
   await turn();
   return { root, host, handle: mounted };
 }
@@ -255,8 +255,11 @@ it("uses fixed save errors instead of host text, including refusals, 413 and the
 });
 
 it("previews the real runtime and overlay, hides the temporary id from Guides, and restores unsaved editor fields", async () => {
-  const { root, host, handle } = await setup("editor");
-  fillDraft(root);
+  const { root, host, handle } = await setup("settings");
+  control<HTMLElement>(root, '[data-ai-id="settings.advancedToggle"]').click();
+  handle.current()?.router.navigate("profile"); await turn();
+  fill(root, "name", "Normal profile");
+  await navigate("editor"); fillDraft(root);
   const original = handle.current();
   button(root, c.preview).click();
   expect(handle.current()).not.toBe(original);
@@ -268,6 +271,8 @@ it("previews the real runtime and overlay, hides the temporary id from Guides, a
   expect(handle.current()?.runtime.getState()).toMatchObject({ walkthroughId: "wt-preview", status: "WAITING" });
   expect(document.querySelector('[data-ai-overlay="ring"]')).not.toBeNull();
   expect(document.querySelector('[data-ai-overlay="title"]')?.textContent).toBe(copy.semantic["settings.securityPanel"].label);
+  expect(handle.current()?.store.get().advancedOpen).toBe(false);
+  expect(handle.current()?.store.get().profile.draft).toBe("");
   control<HTMLElement>(document, '[data-ai-overlay="cancel"]').click();
   expect(resultDialog().textContent).toContain(copy.result.cancelled);
   button(resultDialog(), copy.result.close).click(); await turn();
@@ -275,6 +280,7 @@ it("previews the real runtime and overlay, hides the temporary id from Guides, a
   expect(document.activeElement).toBe(root.querySelector("h1"));
   expect(control<HTMLInputElement>(root, '[id="editor-title"]').value).toBe("Authored settings tour");
   expect(control<HTMLTextAreaElement>(root, '[id="editor-text"]').value).toBe("Read the Security panel.");
+  expect(handle.current()?.store.get()).toMatchObject({ advancedOpen: true, profile: { draft: "Normal profile" } });
   expect(host.writes()).toEqual([]);
   expect(host.requests.some(request => request.path.includes("events"))).toBe(false);
 });
@@ -366,4 +372,40 @@ it("refuses a directly requested published record and a foreign draft shape with
   expect(root.textContent).toContain(c.readOnly);
   await navigate("walkthroughs"); button(root, "Edit: Foreign tour").click(); await turn();
   expect(root.textContent).toContain(c.foreign);
+});
+
+
+it("refreshes the launcher after an Unpublish finishes on another route while a real guide is active", async () => {
+  const def = authored(publishedId, "Release being removed");
+  const host = fakeHost([guide(publishedId, "published", def)]);
+  let finish!: (response: Response) => void;
+  host.overrides.set(`POST ${admin}/${publishedId}/status`, () => new Promise(resolve => { finish = resolve; }));
+  const { root, handle } = await setup("walkthroughs", host);
+  button(root, "Unpublish: Release being removed").click();
+  await navigate("dashboard");
+  expect(button(root, "Start guide: Release being removed")).toBeDefined();
+  button(root, "Start guide: Find the security settings").click(); await turn();
+  const runningApp = handle.current();
+  const draft = guide(publishedId, "draft", def);
+  host.rows.set(publishedId, draft); finish(json(draft)); await turn();
+  expect(handle.current()).toBe(runningApp);
+  expect(runningApp?.runtime.getState().status).toBe("WAITING");
+  control<HTMLElement>(document, '[data-ai-overlay="ack"]').click(); await turn();
+  expect(resultDialog().textContent).toContain(copy.result.completed);
+  expect(handle.current()).toBe(runningApp);
+  button(resultDialog(), copy.result.done).click(); await turn();
+  expect(handle.current()).not.toBe(runningApp);
+  expect(document.activeElement).toBe(root.querySelector("h1"));
+  await navigate("dashboard");
+  expect(root.querySelector("h1")?.textContent).toBe(copy.dashboard.title);
+  expect(root.querySelector(".guide-list")?.textContent).not.toContain(def.title);
+});
+
+it("ignores the stored demo role outside development and omits the role selector and header", async () => {
+  const { root, host } = await setup("dashboard", fakeHost(), "maintainer", false);
+  expect(root.querySelector('[id="demo-role"]')).toBeNull();
+  expect(root.querySelector('nav [href="#/walkthroughs"]')).toBeNull();
+  expect(host.requests.map(request => request.role)).toEqual([null, null]);
+  await navigate("walkthroughs");
+  expect(root.textContent).toContain(c.denied);
 });

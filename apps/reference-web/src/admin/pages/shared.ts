@@ -10,7 +10,7 @@ export interface AdminPageOptions {
   signal: AbortSignal;
   navigate(route: "walkthroughs" | "editor"): void;
   preview(definition: WalkthroughDef): void;
-  refresh(): void;
+  refresh(focus?: boolean): void;
 }
 const c = copy.admin;
 export const adminPage = (title: string) => h("section", { class: "admin-page", "data-ai-ignore": true }, h("h1", { tabindex: "-1" }, title));
