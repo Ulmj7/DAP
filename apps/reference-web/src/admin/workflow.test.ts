@@ -64,7 +64,7 @@ function fakeHost(seed: GuideRecord[] = []) {
 let mounted: Awaited<ReturnType<typeof boot>> | undefined;
 afterEach(() => {
   mounted?.destroy(); mounted = undefined; setEditSession(); takeRequestedEdit(); sessionStorage.clear();
-  document.body.replaceChildren(); window.history.replaceState(null, "", "#/dashboard"); vi.useRealTimers();
+  document.body.replaceChildren(); window.history.replaceState(null, "", "#/dashboard"); vi.useRealTimers(); vi.unstubAllGlobals();
 });
 const turn = () => vi.advanceTimersByTimeAsync(10);
 async function setup(route: string, host = fakeHost(), role: "maintainer" | "user" = "maintainer", demoRoleEnabled = true) {
@@ -375,7 +375,11 @@ it("refuses a directly requested published record and a foreign draft shape with
 });
 
 
-it("refreshes the launcher after an Unpublish finishes on another route while a real guide is active", async () => {
+it.each(["Guides", "Help"])("refreshes the launcher when late Unpublish finishes during a real guide started from %s", async source => {
+  const securityTitle = "Find the security settings";
+  if (source === "Help") vi.stubGlobal("fetch", async (path: string) => path === "/api/guidance"
+    ? json({ kind: "walkthrough", proposalId: "fake-proposal", title: securityTitle })
+    : json({ kind: "start", walkthroughId: "findSecuritySettings" }));
   const def = authored(publishedId, "Release being removed");
   const host = fakeHost([guide(publishedId, "published", def)]);
   let finish!: (response: Response) => void;
@@ -384,7 +388,14 @@ it("refreshes the launcher after an Unpublish finishes on another route while a 
   button(root, "Unpublish: Release being removed").click();
   await navigate("dashboard");
   expect(button(root, "Start guide: Release being removed")).toBeDefined();
-  button(root, "Start guide: Find the security settings").click(); await turn();
+  if (source === "Help") {
+    button(document, copy.help.title).click();
+    const panel = control<HTMLElement>(document, '[id="dap-help-panel"]');
+    fill(panel, "dap-help-query", "Where are the security settings?");
+    button(panel, copy.help.ask).click(); await turn();
+    button(panel, `Start guide: ${securityTitle}`).click();
+  } else button(root, `Start guide: ${securityTitle}`).click();
+  await turn();
   const runningApp = handle.current();
   const draft = guide(publishedId, "draft", def);
   host.rows.set(publishedId, draft); finish(json(draft)); await turn();

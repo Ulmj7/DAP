@@ -83,7 +83,10 @@ export async function boot(root: HTMLElement, options: { fetch?: FetchLike; trus
     if (previewing) return;
     const replace = () => {
       if (attempt !== revision) return;
-      const restoreFocus = focus ?? (root.contains(root.ownerDocument.activeElement) ? "h1" : undefined);
+      const focused = root.ownerDocument.activeElement;
+      const help = app?.help;
+      const displaced = root.contains(focused) || (help !== undefined && (focused === help.launcher || help.panel.contains(focused)));
+      const restoreFocus = focus ?? (displaced ? "h1" : undefined);
       mountNormal(app?.store.get());
       if (restoreFocus) root.querySelector<HTMLElement>(restoreFocus)?.focus();
     };
