@@ -85,6 +85,8 @@ description: "Task list for the Semantic Walkthrough Runtime feature (002)"
 - [ ] T244 [FUTURE] C01 AI help widget in the browser: needs a host endpoint that carries `askAndStart` and an approved start to the browser (Feature 003 has no transport); its own slice, planned separately. **Status 2026-11-18:** built and reviewed on branch `003-c01-ai-help` (not merged into `dev`); it adds the narrow host endpoint, a browser Help widget and a proposal-then-click start handoff, and is described in `specs/003-ai-guidance/c01-ai-help.md`. Left unchecked here until that branch is merged and passes final QA.
 - [ ] T245 [FUTURE] Admin screens S05-S07 (guide list, editor, analytics and audit summaries): Feature 004.
 
+Authoring and usage work deferred from T235 and T245 is tracked in [Feature 004 tasks](../004-authoring-analytics/tasks.md).
+
 ## Dependencies and order
 
 - T201 first. Then T202-T206 in parallel; T207 after T205 + T206.

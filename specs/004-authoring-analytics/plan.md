@@ -193,7 +193,13 @@ Only real deviations and decisions; everything else is as planned.
 - Preview remounts the reference app over the same runtime and overlay with a temporary `wt-preview` entry hidden from Guides. The result dialog has one optional dismissal callback. Closing an editor preview returns to the editor and restores its draft from memory. A list preview returns to the list. Preview has isolated profile and settings state. The normal app restores its own state on return. Help is hidden and inactive on admin pages and during Preview.
 - The demo role control and header are enabled by Vite in development. The host still determines access. A successful status write refreshes the catalog even if the maintainer has left that page. If a guide is running, the app replaces the catalog after the result dialog closes.
 - The client uses the six authoring and catalog routes shipped in Slice 1. Create removes the definition's top-level ID and adopts the host's ID after success. Step IDs remain because the runtime links steps with them. Read denials have their own state. Writes show fixed copy, with specific messages for oversized definitions and the published-edit conflict.
-- The list uses the host's authored step count, which includes navigation and completion. Built-in counts come from their guide steps. Analytics registers a placeholder route in this slice.
+- Slice 2 used the host's authored count of all stored steps. Slice 3 corrects the list to show guide steps for authored and built-in rows. Analytics registers a placeholder route in this slice.
+
+## 14c. Slice 3 implementation notes (2026-11-20)
+
+- The existing list query now counts only steps with `kind = 'guide'`. This aligns the Slice 1 host summary with the editor and built-in count. The route shape stays the same.
+- The event table omits the proposed sequence column. Its keys and timestamp suffice for the run-based report. Authored event admission checks published status under a row lock in the same transaction as the append. Duplicates, second terminals and terminals without a matching start are acknowledged without adding rows. The browser finishes sending a start before sending its terminal. The aggregate still ignores any orphan rows from direct inserts.
+- Usage sends three fields over the same-origin proxy and uses the host's default session during the demo. Configure both demo roles in the same tenant. The end-to-end proof uses the real Gateway and PostgreSQL through Fastify injection.
 
 ## 15. Largest scope-creep risks
 
