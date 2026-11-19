@@ -1,6 +1,6 @@
 # Walkthrough authoring and usage analytics
 
-Run this demo locally with Node 22+, Docker Compose and Chromium. Both demo roles must use the same tenant. The host selects a server-held session. The browser's role selector is available in Vite development mode, and ordinary User sessions receive a denial on maintainer routes.
+Run this demo locally with Node 22+, Docker Compose and a Chromium-based browser (the smoke below used Chrome 157). Both demo roles must use the same tenant. The host selects a server-held session. The browser's role selector is available in Vite development mode, and ordinary User sessions receive a denial on maintainer routes.
 
 ## Run PostgreSQL
 
@@ -75,7 +75,7 @@ Save is explicit. Writes can be throttled and may show a standard retry message.
 
 ## Smoke record
 
-The smoke used Chromium against Vite, the real host on port 8791 and PostgreSQL on port 54339. Screenshots were captured separately from the repository.
+The smoke used Chrome 157 (Chromium engine, driven by `agent-browser`) against Vite, the real host on port 8791 and PostgreSQL on port 54339. Screenshots were captured separately from the repository. The final QA repeated it independently on a fresh database by pasting this quickstart's environment block verbatim (last row).
 
 | Scenario | Viewport | Result | Date |
 | --- | --- | --- | --- |
@@ -85,3 +85,4 @@ The smoke used Chromium against Vite, the real host on port 8791 and PostgreSQL 
 | D — Analytics | 1440, 768 and 390 px | One completion and one Escape cancellation. UI totals and guide row matched PostgreSQL at 2 starts, 1 completion, 1 cancellation and 50%. No page-level horizontal overflow. | 2026-11-20 |
 | Editor layout | 768 and 390 px | Panes stacked with no page-level horizontal overflow. | 2026-11-20 |
 | Walkthrough list | 1440, 768 and 390 px | The authored row showed two guide steps. No page-level horizontal overflow. | 2026-11-20 |
+| Final QA re-run (A–D, direct admin URL as User) | 1440; 768 and 390 for S05, S06, S07 | A User opening `#/walkthroughs` directly saw only the denied message, no rows and no admin links. Maintainer: the target list held exactly the 8 registry targets, interactions followed the target, an invalid step disabled all three actions, Preview ran the real overlay and left no event rows, and Escape closed the Publish dialog without publishing. After Publish the User launcher listed the guide. One completion and one Escape cancellation, plus one start posted by hand with curl for an unrelated built-in guide, showed 3 started, 1 completed, 1 cancelled and 33% in the UI, equal to the SQL counts. A typed canary was in no event row. No page-level horizontal overflow. | 2026-11-20 |

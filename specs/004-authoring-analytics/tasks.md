@@ -13,7 +13,7 @@ description: "Task list for Walkthrough Authoring and Usage Analytics (004)"
 **QA cadence**: two reviews: after Slice 1 (authority and validation, the Tier A heart) and a final one after Slice 3. Normal tests run continuously. Do not reopen Features 001-003 except through the two additive exports named in T402 and T404.
 **Gate reporting**: every gate command is reported as one line (command, PASS or FAIL, log path); on failure, the single most relevant error line.
 
-**Open task counts (2026-11-20, code and smoke verified, T416 final QA pending): REQUIRED 1, OPTIONAL 8, FUTURE 8.**
+**Open task counts (2026-11-20, after final QA, T407-T416 done): REQUIRED 0, OPTIONAL 8, FUTURE 8.**
 
 ## Slice 1 - Authoring core (goal: validated definitions persisted behind trusted, authorised routes)
 
@@ -38,9 +38,7 @@ description: "Task list for Walkthrough Authoring and Usage Analytics (004)"
 - [X] T413 [REQUIRED] [P] Usage capture: `apps/reference-web/src/usage.ts` (runtime snapshot to events: `started` on the not-active to active edge with a fresh `runId`, `completed`, `cancelled`; `FAILED` and abandoned silent; fire-and-forget; off in Preview) and the host route `POST /api/walkthrough-events` (any session; exact keys; closed event list; id must be a built-in id or a published id of the tenant; `204`). Tests: edges for start, complete, cancel, restart after a terminal state, preview off, no step text or field values in any request body, unknown id and extra keys refused, privacy canary typed into the profile form never appears in a request. - FR-409, NR-406.
 - [X] T414 [REQUIRED] Analytics route and S07: `GET /api/admin/analytics` (Maintainer; totals and per-guide rows with titles from built-in summaries and stored definitions) and `admin/pages/analytics.ts` (four tiles, one table, "reported by the app" note, empty and error states). Tests: User refused; numbers equal the store; page renders deterministic percentages and the empty state. - scenario D complete.
 - [X] T415 [REQUIRED] End-to-end proof `tests/integration/authoring-end-to-end.test.ts` (jsdom, real reference-web, real runtime and overlay, Fastify `inject`, real Gateway and PostgreSQL): create and validate, save draft, preview without recording usage, publish, launch as User, complete one run and cancel another with Escape. Analytics matches PostgreSQL at 2 started, 1 completed, 1 cancelled and 50%. Invalid actions, User permissions, draft isolation, unpublish, orphan terminals and a private-input canary are checked. - SC-405.
-- [ ] T416 [REQUIRED] Closure (final QA remains open).
-  - [x] Added the focused script and CI step, quickstart, real Chromium smoke record, and Feature 002 cross-reference. The walkthrough suite covers the admin and reporter tests.
-  - [ ] Final QA and project completion report.
+- [X] T416 [REQUIRED] Closure: `test:authoring` script and one CI step, `quickstart.md` (verified by running its commands verbatim), real-browser smoke record (Chrome 157, Chromium engine), Feature 002 cross-reference, and the final QA. Evidence of the final QA, from a fresh PostgreSQL after `npm ci`: `db:migrate`, `lint`, `typecheck`, `check:deps`, `test:arch` 660, `test:security` 969 (+76 todo that predate Feature 004), `test:integration` 263, `test:guidance` 1018, `test:walkthrough` 785, `test:walkthrough:proof` 20, `test:authoring` 410 (all 18 Feature 004 test files), `build:web`, `npm test` 7409 (219 files), `test:m1-gate` 2187: all PASS. `git diff dev..004-final -- packages` is empty; no earlier test was skipped or weakened (four Feature 004 test files were updated for the step-count and analytics-route decisions in plan 14c).
 
 ## Optional (promote only if a demo scenario needs it)
 
@@ -74,3 +72,5 @@ description: "Task list for Walkthrough Authoring and Usage Analytics (004)"
 ## Definition of done
 
 All 16 REQUIRED tasks complete, the four demo scenarios recorded in the quickstart, and the 17 points of spec section 9 evidenced. Then: **Feature 004 - REQUIRED COMPLETE.**
+
+**Status 2026-11-20 (final QA): Feature 004 - REQUIRED COMPLETE.** All 16 REQUIRED tasks are done and the 17 points of spec section 9 have their evidence (T415 end-to-end proof, the Slice 1 PostgreSQL proofs, the quickstart smoke record, and the gates listed at T416). Features 001, 002 and 003 each show 0 open REQUIRED tasks in their own `tasks.md`, and the M1 gate passes, so **DAP REQUIRED IMPLEMENTATION - COMPLETE.** OPTIONAL (8) and FUTURE (8) tasks stay open on purpose and are not part of the required scope.

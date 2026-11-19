@@ -201,6 +201,11 @@ Only real deviations and decisions; everything else is as planned.
 - The event table omits the proposed sequence column. Its keys and timestamp suffice for the run-based report. Authored event admission checks published status under a row lock in the same transaction as the append. Duplicates, second terminals and terminals without a matching start are acknowledged without adding rows. The browser finishes sending a start before sending its terminal. The aggregate still ignores any orphan rows from direct inserts.
 - Usage sends three fields over the same-origin proxy and uses the host's default session during the demo. Configure both demo roles in the same tenant. The end-to-end proof uses the real Gateway and PostgreSQL through Fastify injection.
 
+## 14d. Final QA notes (2026-11-20)
+
+- No code defect was found. Two documentation points were corrected: the smoke browser is Chrome 157 (Chromium engine), not a bare Chromium build, and the completion lines were added only after the gates passed.
+- Known limitations kept on purpose: the demo role header is a development convenience (the host's own session table is the authority); events are client-reported, unauthenticated beyond a valid session and unthrottled (FUTURE T435), so anyone holding a session can add or lose runs; a terminal event for a guide that was unpublished after its start is refused; the browser needs `crypto.randomUUID` (a secure context such as `127.0.0.1`) or it reports nothing; both demo roles must share a tenant.
+
 ## 15. Largest scope-creep risks
 
 1. **Editor gold-plating**: drag and drop, centre preview pane, branching, recovery UI, rich text. Held off by the REQUIRED/OPTIONAL split and the three-step-kind rule.
