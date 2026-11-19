@@ -41,6 +41,9 @@ function fakeHost(seed: GuideRecord[] = []) {
     if (override) return override();
     if (path === published) return json({ walkthroughs: [...rows.values()].filter(row => row.status === "published").map(row => row.definition) });
     if (role !== "maintainer") return json({ message: "FAKE-HOST-PRIVATE" }, 403);
+    if (path === "/api/admin/analytics" && method === "GET") return json({
+      totals: { started: 0, completed: 0, cancelled: 0, completionRate: null }, guides: [],
+    });
     if (path === admin && method === "GET") return json({
       builtIn: builtinList, authored: [...rows.values()].map(({ id, status, definition }) => ({
         id, status, title: definition.title, description: definition.description, stepCount: definition.steps.length, updatedAt: "2026-11-20T00:00:00.000Z",
@@ -144,7 +147,7 @@ it("switches the demo principal, gates navigation on a probe, and hides Help and
   expect(handle.current()).not.toBe(userApp);
   expect(document.activeElement?.id).toBe("demo-role");
   expect(root.querySelector('nav [href="#/walkthroughs"]')).not.toBeNull();
-  expect(root.textContent).toContain(c.analyticsPlaceholder);
+  expect(root.textContent).toContain(c.usage.empty);
   expect(host.requests.map(request => request.role)).toContain("user");
   expect(host.requests.at(-1)?.role).toBe("maintainer");
   expect(root.querySelector('label[for="demo-role"]')?.textContent).toBe(c.role);

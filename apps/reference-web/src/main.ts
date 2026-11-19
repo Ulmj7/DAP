@@ -34,6 +34,8 @@ import type { AdminClient, DemoRole } from "./admin/client.js";
 import { walkthroughsPage } from "./admin/pages/walkthroughs.js";
 import { editorPage } from "./admin/pages/editor.js";
 import { analyticsPage } from "./admin/pages/analytics.js";
+import { reportUsage } from "./usage.js";
+import type { UsageClient } from "./usage.js";
 import { adminPage } from "./admin/pages/shared.js";
 
 export interface AdminOptions {
@@ -66,6 +68,7 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
   readonly admin?: AdminOptions;
   readonly hideFromLauncher?: readonly string[];
   readonly autoStart?: string;
+  readonly usage?: UsageClient | false;
   readonly onPreviewEnd?: () => void;
 } = {}): MountedApp {
   const doc = root.ownerDocument;
@@ -186,11 +189,12 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
     }
     terminal=key;
   });
+  const stopUsage = options.usage && typeof win.crypto.randomUUID === "function" && reportUsage(runtime, options.usage, () => win.crypto.randomUUID());
   if (options.autoStart !== undefined) begin(options.autoStart);
   let destroyed = false;
   return Object.freeze({
     registry, targets, overlay, router, store, runtime, profile, guides, help,
     whenGuideIdle(callback: () => void) { if (runActive() || dialog.isOpen()) afterGuide = callback; else callback(); },
-    destroy() { if (destroyed) return; destroyed = true; mountScope.abort(); pageScope.abort(); bridge.destroy(); availability.destroy(); stopPlacement();unsubscribeRuntime();doc.removeEventListener("keydown",escape);dialog.destroy();help.destroy();unsubscribeRouter(); unsubscribeStore(); profile.destroy(); postconditions.destroy(); runtime.cancel(); overlay.hide(); root.replaceChildren(); },
+    destroy() { if (destroyed) return; destroyed = true; mountScope.abort(); pageScope.abort(); if (stopUsage) stopUsage(); bridge.destroy(); availability.destroy(); stopPlacement();unsubscribeRuntime();doc.removeEventListener("keydown",escape);dialog.destroy();help.destroy();unsubscribeRouter(); unsubscribeStore(); profile.destroy(); postconditions.destroy(); runtime.cancel(); overlay.hide(); root.replaceChildren(); },
   });
 }

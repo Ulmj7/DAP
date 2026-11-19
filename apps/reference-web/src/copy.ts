@@ -16,7 +16,13 @@ export const copy = {
  titles: { dashboard: "DAP — Dashboard", profile: "DAP — Profile", settings: "DAP — Settings", walkthroughs: "DAP — Walkthroughs", editor: "DAP — Walkthrough editor", analytics: "DAP — Analytics" },
  admin: {
   role: "Demo role (development only)", user: "User", maintainer: "Maintainer", walkthroughs: "Walkthroughs", editor: "Walkthrough editor", analytics: "Analytics",
-  analyticsPlaceholder: "Analytics is not available yet.", denied: "You do not have access to this page, or your demo session has expired.",
+  denied: "You do not have access to this page, or your demo session has expired.",
+  usage: {
+   note: "Reported by the app in the browser. This is product usage, not a security audit record.",
+   started: "Started", starts: "Starts", completed: "Completed", cancelled: "Cancelled", rate: "Completion Rate",
+   percent: "Completion %", guide: "Guide", caption: "Usage by walkthrough",
+   empty: "No runs yet. Start a guide from Guides.", failed: "Analytics could not be loaded.", retry: "Try again", noRate: "—",
+  },
   loading: "Loading…", readFailed: "Walkthroughs could not be loaded. Please try again.", search: "Search walkthroughs", empty: "No walkthroughs match your search.",
   newGuide: "New walkthrough", title: "Title", description: "Description", steps: "Steps", status: "Status", updated: "Updated", actions: "Actions",
   builtIn: "Built-in", draft: "Draft", published: "Published", edit: "Edit", preview: "Preview", publish: "Publish", unpublish: "Unpublish", cancel: "Cancel",

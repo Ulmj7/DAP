@@ -9,6 +9,7 @@ import { mountApp } from "./main.js";
 import type { MountedApp } from "./main.js";
 import { POSTCONDITION_NAMES } from "./postconditions.js";
 import { createDemoRegistry } from "./semantic-ui.js";
+import { createUsageClient } from "./usage.js";
 import { WALKTHROUGHS } from "./walkthroughs/index.js";
 
 export async function boot(root: HTMLElement, options: { fetch?: FetchLike; trustedEventsOnly?: boolean; demoRoleEnabled?: boolean } = {}) {
@@ -17,6 +18,7 @@ export async function boot(root: HTMLElement, options: { fetch?: FetchLike; trus
   const win = window;
   const fetcher = options.fetch ?? (typeof win.fetch === "function" ? win.fetch.bind(win) : undefined);
   const registry = createDemoRegistry();
+  const usage = createUsageClient(fetcher);
   let role = options.demoRoleEnabled ? readRole(win) : undefined;
   let walkthroughs: readonly WalkthroughDef[] = WALKTHROUGHS;
   let app: MountedApp | undefined;
@@ -34,7 +36,7 @@ export async function boot(root: HTMLElement, options: { fetch?: FetchLike; trus
     previewing = true;
     win.history.replaceState(null, "", "#/dashboard");
     app = mountApp(root, {
-      ...mountOptions, walkthroughs: [...walkthroughs, def], hideFromLauncher: [PREVIEW_ID], autoStart: PREVIEW_ID,
+      ...mountOptions, walkthroughs: [...walkthroughs, def], hideFromLauncher: [PREVIEW_ID], autoStart: PREVIEW_ID, usage: false,
       onPreviewEnd: () => {
         win.history.replaceState(null, "", returnHash || "#/walkthroughs");
         previewing = false;
@@ -47,7 +49,7 @@ export async function boot(root: HTMLElement, options: { fetch?: FetchLike; trus
   function mountNormal(state?: AppState) {
     app?.destroy();
     app = mountApp(root, {
-      ...mountOptions, walkthroughs,
+      ...mountOptions, walkthroughs, usage,
       admin: {
         client: createAdminClient({ fetch: fetcher, role }), role, preview,
         changeRole(next) {

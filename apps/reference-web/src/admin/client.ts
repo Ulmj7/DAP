@@ -11,7 +11,19 @@ export interface GuideList { authored: readonly AuthoredSummary[]; builtIn: read
 export interface GuideRecord { id: string; status: GuideStatus; definition: WalkthroughDef }
 export type AdminResult<T> = { kind: "ok"; value: T } | { kind: "denied" | "failed" | "oversize" | "published" } | { kind: "invalid"; issues: readonly string[] };
 
+export interface UsageCounts {
+  started: number;
+  completed: number;
+  cancelled: number;
+  completionRate: number | null;
+}
+export interface UsageSummary {
+  totals: UsageCounts;
+  guides: readonly (UsageCounts & { id: string; title: string })[];
+}
+
 export interface AdminClient {
+  analytics(): Promise<AdminResult<UsageSummary>>;
   published(): Promise<AdminResult<readonly WalkthroughDef[]>>;
   list(): Promise<AdminResult<GuideList>>;
   get(id: string): Promise<AdminResult<GuideRecord>>;
@@ -56,6 +68,26 @@ const record = (value: unknown, id?: string, wanted?: GuideStatus): GuideRecord 
 const published = (value: unknown): readonly WalkthroughDef[] | null => object(value) && only(value, ["walkthroughs"])
   && Array.isArray(value.walkthroughs) && value.walkthroughs.length <= 50 ? value.walkthroughs.filter(definition) : null;
 
+const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const countKeys = ["started", "completed", "cancelled", "completionRate"];
+function usageCounts(value: Bag): value is Bag & UsageCounts {
+  return count(value.started) && count(value.completed) && count(value.cancelled) && value.completed + value.cancelled <= value.started
+    && (value.started === 0 ? value.completionRate === null : count(value.completionRate) && value.completionRate <= 100);
+}
+const usageGuide = (value: unknown): value is UsageSummary["guides"][number] => object(value)
+  && only(value, ["id", "title", ...countKeys]) && text(value.id, 64) && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value.id)
+  && text(value.title, MAX_TITLE) && usageCounts(value) && value.started > 0;
+function analytics(value: unknown): UsageSummary | null {
+  if (!object(value) || !only(value, ["totals", "guides"]) || !object(value.totals) || !only(value.totals, countKeys) || !usageCounts(value.totals)
+    || !Array.isArray(value.guides) || !value.guides.every(usageGuide)) return null;
+  const { guides, totals } = value;
+  if (new Set(guides.map(guide => guide.id)).size !== guides.length) return null;
+  for (const key of ["started", "completed", "cancelled"] as const) {
+    if (guides.reduce((sum, guide) => sum + guide[key], 0) !== totals[key]) return null;
+  }
+  return { totals, guides };
+}
+
 const ADMIN = "/api/admin/walkthroughs";
 const FAILED = { kind: "failed" } as const;
 export function createAdminClient(options: { fetch?: FetchLike | undefined; role?: DemoRole | undefined; timeoutMs?: number }): AdminClient {
@@ -90,6 +122,7 @@ export function createAdminClient(options: { fetch?: FetchLike | undefined; role
     try { return await Promise.race([exchange, expired]); } finally { clearTimeout(timer); }
   }
   return {
+    analytics: () => request("/api/admin/analytics", analytics),
     published: () => request("/api/walkthroughs/published", published),
     list: () => request(ADMIN, list),
     get: id => authoredId(id) ? request(`${ADMIN}/${id}`, value => record(value, id)) : Promise.resolve(FAILED),
