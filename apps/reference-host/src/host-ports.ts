@@ -4,6 +4,7 @@
  * parameter, or anything the model wrote as authority.
  */
 import type { AuthorizationContext, PageContextProvider, PermissionChecker, PermissionId, ResolvedResource, ResourceAuthorizer, ResourceRef } from "@dap/contracts";
+import { isAuthoredId } from "./authoring/ids.js";
 import type { DevSession } from "./dev-auth/index.js";
 
 /** What each session may do, from the dev-session table. Keyed by the trusted session id of the context. */
@@ -15,14 +16,17 @@ export function createPermissionChecker(sessions: readonly DevSession[]): Permis
 /**
  * Notes are private to the tenant of the caller: a note reference resolves only inside the caller's OWN tenant (taken from the context)
  * and only for a session that holds the permission. A reference to anything else resolves to null, which is also what "not found" and
- * "another tenant's" look like to the Gateway.
+ * "another tenant's" look like to the Gateway. (Feature 004 adds the same rule for `walkthrough` references.)
  */
 export function createResourceAuthorizer(sessions: readonly DevSession[]): ResourceAuthorizer {
   const permissions = createPermissionChecker(sessions);
   return Object.freeze({
     async resolve(ctx: AuthorizationContext, ref: ResourceRef, permission: PermissionId): Promise<ResolvedResource | null> {
-      if (ref.type !== "note" || !(await permissions.has(ctx, permission))) return null;
-      return { ref: { type: "note", id: ref.id }, tenantId: ctx.tenantId, displayName: `Note ${ref.id}` };
+      if (ref.type === "note" && await permissions.has(ctx, permission)) return { ref: { type: "note", id: ref.id }, tenantId: ctx.tenantId, displayName: `Note ${ref.id}` };
+      // Feature 004: an authored walkthrough resolves by the SAME rule as a note: only inside the caller's OWN tenant (from the context), only for a session holding the
+      // permission, and only for a well-formed authored id. Whether the guide exists is the executor's business (`not_found`), exactly as for a note.
+      if (ref.type === "walkthrough" && isAuthoredId(ref.id) && await permissions.has(ctx, permission)) return { ref: { type: "walkthrough", id: ref.id }, tenantId: ctx.tenantId, displayName: `Walkthrough ${ref.id}` };
+      return null;
     },
   });
 }

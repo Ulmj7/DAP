@@ -41,6 +41,43 @@ describe("the resource authorizer", () => {
   });
 });
 
+describe("the resource authorizer: walkthroughs (Feature 004) and the unchanged note rule", () => {
+  const MAINTAIN = "perm.walkthrough.maintain" as PermissionId;
+  const withMaintain = parseDevSessions(JSON.stringify([
+    { token: `tok-${randomUUID()}`, userId: "maya", tenantId: TENANT, sessionId: "s-maya", validUntil: FUTURE, permissions: ["perm.walkthrough.maintain", "perm.demo.save-note"] },
+    { token: `tok-${randomUUID()}`, userId: "ula", tenantId: TENANT, sessionId: "s-ula", validUntil: FUTURE, permissions: [] },
+  ]));
+  const ctx = async (index: number): Promise<AuthorizationContext> => {
+    const context = await createSecurityContextFactory({ authentication: createDevAuthentication(withMaintain, clock), clock }).establish(withMaintain[index]!.token);
+    if (context === null) throw new Error("no context");
+    return context;
+  };
+  const ID = "wt-0123456789ab";
+  it("a walkthrough resolves only inside the caller's OWN tenant (from the context) and only for a session holding the permission", async () => {
+    const resources = createResourceAuthorizer(withMaintain);
+    const [maya, ula] = [await ctx(0), await ctx(1)];
+    expect(await resources.resolve(maya, { type: "walkthrough", id: ID }, MAINTAIN)).toEqual({ ref: { type: "walkthrough", id: ID }, tenantId: TENANT, displayName: `Walkthrough ${ID}` });
+    expect(await resources.resolve(ula, { type: "walkthrough", id: ID }, MAINTAIN), "no permission, no resource").toBeNull();
+    expect(await resources.resolve(maya, { type: "walkthrough", id: ID }, "perm.demo.lookup" as PermissionId), "a permission the session lacks").toBeNull();
+  });
+  it("a walkthrough reference that is not a well-formed authored id (a built-in id, the preview id, junk) does not resolve", async () => {
+    const resources = createResourceAuthorizer(withMaintain);
+    const maya = await ctx(0);
+    for (const id of ["profileUpdate", "wt-preview", "wt-ABCDEF012345", "", "__proto__", "../x"]) expect(await resources.resolve(maya, { type: "walkthrough", id }, MAINTAIN), id).toBeNull();
+  });
+  it("the NOTE rule is byte for byte what it was: same answer, same tenant source, same permission rule, other types still null", async () => {
+    const resources = createResourceAuthorizer(withMaintain);
+    const [maya, ula] = [await ctx(0), await ctx(1)];
+    expect(await resources.resolve(maya, { type: "note", id: "note-1" }, SAVE)).toEqual({ ref: { type: "note", id: "note-1" }, tenantId: TENANT, displayName: "Note note-1" });
+    expect(await resources.resolve(maya, { type: "note", id: "anything at all" }, SAVE)).toEqual({ ref: { type: "note", id: "anything at all" }, tenantId: TENANT, displayName: "Note anything at all" });
+    expect(await resources.resolve(ula, { type: "note", id: "note-1" }, SAVE)).toBeNull();
+    expect(await resources.resolve(maya, { type: "note", id: "note-1" }, MAINTAIN), "a note needs the permission the capability names, here one the session holds").not.toBeNull();
+    expect(await resources.resolve(maya, { type: "document", id: "note-1" }, SAVE)).toBeNull();
+    expect(await resources.resolve(maya, { type: "Note", id: "note-1" }, SAVE), "the type is matched exactly").toBeNull();
+    expect(await resources.resolve(maya, { type: "Walkthrough", id: ID }, MAINTAIN), "the type is matched exactly").toBeNull();
+  });
+});
+
 describe("the page provider", () => {
   it("reports no page: the demo has no page model, so there is nothing for a proposal to spoof", async () => {
     const run: PlannerRunMeta = { aiSessionId: "s", turnId: "t", model: "m", depth: 0, turnStartedAt: new Date().toISOString() as IsoInstant };

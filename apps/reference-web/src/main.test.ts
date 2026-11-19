@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEMO_INSTRUCTION, mountApp } from "./main.js";
+import { mountApp } from "./main.js";
 import type { MountedApp } from "./main.js";
 import { DEMO_ELEMENTS } from "./semantic-ui.js";
 
+const DEMO_INSTRUCTION="Type your name here.";
 let root: HTMLElement;
 let app: MountedApp | undefined;
 const mount = (route: string): MountedApp => {
   window.location.hash = `#/${route}`;
   app = mountApp(root);
   return app;
+};
+const show = (id="profile.nameInput", text=DEMO_INSTRUCTION):boolean => {
+ const target=app!.targets.find(id);if(!target){app!.overlay.hide();return false;}
+ app!.overlay.show(target,text,{onAck:()=>app!.overlay.hide(),onCancel:()=>app!.overlay.hide()});return true;
 };
 const overlayNodes = (): number => document.querySelectorAll("[data-ai-overlay]").length;
 const stubRect = (el: Element, r: { left: number; top: number; width: number; height: number }): void => {
@@ -56,12 +61,12 @@ describe("T206: the shell", () => {
   });
 });
 
-describe("T207: the first visible demo (profile page)", () => {
+describe("T207 intents migrated to the overlay/targets API", () => {
   it("(a) clicking 'Show me' puts the ring over the name input and shows the tooltip text", () => {
     mount("profile");
     const name = root.querySelector<HTMLElement>('[data-ai-id="profile.nameInput"]')!;
     stubRect(name, { left: 40, top: 100, width: 300, height: 30 });
-    document.getElementById("show-me")!.click();
+    show();
     const ring = document.querySelector<HTMLElement>('[data-ai-overlay="ring"]')!;
     const card = document.querySelector<HTMLElement>('[data-ai-overlay="tooltip"]')!;
     expect([ring.style.left, ring.style.top, ring.style.width, ring.style.height]).toEqual(["36px", "96px", "308px", "38px"]);
@@ -71,28 +76,28 @@ describe("T207: the first visible demo (profile page)", () => {
   });
   it("(b) an unregistered id highlights nothing and shows no tooltip, via the page control and directly", () => {
     mount("profile");
-    document.getElementById("show-missing")!.click();
+    show("profile.doesNotExist");
     expect(overlayNodes()).toBe(0);
-    expect(app!.showGuidance("profile.doesNotExist", "x")).toBe(false);
+    expect(show("profile.doesNotExist", "x")).toBe(false);
     expect(overlayNodes()).toBe(0);
   });
   it("a failed request also clears an overlay that was showing", () => {
     mount("profile");
-    document.getElementById("show-me")!.click();
+    show();
     expect(overlayNodes()).toBeGreaterThan(0);
-    document.getElementById("show-missing")!.click();
+    show("profile.doesNotExist");
     expect(overlayNodes()).toBe(0);
   });
   it("(c) a password field that carries a data-ai-id cannot be highlighted, even if its id were registered", () => {
     mount("profile");
     expect(root.querySelector('input[type="password"]')?.getAttribute("data-ai-id")).toBe("profile.passwordInput");
-    expect(app!.showGuidance("profile.passwordInput", "x")).toBe(false);
+    expect(show("profile.passwordInput", "x")).toBe(false);
     expect(overlayNodes()).toBe(0);
     // Even a registry that did list the id must refuse it: the privacy layer decides, not the registry.
     const password = root.querySelector('input[type="password"]')!;
     password.setAttribute("data-ai-id", "profile.nameInput");
     root.querySelector('[data-ai-id="profile.nameInput"]:not([type="password"])')?.removeAttribute("data-ai-id");
-    expect(app!.showGuidance("profile.nameInput", "x")).toBe(false);
+    expect(show("profile.nameInput", "x")).toBe(false);
     expect(overlayNodes()).toBe(0);
   });
   it("the ignored panel and the redacted field are never targets", () => {
@@ -105,19 +110,19 @@ describe("T207: the first visible demo (profile page)", () => {
   });
   it("(d) Cancel, Got it and hide() each remove everything", () => {
     mount("profile");
-    document.getElementById("show-me")!.click();
+    show();
     document.querySelector<HTMLElement>('[data-ai-overlay="cancel"]')!.click();
     expect(overlayNodes()).toBe(0);
-    document.getElementById("show-me")!.click();
+    show();
     document.querySelector<HTMLElement>('[data-ai-overlay="ack"]')!.click();
     expect(overlayNodes()).toBe(0);
-    document.getElementById("show-me")!.click();
+    show();
     app!.overlay.hide();
     expect(overlayNodes()).toBe(0);
   });
   it("leaving the page removes the overlay, and destroy() leaves nothing in the document", async () => {
     mount("profile");
-    document.getElementById("show-me")!.click();
+    show();
     window.location.hash = "#/settings";
     await new Promise((r) => setTimeout(r, 0));
     expect(overlayNodes()).toBe(0);
@@ -127,7 +132,7 @@ describe("T207: the first visible demo (profile page)", () => {
   });
   it("no overlay text is ever interpreted as markup", () => {
     mount("profile");
-    app!.showGuidance("profile.nameInput", "<img src=x onerror=alert(1)>");
+    show("profile.nameInput", "<img src=x onerror=alert(1)>");
     expect(document.querySelectorAll("img").length).toBe(0);
     expect(document.querySelector('[data-ai-overlay="tooltip"] p')?.textContent).toBe("<img src=x onerror=alert(1)>");
   });
