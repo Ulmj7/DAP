@@ -188,6 +188,12 @@ Only real deviations and decisions; everything else is as planned.
 - **Dev role switch** lives only in `authoring/principal.ts` (`X-Demo-Role`, two server-held sessions, unknown = user, maintainer without a configured token = user). Permissions come from the host's session table; the header is a demo convenience, not the authority.
 - `http/transport.ts` gained one additive `export` (`exactBody`); `approved-start.ts` and all guidance code are untouched.
 
+## 14b. Slice 2 implementation notes (2026-11-20)
+
+- Preview remounts the reference app over the same runtime and overlay with a temporary `wt-preview` entry hidden from Guides. The result dialog has one optional dismissal callback. Closing an editor preview returns to the editor and restores its draft from memory. A list preview returns to the list. Help is hidden and inactive on admin pages and during Preview.
+- The client uses the six authoring and catalog routes shipped in Slice 1. Create removes the definition's top-level ID and adopts the host's ID after success. Step IDs remain because the runtime links steps with them. Read denials have their own state. Writes show fixed copy, with specific messages for oversized definitions and the published-edit conflict.
+- The list uses the host's authored step count, which includes navigation and completion. Built-in counts come from their guide steps. Analytics registers a placeholder route in this slice.
+
 ## 15. Largest scope-creep risks
 
 1. **Editor gold-plating**: drag and drop, centre preview pane, branching, recovery UI, rich text. Held off by the REQUIRED/OPTIONAL split and the three-step-kind rule.
