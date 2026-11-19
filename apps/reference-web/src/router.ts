@@ -1,5 +1,7 @@
-/** A hash router over a fixed set of routes (`#/dashboard`, `#/profile`, `#/settings`). Anything else is the dashboard. */
-export const ROUTES = ["dashboard", "profile", "settings"] as const;
+/** A hash router over a fixed set of routes . Anything else is the dashboard. */
+export const ADMIN_ROUTES = ["walkthroughs", "editor", "analytics"] as const;
+export const ROUTES = ["dashboard", "profile", "settings", ...ADMIN_ROUTES] as const;
+export const isAdminRoute = (route: Route): route is (typeof ADMIN_ROUTES)[number] => (ADMIN_ROUTES as readonly Route[]).includes(route);
 export type Route = (typeof ROUTES)[number];
 
 export interface Router {

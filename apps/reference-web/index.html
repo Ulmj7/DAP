@@ -11,6 +11,11 @@
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/browser.ts"></script>
+    <script type="module">
+      import { boot } from "/src/browser.ts";
+      const root = document.getElementById("app");
+      if (!root) throw new Error("#app is missing from index.html");
+      void boot(root);
+    </script>
   </body>
 </html>

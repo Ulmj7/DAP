@@ -19,7 +19,7 @@ import { h } from "./dom.js";
 import { dashboardPage } from "./pages/dashboard.js";
 import { profilePage } from "./pages/profile.js";
 import { settingsPage } from "./pages/settings.js";
-import { createRouter } from "./router.js";
+import { ADMIN_ROUTES, createRouter, isAdminRoute } from "./router.js";
 import type { Router } from "./router.js";
 import { createDemoRegistry } from "./semantic-ui.js";
 import { createStore } from "./store.js";
@@ -30,6 +30,19 @@ import type { HelpWidget } from "./help/widget.js";
 export { createGuidanceClient } from "./help/client.js";
 export type { FetchLike, GuidanceClient } from "./help/client.js";
 import type { Store } from "./store.js";
+import type { AdminClient, DemoRole } from "./admin/client.js";
+import { walkthroughsPage } from "./admin/pages/walkthroughs.js";
+import { editorPage } from "./admin/pages/editor.js";
+import { analyticsPage } from "./admin/pages/analytics.js";
+import { adminPage } from "./admin/pages/shared.js";
+
+export interface AdminOptions {
+  client: AdminClient;
+  role: DemoRole;
+  changeRole(role: DemoRole): void;
+  preview(definition: WalkthroughDef): void;
+  refresh(): void;
+}
 
 export interface MountedApp {
   readonly guides: GuideApi;
@@ -48,7 +61,12 @@ export interface MountedApp {
 
 export function mountApp(root: HTMLElement, options: { readonly window?: Window; readonly profileService?: ProfileService; readonly trustedEventsOnly?: boolean; readonly walkthroughs?: readonly WalkthroughDef[];
   /** C01: the AI Help transport. Defaults to same-origin `/api/guidance` through the window's `fetch`; tests inject a fake host. */
-  readonly guidance?: GuidanceClient } = {}): MountedApp {
+  readonly guidance?: GuidanceClient;
+  readonly admin?: AdminOptions;
+  readonly hideFromLauncher?: readonly string[];
+  readonly autoStart?: string;
+  readonly onPreviewEnd?: () => void;
+} = {}): MountedApp {
   const doc = root.ownerDocument;
   const win = options.window ?? doc.defaultView;
   if (win === null || win === undefined) throw new Error("mountApp needs a window");
@@ -86,34 +104,27 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
     if(store.get().route==="dashboard")launcher?.reveal();else{revealGuides=true;router.navigate("dashboard");}
   });
   const main = h("main", { class: "page-container", tabindex: "-1" });
-  root.replaceChildren(h("header", { class: "app-header" }, h("span", { class: "brand" }, copy.brand), nav, guidesLink), main);
+  const header = h("header", { class: "app-header" }, h("span", { class: "brand" }, copy.brand), nav, guidesLink);
+  const admin = options.admin;
+  const mountScope = new AbortController();
+  let pageScope = new AbortController();
+  if (admin) {
+    const role = h("select", { id: "demo-role" }, h("option", { value: "user" }, copy.admin.user), h("option", { value: "maintainer" }, copy.admin.maintainer)) as HTMLSelectElement;
+    role.value = admin.role;
+    role.addEventListener("change", () => admin.changeRole(role.value === "maintainer" ? "maintainer" : "user"));
+    header.append(h("div", { class: "demo-role", "data-ai-ignore": true }, h("label", { for: role.id }, copy.admin.role), role));
+    void admin.client.list().then(result => {
+      if (mountScope.signal.aborted || admin.role !== "maintainer" || result.kind !== "ok") return;
+      for (const route of ADMIN_ROUTES) nav.append(h("a", { href: `#/${route}`, class: "nav-chip", "data-ai-ignore": true,
+        ...(router.current() === route ? { "aria-current": "page" } : {}) }, copy.admin[route]));
+    });
+  }
+  root.replaceChildren(header, main);
   let renderedRoute: AppState["route"] | undefined;
   let updatePage: (state: AppState) => void = () => {};
-  const render = (state: AppState): void => {
-    doc.title = copy.titles[state.route];
-    for (const link of Array.from(nav.querySelectorAll("a"))) {
-      if (link.getAttribute("href") === `#/${state.route}`) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
-    }
-    if (state.route !== renderedRoute) {
-      overlay.hide(); renderedRoute = state.route;
-      if (state.route === "profile") {
-        const page = profilePage({ edit: profile.edit, save: () => { void profile.save(); } });
-        main.replaceChildren(page.element); updatePage = s => page.update(s.profile);
-      } else if (state.route === "settings") {
-        const page = settingsPage(() => store.set({ advancedOpen: !store.get().advancedOpen })); main.replaceChildren(page.element); updatePage = s => page.update(s.advancedOpen);
-      } else { launcher=createLauncher(guides,start);launcher.update();main.replaceChildren(dashboardPage(launcher.element)); updatePage = () => {launcher?.update();}; if(revealGuides){revealGuides=false;launcher.reveal();} }
-    }
-    root.querySelector("h1")?.setAttribute("tabindex","-1");
-    updatePage(state);
-  };
-  render(store.get());
-  const unsubscribeStore = store.subscribe(render);
-  const availability=createAvailabilityFeed({registry,targets,dispatch:event=>runtime.dispatch(event)});
-  const unsubscribeRouter = router.subscribe(route => { store.set({ route }); availability.refresh();runtime.dispatch({ type: "routeChanged", route }); });
-  const stopPlacement=targets.observe(()=>overlay.reposition());
-  let terminal="";let escBound=false;
-  // C01: Help closes on Escape only when no higher-priority owner (an active run, whose handler cancels it, or the open status dialog) has it.
-  const help=createHelp({doc,guides,client:options.guidance??createGuidanceClient({fetch:typeof win.fetch==="function"?(url,init)=>win.fetch(url,init):undefined}),
+  const helpAvailable = () => options.autoStart === undefined && !isAdminRoute(router.current());
+  // C01: an active run or result dialog takes priority over Help on Escape.
+  const help=createHelp({doc,guides,available:helpAvailable,client:options.guidance??createGuidanceClient({fetch:typeof win.fetch==="function"?(url,init)=>win.fetch(url,init):undefined}),
     escapeOwnedElsewhere:()=>runActive()||dialog.isOpen(),
     // The docked panel reflows the page (body padding) outside root, which the target observer does not see, so the overlay re-places explicitly.
     onLayoutChange:()=>overlay.reposition(),
@@ -125,6 +136,37 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
       return guides.startWalkthrough(id);
     },
   });
+  const render = (state: AppState): void => {
+    doc.title = copy.titles[state.route];
+    for (const link of Array.from(nav.querySelectorAll("a"))) {
+      if (link.getAttribute("href") === `#/${state.route}`) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
+    }
+    if (state.route !== renderedRoute) {
+      overlay.hide(); renderedRoute = state.route;
+      pageScope.abort(); pageScope = new AbortController();
+      help.launcher.hidden = !helpAvailable(); if (!helpAvailable()) help.close(false);
+      launcher = undefined;
+      if (state.route === "profile") {
+        const page = profilePage({ edit: profile.edit, save: () => { void profile.save(); } });
+        main.replaceChildren(page.element); updatePage = s => page.update(s.profile);
+      } else if (state.route === "settings") {
+        const page = settingsPage(() => store.set({ advancedOpen: !store.get().advancedOpen })); main.replaceChildren(page.element); updatePage = s => page.update(s.advancedOpen);
+      } else if (isAdminRoute(state.route)) {
+        const page = state.route === "walkthroughs" ? walkthroughsPage : state.route === "editor" ? editorPage : analyticsPage;
+        main.replaceChildren(admin ? page({ ...admin, registry, signal: pageScope.signal, navigate: router.navigate })
+          : adminPage(copy.admin[state.route])); updatePage = () => {};
+        if (!admin) main.firstElementChild?.append(h("p", { role: "status" }, copy.admin.denied));
+      } else { launcher=createLauncher(guides,start,options.hideFromLauncher);launcher.update();main.replaceChildren(dashboardPage(launcher.element)); updatePage = () => {launcher?.update();}; if(revealGuides){revealGuides=false;launcher.reveal();} }
+    }
+    root.querySelector("h1")?.setAttribute("tabindex","-1");
+    updatePage(state);
+  };
+  render(store.get());
+  const unsubscribeStore = store.subscribe(render);
+  const availability=createAvailabilityFeed({registry,targets,dispatch:event=>runtime.dispatch(event)});
+  const unsubscribeRouter = router.subscribe(route => { store.set({ route }); availability.refresh();runtime.dispatch({ type: "routeChanged", route }); });
+  const stopPlacement=targets.observe(()=>overlay.reposition());
+  let terminal="";let escBound=false;
   const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!dialog.isOpen()){event.preventDefault();runtime.cancel();}};
   const unsubscribeRuntime=runtime.subscribe(snapshot=>{
     presenter.update(snapshot);launcher?.update();
@@ -132,13 +174,15 @@ export function mountApp(root: HTMLElement, options: { readonly window?: Window;
     if(active&&!escBound){doc.addEventListener("keydown",escape);escBound=true;}else if(!active&&escBound){doc.removeEventListener("keydown",escape);escBound=false;}
     const kind=resultKind(snapshot);const key=kind===null?"":`${snapshot.walkthroughId}|${snapshot.status}|${snapshot.failure}`;
     if(kind&&key!==terminal){const def=snapshot.walkthroughId===null?undefined:catalog.get(snapshot.walkthroughId);const step=def?.steps.find(s=>s.id===snapshot.stepId);const id=snapshot.walkthroughId;
-      dialog.show(kind,step?.kind==="complete"?step.text:"",{returnTo,retry:()=>{if(id!==null)begin(id);}});
+      dialog.show(kind,step?.kind==="complete"?step.text:"",{returnTo,retry:()=>{if(id!==null)begin(id);},
+        ...(options.onPreviewEnd && id === options.autoStart ? {onDismiss:options.onPreviewEnd} : {})});
     }
     terminal=key;
   });
+  if (options.autoStart !== undefined) begin(options.autoStart);
   let destroyed = false;
   return Object.freeze({
     registry, targets, overlay, router, store, runtime, profile, guides, help,
-    destroy() { if (destroyed) return; destroyed = true; bridge.destroy(); availability.destroy(); stopPlacement();unsubscribeRuntime();doc.removeEventListener("keydown",escape);dialog.destroy();help.destroy();unsubscribeRouter(); unsubscribeStore(); profile.destroy(); postconditions.destroy(); runtime.cancel(); overlay.hide(); root.replaceChildren(); },
+    destroy() { if (destroyed) return; destroyed = true; mountScope.abort(); pageScope.abort(); bridge.destroy(); availability.destroy(); stopPlacement();unsubscribeRuntime();doc.removeEventListener("keydown",escape);dialog.destroy();help.destroy();unsubscribeRouter(); unsubscribeStore(); profile.destroy(); postconditions.destroy(); runtime.cancel(); overlay.hide(); root.replaceChildren(); },
   });
 }

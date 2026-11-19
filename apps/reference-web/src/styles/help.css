@@ -2,7 +2,7 @@
 .page-container { padding-bottom: calc(var(--touch) + var(--space-12)); }
 .help-launcher { position: fixed; right: var(--space-6); bottom: var(--space-6); z-index: var(--help-z); min-height: var(--touch); min-width: var(--touch); display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border: 1px solid var(--dap-accent); border-radius: var(--radius-pill); background: var(--dap-accent); color: var(--dap-surface); font: var(--weight-medium) var(--type-body) var(--font-ui); box-shadow: var(--shadow-panel); cursor: pointer; }
 /* While the panel is open its Close button is the way out, so the launcher steps aside instead of covering page content; focus returns to it on close. */
-body.dap-help-open .help-launcher { display: none; }
+.help-launcher[hidden], body.dap-help-open .help-launcher { display: none; }
 .help-panel { position: fixed; top: var(--zero); right: var(--zero); bottom: var(--zero); z-index: var(--help-z); width: var(--help-width); max-width: var(--full); display: flex; flex-direction: column; background: var(--dap-surface); color: var(--dap-ink); border-left: var(--border); box-shadow: var(--shadow-panel); font-family: var(--font-ui); }
 .help-panel[hidden] { display: none; }
 .help-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4) var(--space-6); border-bottom: var(--border); }

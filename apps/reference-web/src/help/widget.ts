@@ -23,6 +23,7 @@ export interface HelpOptions {
   readonly startGuide: (walkthroughId: string, source: HTMLElement) => StartResult;
   /** Called after the docked panel opens or closes and the page has reflowed, so anything placed over the page (the walkthrough overlay) can re-place. */
   readonly onLayoutChange?: () => void;
+  readonly available?: () => boolean;
 }
 
 export interface HelpWidget {
@@ -118,7 +119,7 @@ export function createHelp(options: HelpOptions): HelpWidget {
 
   async function ask(query: string): Promise<void> {
     const trimmed = query.trim();
-    if (state === "closed" || inFlight || trimmed.length === 0 || trimmed.length > HELP_LIMITS.queryChars) return;
+    if (state === "closed" || options.available?.() === false || inFlight || trimmed.length === 0 || trimmed.length > HELP_LIMITS.queryChars) return;
     inFlight = true;
     lastQuery = trimmed;
     const mine = ++generation;
@@ -156,7 +157,7 @@ export function createHelp(options: HelpOptions): HelpWidget {
   const mobile = () => win?.matchMedia?.("(max-width: 767px)").matches === true;
 
   function open(): void {
-    if (state !== "closed") return;
+    if (state !== "closed" || options.available?.() === false) return;
     panel.hidden = false; launcher.setAttribute("aria-expanded", "true"); doc.body.classList.add("dap-help-open"); options.onLayoutChange?.();
     // The phone sheet covers the page, so it is announced as a (non-modal) dialog; nothing is trapped and the page stays reachable.
     if (mobile()) panel.setAttribute("role", "dialog"); else panel.removeAttribute("role");

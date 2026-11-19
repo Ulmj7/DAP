@@ -69,7 +69,7 @@ export function parseStart(body: unknown, ok: boolean): StartOutcome {
   return UNAVAILABLE;
 }
 
-async function readReply(response: Response, signal: AbortSignal): Promise<string | null> {
+export async function readReply(response: Response, signal: AbortSignal, maxChars: number = HELP_LIMITS.responseChars): Promise<string | null> {
   if (response.body === null || signal.aborted) return null;
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -84,12 +84,12 @@ async function readReply(response: Response, signal: AbortSignal): Promise<strin
       if (chunk.done) break;
       bytes += chunk.value.byteLength;
       // UTF-8 needs at most three bytes per UTF-16 unit. Bound decoding as well as the retained text.
-      if (bytes > 3 * HELP_LIMITS.responseChars) { cancel(); return null; }
+      if (bytes > 3 * maxChars) { cancel(); return null; }
       raw += decoder.decode(chunk.value, { stream: true });
-      if (raw.length > HELP_LIMITS.responseChars) { cancel(); return null; }
+      if (raw.length > maxChars) { cancel(); return null; }
     }
     raw += decoder.decode();
-    return raw.length <= HELP_LIMITS.responseChars ? raw : null;
+    return raw.length <= maxChars ? raw : null;
   } catch {
     cancel();
     return null;
