@@ -6,6 +6,7 @@ COPY packages/contracts/package.json ./packages/contracts/
 COPY packages/actions/package.json ./packages/actions/
 COPY packages/ai/package.json ./packages/ai/
 COPY packages/security/package.json ./packages/security/
+COPY packages/embed/package.json ./packages/embed/
 COPY packages/testkit/package.json ./packages/testkit/
 COPY apps/reference-host/package.json ./apps/reference-host/
 

@@ -1,0 +1,38 @@
+name: Widget
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+    tags: ['widget-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx --no-install tsc -b packages/embed
+      - run: npm run test:embed
+      - run: npm run build:embed
+        env:
+          WIDGET_ASSET_ORIGIN: ${{ vars.WIDGET_ASSET_ORIGIN }}
+          WIDGET_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type == 'tag'
+        with:
+          name: ${{ github.ref_name }}
+          path: |
+            packages/embed/dist/widget/
+            packages/embed/dist/install.html
+            packages/embed/dist/manifest.json
+            packages/embed/dist/widget-install.md
+          if-no-files-found: error
